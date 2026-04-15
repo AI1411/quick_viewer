@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { CsvData } from "../types";
+import type { CsvData, FilterCondition } from "../types";
 
 export type SortDirection = "asc" | "desc" | null;
 
@@ -29,6 +29,10 @@ interface CsvTabState {
   // チャンク読み込み済み行数
   loadedRows: number;
   isLoadingChunk: boolean;
+  // フィルタ状態
+  filters: FilterCondition[];
+  filteredRows: string[][] | null;
+  isFiltering: boolean;
 }
 
 interface CsvStore {
@@ -48,6 +52,10 @@ interface CsvStore {
   appendRows: (tabId: string, rows: string[][], totalRows: number) => void;
   setLoadingChunk: (tabId: string, v: boolean) => void;
   removeTab: (tabId: string) => void;
+  // フィルタ操作
+  setFilters: (tabId: string, filters: FilterCondition[], filteredRows: string[][] | null) => void;
+  setFiltering: (tabId: string, v: boolean) => void;
+  clearFilters: (tabId: string) => void;
 }
 
 const defaultTabState = (): CsvTabState => ({
@@ -61,6 +69,9 @@ const defaultTabState = (): CsvTabState => ({
   selectedFocus: null,
   loadedRows: 0,
   isLoadingChunk: false,
+  filters: [],
+  filteredRows: null,
+  isFiltering: false,
 });
 
 export const useCsvStore = create<CsvStore>((set) => ({
@@ -171,4 +182,38 @@ export const useCsvStore = create<CsvStore>((set) => ({
       delete next[tabId];
       return { tabs: next };
     }),
+
+  setFilters: (tabId, filters, filteredRows) =>
+    set((state) => ({
+      tabs: {
+        ...state.tabs,
+        [tabId]: {
+          ...state.tabs[tabId],
+          filters,
+          filteredRows,
+          isFiltering: false,
+        },
+      },
+    })),
+
+  setFiltering: (tabId, v) =>
+    set((state) => ({
+      tabs: {
+        ...state.tabs,
+        [tabId]: { ...state.tabs[tabId], isFiltering: v },
+      },
+    })),
+
+  clearFilters: (tabId) =>
+    set((state) => ({
+      tabs: {
+        ...state.tabs,
+        [tabId]: {
+          ...state.tabs[tabId],
+          filters: [],
+          filteredRows: null,
+          isFiltering: false,
+        },
+      },
+    })),
 }));
