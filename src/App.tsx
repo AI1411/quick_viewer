@@ -13,9 +13,31 @@ function App() {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "b") {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+
+      // Cmd+B: サイドバートグル
+      if (e.key === "b") {
         e.preventDefault();
         setSidebarOpen((prev) => !prev);
+        return;
+      }
+
+      // Cmd+W: アクティブタブを閉じる
+      if (e.key === "w") {
+        e.preventDefault();
+        const { activeTabId: aid, removeTab } = useTabStore.getState();
+        if (aid) removeTab(aid);
+        return;
+      }
+
+      // Cmd+1~9: タブ切り替え
+      const num = parseInt(e.key, 10);
+      if (num >= 1 && num <= 9) {
+        e.preventDefault();
+        const { tabs, setActiveTab } = useTabStore.getState();
+        const target = tabs[num - 1];
+        if (target) setActiveTab(target.id);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
