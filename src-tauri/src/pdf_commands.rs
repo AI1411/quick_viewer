@@ -297,6 +297,23 @@ pub fn read_pdf_bytes(path: String) -> Result<String, String> {
         .map_err(|e| format!("Failed to read file: {}", e))
 }
 
+// ─── Annotation Persistence ───────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn save_annotations(pdf_path: String, annotations_json: String) -> Result<(), String> {
+    let ann_path = format!("{}.annotations.json", pdf_path);
+    std::fs::write(&ann_path, annotations_json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn load_annotations(pdf_path: String) -> Result<String, String> {
+    let ann_path = format!("{}.annotations.json", pdf_path);
+    if !std::path::Path::new(&ann_path).exists() {
+        return Ok("[]".to_string());
+    }
+    std::fs::read_to_string(&ann_path).map_err(|e| e.to_string())
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

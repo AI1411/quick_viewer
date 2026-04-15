@@ -79,3 +79,37 @@ export interface PdfPageData {
 }
 
 export type PdfDisplayMode = "single" | "continuous";
+
+// ─── Annotation Types ────────────────────────────────────────────────────────
+
+/** アノテーション矩形（scale=1.0 時の PDF ユニット座標） */
+export interface AnnotationRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export type AnnotationColor = "yellow" | "green" | "blue" | "pink";
+
+export interface HighlightAnnotation {
+  id: string;
+  type: "highlight";
+  pageIndex: number; // 0-based
+  color: AnnotationColor;
+  rects: AnnotationRect[];
+  selectedText: string;
+  createdAt: string;
+}
+
+export interface NoteAnnotation {
+  id: string;
+  type: "note";
+  pageIndex: number; // 0-based
+  x: number; // scale=1.0 時の PDF ユニット座標
+  y: number;
+  content: string;
+  createdAt: string;
+}
+
+export type Annotation = HighlightAnnotation | NoteAnnotation;
