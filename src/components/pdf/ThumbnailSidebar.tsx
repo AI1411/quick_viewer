@@ -114,9 +114,12 @@ export function ThumbnailSidebar({
     overscan: 3,
   });
 
-  // Scroll active thumbnail into view when page changes
+  // Scroll active thumbnail into view when page changes.
+  // virtualizer is intentionally omitted from deps — it's re-created each render
+  // and scrollToIndex is idempotent for the same currentPage value.
   useEffect(() => {
     virtualizer.scrollToIndex(currentPage - 1, { align: "auto" });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage]);
 
   return (

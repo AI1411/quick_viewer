@@ -67,6 +67,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
 
   // ── Initialization ─────────────────────────────────────────────────────────
   useEffect(() => {
+    let localDoc: PDFDocumentProxy | null = null;
     const store = usePdfStore.getState();
     store.initTab(tabId);
     store.setLoading(tabId, true);
@@ -76,6 +77,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
       loadPdfDocument(filePath),
     ])
       .then(([info, doc]) => {
+        localDoc = doc;
         store.setPdfInfo(tabId, info);
         store.setPdfDocument(tabId, doc);
         store.setLoading(tabId, false);
@@ -83,7 +85,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
       .catch((err) => store.setError(tabId, String(err)));
 
     return () => {
-      usePdfStore.getState().tabs[tabId]?.pdfDocument?.destroy();
+      localDoc?.destroy();
       usePdfStore.getState().removeTab(tabId);
     };
   }, [tabId, filePath]);
@@ -129,7 +131,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
     const tab = usePdfStore.getState().tabs[tabId];
     if (!tab?.pdfDocument || !containerRef.current) return;
     const page = await tab.pdfDocument.getPage(tab.currentPage);
-    const baseViewport = page.getViewport({ scale: 1.0 });
+    const baseViewport = page.getViewport({ scale: 1.0, rotation: tab.rotation });
     const availableWidth = containerRef.current.clientWidth - 48;
     const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, availableWidth / baseViewport.width));
     usePdfStore.getState().setZoom(tabId, newZoom);
@@ -139,7 +141,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
     const tab = usePdfStore.getState().tabs[tabId];
     if (!tab?.pdfDocument || !containerRef.current) return;
     const page = await tab.pdfDocument.getPage(tab.currentPage);
-    const baseViewport = page.getViewport({ scale: 1.0 });
+    const baseViewport = page.getViewport({ scale: 1.0, rotation: tab.rotation });
     const availableWidth = containerRef.current.clientWidth - 48;
     const availableHeight = containerRef.current.clientHeight - 48;
     const zoomW = availableWidth / baseViewport.width;
