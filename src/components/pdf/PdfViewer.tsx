@@ -4,6 +4,7 @@ import { usePdfStore } from "../../stores/pdfStore";
 import { loadPdfDocument } from "../../lib/pdfLib";
 import { PdfCanvas } from "./PdfCanvas";
 import { ThumbnailSidebar } from "./ThumbnailSidebar";
+import { OutlineSidebar } from "./OutlineSidebar";
 import type { PdfInfo } from "../../types";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 
@@ -195,7 +196,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
 
   if (!tabState.pdfDocument || !tabState.pdfInfo) return null;
 
-  const { pdfDocument, pdfInfo, currentPage, zoom, rotation, displayMode, isSidebarOpen } = tabState;
+  const { pdfDocument, pdfInfo, currentPage, zoom, rotation, displayMode, isSidebarOpen, sidebarMode } = tabState;
   const pageCount = pdfInfo.page_count;
 
   return (
@@ -213,10 +214,26 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
         <button
           onClick={() => usePdfStore.getState().toggleSidebar(tabId)}
           className="px-2 py-0.5 rounded hover:bg-white/10"
-          title="サムネイルパネル切り替え"
+          title="サイドバー切り替え"
         >
           ☰
         </button>
+
+        {/* Sidebar mode toggle — アウトラインがある場合のみ表示 */}
+        {isSidebarOpen && pdfInfo.outlines.length > 0 && (
+          <button
+            onClick={() =>
+              usePdfStore.getState().setSidebarMode(
+                tabId,
+                sidebarMode === "thumbnail" ? "outline" : "thumbnail"
+              )
+            }
+            className="px-2 py-0.5 rounded hover:bg-white/10 text-xs"
+            title={sidebarMode === "thumbnail" ? "目次を表示" : "サムネイルを表示"}
+          >
+            {sidebarMode === "thumbnail" ? "目次" : "頁"}
+          </button>
+        )}
 
         <div style={{ width: 1, height: 16, backgroundColor: "var(--border-color)" }} />
 
@@ -332,12 +349,20 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
       {/* Main content */}
       <div className="flex flex-1 overflow-hidden">
         {isSidebarOpen && (
-          <ThumbnailSidebar
-            filePath={filePath}
-            pageCount={pageCount}
-            currentPage={currentPage}
-            onPageSelect={(p) => usePdfStore.getState().setCurrentPage(tabId, p)}
-          />
+          sidebarMode === "outline" && pdfInfo.outlines.length > 0 ? (
+            <OutlineSidebar
+              outlines={pdfInfo.outlines}
+              currentPage={currentPage}
+              onPageSelect={(p) => usePdfStore.getState().setCurrentPage(tabId, p)}
+            />
+          ) : (
+            <ThumbnailSidebar
+              filePath={filePath}
+              pageCount={pageCount}
+              currentPage={currentPage}
+              onPageSelect={(p) => usePdfStore.getState().setCurrentPage(tabId, p)}
+            />
+          )
         )}
         <div
           ref={containerRef}
