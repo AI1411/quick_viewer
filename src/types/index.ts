@@ -45,3 +45,37 @@ export interface FilterCondition {
     | "eq_num";
   value: string;
 }
+
+// ─── PDF Types ──────────────────────────────────────────────────────────────
+
+// Rust の PdfInfo に対応
+export interface PdfInfo {
+  page_count: number;
+  title: string | null;
+  author: string | null;
+  subject: string | null;
+  creator: string | null;
+  producer: string | null;
+  creation_date: string | null;
+  modification_date: string | null;
+  encrypted: boolean;
+  outlines: OutlineItem[];
+}
+
+// Rust の OutlineItem に対応（再帰構造）
+export interface OutlineItem {
+  title: string;
+  page: number | null; // 0-based page index
+  level: number;
+  children: OutlineItem[];
+}
+
+// Rust の PdfPageData に対応
+export interface PdfPageData {
+  page_index: number;
+  width: number;
+  height: number;
+  image_base64: string; // PNG as base64
+}
+
+export type PdfDisplayMode = "single" | "continuous";
