@@ -127,6 +127,7 @@ pub fn run() {
             csv_commands::export_csv,
             pdf_commands::read_pdf_info,
             pdf_commands::read_pdf_page,
+            pdf_commands::read_pdf_bytes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

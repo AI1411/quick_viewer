@@ -288,6 +288,15 @@ pub fn read_pdf_page(path: String, page_index: u32, scale: Option<f32>) -> Resul
     })
 }
 
+/// Reads a file as raw bytes and returns it base64-encoded.
+/// Used by the frontend to load PDFs into PDF.js without asset protocol.
+#[tauri::command]
+pub fn read_pdf_bytes(path: String) -> Result<String, String> {
+    std::fs::read(&path)
+        .map(|bytes| general_purpose::STANDARD.encode(bytes))
+        .map_err(|e| format!("Failed to read file: {}", e))
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -335,5 +344,13 @@ mod tests {
             "Unexpected error: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_read_pdf_bytes_invalid_path() {
+        let result = read_pdf_bytes("/nonexistent/file.pdf".to_string());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Failed to read file"), "Unexpected error: {}", err);
     }
 }
