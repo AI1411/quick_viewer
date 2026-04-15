@@ -7,6 +7,7 @@ import { TitleBar } from "./components/TitleBar";
 import { ViewerArea } from "./components/ViewerArea";
 import { openFile, showOpenDialog } from "./lib/fileCommands";
 import { useTabStore, useSettingsStore } from "./stores";
+import { useShortcuts } from "./hooks/useShortcuts";
 import "./App.css";
 
 async function handleOpenPath(
@@ -45,69 +46,52 @@ function App() {
     document.documentElement.style.fontSize = `${zoomLevel}px`;
   }, [zoomLevel]);
 
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
-
-      // Cmd+O: ファイルオープンダイアログ
-      if (e.key === "o") {
-        e.preventDefault();
-        const { addTab, setActiveTab } = useTabStore.getState();
-        showOpenDialog().then((path) => {
-          if (path) handleOpenPath(path, addTab, setActiveTab);
-        });
-        return;
-      }
-
-      // Cmd+B: サイドバートグル
-      if (e.key === "b") {
-        e.preventDefault();
-        setSidebarOpen((prev) => !prev);
-        return;
-      }
-
-      // Cmd+W: アクティブタブを閉じる
-      if (e.key === "w") {
-        e.preventDefault();
-        const { activeTabId: aid, removeTab } = useTabStore.getState();
-        if (aid) removeTab(aid);
-        return;
-      }
-
-      // Cmd++ / Cmd+= : ズームイン
-      if (e.key === "+" || e.key === "=") {
-        e.preventDefault();
-        useSettingsStore.getState().increaseZoom();
-        return;
-      }
-
-      // Cmd+- : ズームアウト
-      if (e.key === "-") {
-        e.preventDefault();
-        useSettingsStore.getState().decreaseZoom();
-        return;
-      }
-
-      // Cmd+0 : ズームリセット
-      if (e.key === "0") {
-        e.preventDefault();
-        useSettingsStore.getState().resetZoom();
-        return;
-      }
-
-      // Cmd+1~9: タブ切り替え
-      const num = parseInt(e.key, 10);
-      if (num >= 1 && num <= 9) {
-        e.preventDefault();
-        const { tabs, setActiveTab } = useTabStore.getState();
-        const target = tabs[num - 1];
-        if (target) setActiveTab(target.id);
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  // キーボードショートカット
+  useShortcuts({
+    // ファイル
+    "cmd+o": () => {
+      const { addTab, setActiveTab } = useTabStore.getState();
+      showOpenDialog().then((path) => {
+        if (path) handleOpenPath(path, addTab, setActiveTab);
+      });
+    },
+    // タブ操作
+    "cmd+w": () => {
+      const { activeTabId: aid, removeTab } = useTabStore.getState();
+      if (aid) removeTab(aid);
+    },
+    "cmd+tab": () => {
+      const { tabs, activeTabId: aid, setActiveTab } = useTabStore.getState();
+      if (tabs.length < 2) return;
+      const idx = tabs.findIndex((t) => t.id === aid);
+      const next = tabs[(idx + 1) % tabs.length];
+      setActiveTab(next.id);
+    },
+    "cmd+shift+tab": () => {
+      const { tabs, activeTabId: aid, setActiveTab } = useTabStore.getState();
+      if (tabs.length < 2) return;
+      const idx = tabs.findIndex((t) => t.id === aid);
+      const prev = tabs[(idx - 1 + tabs.length) % tabs.length];
+      setActiveTab(prev.id);
+    },
+    // タブ番号切り替え (Cmd+1〜9)
+    "cmd+1": () => { const { tabs, setActiveTab } = useTabStore.getState(); if (tabs[0]) setActiveTab(tabs[0].id); },
+    "cmd+2": () => { const { tabs, setActiveTab } = useTabStore.getState(); if (tabs[1]) setActiveTab(tabs[1].id); },
+    "cmd+3": () => { const { tabs, setActiveTab } = useTabStore.getState(); if (tabs[2]) setActiveTab(tabs[2].id); },
+    "cmd+4": () => { const { tabs, setActiveTab } = useTabStore.getState(); if (tabs[3]) setActiveTab(tabs[3].id); },
+    "cmd+5": () => { const { tabs, setActiveTab } = useTabStore.getState(); if (tabs[4]) setActiveTab(tabs[4].id); },
+    "cmd+6": () => { const { tabs, setActiveTab } = useTabStore.getState(); if (tabs[5]) setActiveTab(tabs[5].id); },
+    "cmd+7": () => { const { tabs, setActiveTab } = useTabStore.getState(); if (tabs[6]) setActiveTab(tabs[6].id); },
+    "cmd+8": () => { const { tabs, setActiveTab } = useTabStore.getState(); if (tabs[7]) setActiveTab(tabs[7].id); },
+    "cmd+9": () => { const { tabs, setActiveTab } = useTabStore.getState(); if (tabs[8]) setActiveTab(tabs[8].id); },
+    // UI
+    "cmd+b": () => setSidebarOpen((prev) => !prev),
+    // ズーム
+    "cmd++": () => useSettingsStore.getState().increaseZoom(),
+    "cmd+=": () => useSettingsStore.getState().increaseZoom(),
+    "cmd+-": () => useSettingsStore.getState().decreaseZoom(),
+    "cmd+0": () => useSettingsStore.getState().resetZoom(),
+  });
 
   useEffect(() => {
     // ドラッグ&ドロップ

@@ -51,8 +51,8 @@
 
 ### 1-6. キーボードショートカット
 
-- [ ] useShortcuts フック作成（ショートカット登録・管理基盤）
-- [ ] 共通ショートカット登録（Cmd+O, W, Tab, Shift+Tab, 1〜9, B, Plus, Minus, 0）
+- [x] useShortcuts フック作成（ショートカット登録・管理基盤）
+- [x] 共通ショートカット登録（Cmd+O, W, Tab, Shift+Tab, 1〜9, B, Plus, Minus, 0）
 
 ---
 
