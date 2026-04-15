@@ -1,3 +1,5 @@
+pub mod csv_commands;
+
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -115,7 +117,14 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![open_file])
+        .invoke_handler(tauri::generate_handler![
+            open_file,
+            csv_commands::detect_encoding,
+            csv_commands::read_csv,
+            csv_commands::read_csv_chunk,
+            csv_commands::filter_csv,
+            csv_commands::export_csv,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
