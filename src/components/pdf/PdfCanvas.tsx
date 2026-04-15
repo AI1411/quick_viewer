@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist";
 import "pdfjs-dist/web/pdf_viewer.css";
 
@@ -25,6 +25,8 @@ export function PdfCanvas({
 
   useEffect(() => {
     let cancelled = false;
+    let renderTask: RenderTask | null = null;
+    let textLayer: TextLayer | null = null;
     setIsRendering(true);
 
     async function render() {
@@ -41,7 +43,8 @@ export function PdfCanvas({
       canvas.height = viewport.height;
 
       // Render the page to canvas
-      await page.render({ canvasContext: ctx, viewport }).promise;
+      renderTask = page.render({ canvasContext: ctx, viewport });
+      await renderTask.promise;
       if (cancelled) return;
 
       // Render text layer for selection using TextLayer class (pdfjs-dist v4 API)
@@ -49,16 +52,13 @@ export function PdfCanvas({
       textDiv.style.width = `${viewport.width}px`;
       textDiv.style.height = `${viewport.height}px`;
 
-      const textLayer = new TextLayer({
+      textLayer = new TextLayer({
         textContentSource: page.streamTextContent(),
         container: textDiv,
         viewport,
       });
       await textLayer.render();
-      if (cancelled) {
-        textLayer.cancel();
-        return;
-      }
+      if (cancelled) return;
 
       setIsRendering(false);
     }
@@ -69,6 +69,8 @@ export function PdfCanvas({
 
     return () => {
       cancelled = true;
+      renderTask?.cancel();
+      textLayer?.cancel();
     };
   }, [pdfDocument, pageIndex, scale, rotation]);
 
