@@ -6,7 +6,7 @@ import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
 import { ViewerArea } from "./components/ViewerArea";
 import { openFile, showOpenDialog } from "./lib/fileCommands";
-import { useTabStore } from "./stores";
+import { useTabStore, useSettingsStore } from "./stores";
 import "./App.css";
 
 async function handleOpenPath(
@@ -27,6 +27,23 @@ async function handleOpenPath(
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const activeTabId = useTabStore((state) => state.activeTabId);
+  const theme = useSettingsStore((state) => state.theme);
+  const zoomLevel = useSettingsStore((state) => state.zoomLevel);
+
+  // テーマを data-theme 属性に反映
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "system") {
+      root.removeAttribute("data-theme");
+    } else {
+      root.setAttribute("data-theme", theme);
+    }
+  }, [theme]);
+
+  // ズームレベルをフォントサイズに反映
+  useEffect(() => {
+    document.documentElement.style.fontSize = `${zoomLevel}px`;
+  }, [zoomLevel]);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -55,6 +72,27 @@ function App() {
         e.preventDefault();
         const { activeTabId: aid, removeTab } = useTabStore.getState();
         if (aid) removeTab(aid);
+        return;
+      }
+
+      // Cmd++ / Cmd+= : ズームイン
+      if (e.key === "+" || e.key === "=") {
+        e.preventDefault();
+        useSettingsStore.getState().increaseZoom();
+        return;
+      }
+
+      // Cmd+- : ズームアウト
+      if (e.key === "-") {
+        e.preventDefault();
+        useSettingsStore.getState().decreaseZoom();
+        return;
+      }
+
+      // Cmd+0 : ズームリセット
+      if (e.key === "0") {
+        e.preventDefault();
+        useSettingsStore.getState().resetZoom();
         return;
       }
 
