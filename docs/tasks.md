@@ -46,8 +46,8 @@
 
 ### 1-5. テーマ・外観
 
-- [ ] テーマ切り替え（system / light / dark）— CSS 変数ベース
-- [ ] ズーム制御（Cmd+Plus / Cmd+Minus / Cmd+0）— フォントサイズ変更
+- [x] テーマ切り替え（system / light / dark）— CSS 変数ベース
+- [x] ズーム制御（Cmd+Plus / Cmd+Minus / Cmd+0）— フォントサイズ変更
 
 ### 1-6. キーボードショートカット
 
