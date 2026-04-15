@@ -13,6 +13,7 @@ interface PdfTabState {
   rotation: number; // 0 | 90 | 180 | 270
   displayMode: PdfDisplayMode;
   isSidebarOpen: boolean;
+  sidebarMode: "thumbnail" | "outline";
   isLoading: boolean;
   error: string | null;
 }
@@ -28,6 +29,7 @@ interface PdfStore {
   setRotation: (tabId: string, rotation: number) => void;
   setDisplayMode: (tabId: string, mode: PdfDisplayMode) => void;
   toggleSidebar: (tabId: string) => void;
+  setSidebarMode: (tabId: string, mode: "thumbnail" | "outline") => void;
   setLoading: (tabId: string, loading: boolean) => void;
   setError: (tabId: string, error: string | null) => void;
 }
@@ -40,6 +42,7 @@ const defaultTabState = (): PdfTabState => ({
   rotation: 0,
   displayMode: "single",
   isSidebarOpen: true,
+  sidebarMode: "thumbnail",
   isLoading: false,
   error: null,
 });
@@ -89,6 +92,9 @@ export const usePdfStore = create<PdfStore>((set) => ({
     set((s) =>
       patch(s, tabId, { isSidebarOpen: !s.tabs[tabId]?.isSidebarOpen })
     ),
+
+  setSidebarMode: (tabId, sidebarMode) =>
+    set((s) => patch(s, tabId, { sidebarMode })),
 
   setLoading: (tabId, isLoading) =>
     set((s) => patch(s, tabId, { isLoading })),
