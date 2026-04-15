@@ -20,4 +20,10 @@ describe("PdfViewer", () => {
     render(<PdfViewer tabId="t1" filePath="/test.pdf" />);
     expect(screen.getByText("読み込み中...")).toBeInTheDocument();
   });
+
+  it("shows error state when loading fails", async () => {
+    render(<PdfViewer tabId="t2" filePath="/bad.pdf" />);
+    // Wait for the rejected promise to update state
+    await screen.findByText(/エラー:/);
+  });
 });
