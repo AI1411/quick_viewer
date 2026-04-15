@@ -8,16 +8,16 @@
 
 ### 1-1. プロジェクトセットアップ
 
-- [ ] `cargo create-tauri-app quickview` で Tauri 2 プロジェクト初期化
-- [ ] React 19 + TypeScript + Vite テンプレート設定
-- [ ] Tailwind CSS 4 導入・設定
-- [ ] Zustand インストール・ストア基盤作成
-- [ ] ESLint + Prettier 設定
-- [ ] ディレクトリ構成作成（components/, stores/, hooks/, lib/, types/）
-- [ ] Cargo.toml に依存クレート追加（serde, serde_json, chardetng, encoding_rs, notify）
-- [ ] tauri.conf.json 基本設定（ウィンドウサイズ、タイトル、CSP）
-- [ ] Vitest セットアップ（フロントエンドテスト基盤）
-- [ ] Rust テスト基盤セットアップ
+- [x] `cargo create-tauri-app quickview` で Tauri 2 プロジェクト初期化
+- [x] React 19 + TypeScript + Vite テンプレート設定
+- [x] Tailwind CSS 4 導入・設定
+- [x] Zustand インストール・ストア基盤作成
+- [x] ESLint + Prettier 設定
+- [x] ディレクトリ構成作成（components/, stores/, hooks/, lib/, types/）
+- [x] Cargo.toml に依存クレート追加（serde, serde_json, chardetng, encoding_rs, notify）
+- [x] tauri.conf.json 基本設定（ウィンドウサイズ、タイトル、CSP）
+- [x] Vitest セットアップ（フロントエンドテスト基盤）
+- [x] Rust テスト基盤セットアップ
 
 ### 1-2. ウィンドウ・レイアウト
 
