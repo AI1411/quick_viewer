@@ -15,6 +15,7 @@ body,
   overflow: hidden;
 }
 
+/* ─── ダークテーマ（デフォルト） ─── */
 :root {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial,
     sans-serif;
@@ -32,4 +33,45 @@ body,
   --text-primary: #cccccc;
   --text-secondary: #888888;
   --text-active: #ffffff;
+}
+
+/* ─── ダークテーマ（明示指定） ─── */
+[data-theme="dark"] {
+  --titlebar-bg: #1e1e1e;
+  --tabbar-bg: #252526;
+  --sidebar-bg: #252526;
+  --toolbar-bg: #2d2d2d;
+  --viewer-bg: #1e1e1e;
+  --border-color: #3e3e42;
+  --text-primary: #cccccc;
+  --text-secondary: #888888;
+  --text-active: #ffffff;
+}
+
+/* ─── ライトテーマ ─── */
+[data-theme="light"] {
+  --titlebar-bg: #f3f3f3;
+  --tabbar-bg: #ececec;
+  --sidebar-bg: #f3f3f3;
+  --toolbar-bg: #f8f8f8;
+  --viewer-bg: #ffffff;
+  --border-color: #d4d4d4;
+  --text-primary: #333333;
+  --text-secondary: #888888;
+  --text-active: #000000;
+}
+
+/* ─── システムテーマ（data-theme="system" または未指定のとき） ─── */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not([data-theme="light"]) {
+    --titlebar-bg: #f3f3f3;
+    --tabbar-bg: #ececec;
+    --sidebar-bg: #f3f3f3;
+    --toolbar-bg: #f8f8f8;
+    --viewer-bg: #ffffff;
+    --border-color: #d4d4d4;
+    --text-primary: #333333;
+    --text-secondary: #888888;
+    --text-active: #000000;
+  }
 }
