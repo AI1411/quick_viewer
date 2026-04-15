@@ -1,5 +1,6 @@
 import { useTabStore } from "../stores/tabStore";
 import { CsvViewer } from "./csv/CsvViewer";
+import { PdfViewer } from "./pdf/PdfViewer";
 
 export function ViewerArea() {
   const activeTabId = useTabStore((s) => s.activeTabId);
@@ -12,6 +13,14 @@ export function ViewerArea() {
     return (
       <div className="flex-1 flex flex-col overflow-hidden">
         <CsvViewer tabId={activeTab.id} filePath={activeTab.filePath} />
+      </div>
+    );
+  }
+
+  if (activeTab.format === "pdf") {
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <PdfViewer tabId={activeTab.id} filePath={activeTab.filePath} />
       </div>
     );
   }
