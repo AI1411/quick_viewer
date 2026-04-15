@@ -1,6 +1,7 @@
 import { useRef, useCallback, useEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { SortState, SelectedCell } from "../../stores/csvStore";
+import type { FilterCondition } from "../../types";
 
 const ROW_HEIGHT = 28;
 const ROW_NUM_WIDTH = 52;
@@ -21,6 +22,8 @@ interface VirtualTableProps {
   onPinToggle: (colIndex: number) => void;
   onCellClick: (row: number, col: number, shift: boolean) => void;
   onScrollEnd: () => void;
+  filters?: FilterCondition[];
+  onFilterClick?: (colIndex: number, anchorRect: DOMRect) => void;
 }
 
 function isCellSelected(
@@ -52,6 +55,8 @@ export function VirtualTable({
   onPinToggle,
   onCellClick,
   onScrollEnd,
+  filters,
+  onFilterClick,
 }: VirtualTableProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const resizingRef = useRef<{
@@ -157,6 +162,7 @@ export function VirtualTable({
         {/* Column headers */}
         {headers.map((header, i) => {
           const isPinned = i < pinnedCount;
+          const hasFilter = filters?.some((f) => f.column === header) ?? false;
           return (
             <div
               key={i}
@@ -191,6 +197,32 @@ export function VirtualTable({
                   {sortIcon(i)}
                 </span>
               </button>
+              {/* Filter button */}
+              {onFilterClick && (
+                <button
+                  className="flex-shrink-0 flex items-center justify-center text-xs"
+                  style={{
+                    width: 18,
+                    height: ROW_HEIGHT,
+                    color: hasFilter ? "#3b82f6" : "var(--text-secondary)",
+                    opacity: hasFilter ? 1 : 0.4,
+                    transition: "opacity 0.1s",
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onFilterClick(i, e.currentTarget.getBoundingClientRect());
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.opacity = "1";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.opacity = hasFilter ? "1" : "0.4";
+                  }}
+                  title="フィルタ"
+                >
+                  ▽
+                </button>
+              )}
               {/* Resize handle */}
               <div
                 className="absolute right-0 top-0 w-1 h-full cursor-col-resize"
