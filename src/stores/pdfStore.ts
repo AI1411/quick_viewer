@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import type { PdfInfo, PdfDisplayMode } from "../types";
+import type { PdfInfo, PdfDisplayMode, Annotation, AnnotationColor } from "../types";
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4.0;
@@ -16,6 +16,10 @@ interface PdfTabState {
   sidebarMode: "thumbnail" | "outline";
   isLoading: boolean;
   error: string | null;
+  annotations: Record<number, Annotation[]>; // pageIndex -> annotations
+  annotationMode: "none" | "highlight" | "note";
+  selectedAnnotationId: string | null;
+  highlightColor: AnnotationColor;
 }
 
 interface PdfStore {
@@ -32,6 +36,12 @@ interface PdfStore {
   setSidebarMode: (tabId: string, mode: "thumbnail" | "outline") => void;
   setLoading: (tabId: string, loading: boolean) => void;
   setError: (tabId: string, error: string | null) => void;
+  addAnnotation: (tabId: string, annotation: Annotation) => void;
+  deleteAnnotation: (tabId: string, pageIndex: number, annotationId: string) => void;
+  setAnnotations: (tabId: string, annotations: Annotation[]) => void;
+  setAnnotationMode: (tabId: string, mode: "none" | "highlight" | "note") => void;
+  setSelectedAnnotationId: (tabId: string, id: string | null) => void;
+  setHighlightColor: (tabId: string, color: AnnotationColor) => void;
 }
 
 const defaultTabState = (): PdfTabState => ({
@@ -45,6 +55,10 @@ const defaultTabState = (): PdfTabState => ({
   sidebarMode: "thumbnail",
   isLoading: false,
   error: null,
+  annotations: {},
+  annotationMode: "none",
+  selectedAnnotationId: null,
+  highlightColor: "yellow",
 });
 
 function patch(state: PdfStore, tabId: string, updates: Partial<PdfTabState>) {
@@ -101,4 +115,52 @@ export const usePdfStore = create<PdfStore>((set) => ({
 
   setError: (tabId, error) =>
     set((s) => patch(s, tabId, { error, isLoading: false })),
+
+  addAnnotation: (tabId, annotation) =>
+    set((s) => {
+      const tab = s.tabs[tabId];
+      if (!tab) return s;
+      const pageAnns = tab.annotations[annotation.pageIndex] ?? [];
+      return patch(s, tabId, {
+        annotations: {
+          ...tab.annotations,
+          [annotation.pageIndex]: [...pageAnns, annotation],
+        },
+      });
+    }),
+
+  deleteAnnotation: (tabId, pageIndex, annotationId) =>
+    set((s) => {
+      const tab = s.tabs[tabId];
+      if (!tab) return s;
+      const pageAnns = (tab.annotations[pageIndex] ?? []).filter(
+        (a) => a.id !== annotationId
+      );
+      return patch(s, tabId, {
+        annotations: { ...tab.annotations, [pageIndex]: pageAnns },
+        selectedAnnotationId:
+          tab.selectedAnnotationId === annotationId
+            ? null
+            : tab.selectedAnnotationId,
+      });
+    }),
+
+  setAnnotations: (tabId, annotations) =>
+    set((s) => {
+      const byPage: Record<number, Annotation[]> = {};
+      for (const ann of annotations) {
+        if (!byPage[ann.pageIndex]) byPage[ann.pageIndex] = [];
+        byPage[ann.pageIndex].push(ann);
+      }
+      return patch(s, tabId, { annotations: byPage });
+    }),
+
+  setAnnotationMode: (tabId, annotationMode) =>
+    set((s) => patch(s, tabId, { annotationMode })),
+
+  setSelectedAnnotationId: (tabId, selectedAnnotationId) =>
+    set((s) => patch(s, tabId, { selectedAnnotationId })),
+
+  setHighlightColor: (tabId, highlightColor) =>
+    set((s) => patch(s, tabId, { highlightColor })),
 }));
