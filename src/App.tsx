@@ -18,7 +18,7 @@ async function handleOpenPath(
   try {
     const info = await openFile(path);
     const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    addTab({ id, title: info.name, filePath: info.path, isDirty: false });
+    addTab({ id, title: info.name, filePath: info.path, format: info.format, isDirty: false });
     setActiveTab(id);
   } catch (err) {
     console.error("Failed to open file:", err);

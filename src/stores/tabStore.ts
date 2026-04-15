@@ -1,9 +1,11 @@
 import { create } from "zustand";
+import type { FileFormat } from "../types";
 
 export interface Tab {
   id: string;
   title: string;
   filePath: string;
+  format?: FileFormat;
   isDirty: boolean;
 }
 
