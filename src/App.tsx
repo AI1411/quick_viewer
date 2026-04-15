@@ -1,11 +1,28 @@
 import { useEffect, useState } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { EmptyState } from "./components/EmptyState";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
 import { ViewerArea } from "./components/ViewerArea";
+import { openFile, showOpenDialog } from "./lib/fileCommands";
 import { useTabStore } from "./stores";
 import "./App.css";
+
+async function handleOpenPath(
+  path: string,
+  addTab: ReturnType<typeof useTabStore.getState>["addTab"],
+  setActiveTab: ReturnType<typeof useTabStore.getState>["setActiveTab"]
+) {
+  try {
+    const info = await openFile(path);
+    const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    addTab({ id, title: info.name, filePath: info.path, isDirty: false });
+    setActiveTab(id);
+  } catch (err) {
+    console.error("Failed to open file:", err);
+  }
+}
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -15,6 +32,16 @@ function App() {
     function handleKeyDown(e: KeyboardEvent) {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
+
+      // Cmd+O: ファイルオープンダイアログ
+      if (e.key === "o") {
+        e.preventDefault();
+        const { addTab, setActiveTab } = useTabStore.getState();
+        showOpenDialog().then((path) => {
+          if (path) handleOpenPath(path, addTab, setActiveTab);
+        });
+        return;
+      }
 
       // Cmd+B: サイドバートグル
       if (e.key === "b") {
@@ -42,6 +69,25 @@ function App() {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    // ドラッグ&ドロップ
+    let unlisten: (() => void) | undefined;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (event.payload.type === "drop") {
+          const paths = event.payload.paths ?? [];
+          const { addTab, setActiveTab } = useTabStore.getState();
+          for (const path of paths) {
+            handleOpenPath(path, addTab, setActiveTab);
+          }
+        }
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
+    return () => unlisten?.();
   }, []);
 
   return (
