@@ -1,8 +1,11 @@
-import { useEffect, useCallback, useMemo } from "react";
+import { useEffect, useCallback, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useCsvStore } from "../../stores/csvStore";
 import { VirtualTable } from "./VirtualTable";
-import type { CsvData, CsvChunk } from "../../types";
+import { FilterPopover } from "./FilterPopover";
+import { ActiveFiltersBar } from "./ActiveFiltersBar";
+import { StatusBar } from "./StatusBar";
+import type { CsvData, CsvChunk, FilterCondition } from "../../types";
 
 const CHUNK_SIZE = 200;
 const INITIAL_LIMIT = 100;
@@ -15,6 +18,10 @@ interface CsvViewerProps {
 export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
   const tabState = useCsvStore((s) => s.tabs[tabId]);
 
+  // フィルタポップオーバーの表示状態
+  const [filterColIndex, setFilterColIndex] = useState<number | null>(null);
+  const [filterAnchorRect, setFilterAnchorRect] = useState<DOMRect | null>(null);
+
   // 初期化 & データ読み込み
   useEffect(() => {
     const { initTab, setLoading, setData, setError } = useCsvStore.getState();
@@ -25,10 +32,11 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       .catch((err) => setError(tabId, String(err)));
   }, [tabId, filePath]);
 
-  // チャンク追加読み込み
+  // チャンク追加読み込み（フィルタ中は無効）
   const handleScrollEnd = useCallback(() => {
     const tab = useCsvStore.getState().tabs[tabId];
     if (!tab || tab.isLoadingChunk || !tab.data) return;
+    if (tab.filters.length > 0) return; // フィルタ中はチャンク不要
     if (tab.loadedRows >= tab.data.meta.total_rows) return;
 
     const { setLoadingChunk, appendRows } = useCsvStore.getState();
@@ -88,10 +96,76 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     [tabId]
   );
 
-  // ソート済み行（クライアントサイドソート）
-  const sortedRows = useMemo(() => {
+  // フィルタアイコンクリック
+  const handleFilterClick = useCallback(
+    (colIndex: number, anchorRect: DOMRect) => {
+      setFilterColIndex(colIndex);
+      setFilterAnchorRect(anchorRect);
+    },
+    []
+  );
+
+  // フィルタ適用（Rust filter_csv を呼び出してフィルタ結果を store に保存）
+  const handleFilterApply = useCallback(
+    async (cond: FilterCondition) => {
+      const tab = useCsvStore.getState().tabs[tabId];
+      if (!tab?.data) return;
+      const { setFiltering, setFilters } = useCsvStore.getState();
+
+      const newFilters = tab.filters
+        .filter((f) => f.column !== cond.column)
+        .concat(cond);
+
+      setFiltering(tabId, true);
+      try {
+        const data = await invoke<CsvData>("filter_csv", {
+          path: filePath,
+          conditions: newFilters,
+        });
+        setFilters(tabId, newFilters, data.rows);
+      } catch {
+        setFiltering(tabId, false);
+      }
+    },
+    [tabId, filePath]
+  );
+
+  // 単一列フィルタのクリア
+  const handleFilterClearColumn = useCallback(
+    async (column: string) => {
+      const tab = useCsvStore.getState().tabs[tabId];
+      if (!tab) return;
+      const { setFiltering, setFilters, clearFilters } = useCsvStore.getState();
+
+      const newFilters = tab.filters.filter((f) => f.column !== column);
+      if (newFilters.length === 0) {
+        clearFilters(tabId);
+        return;
+      }
+
+      setFiltering(tabId, true);
+      try {
+        const data = await invoke<CsvData>("filter_csv", {
+          path: filePath,
+          conditions: newFilters,
+        });
+        setFilters(tabId, newFilters, data.rows);
+      } catch {
+        setFiltering(tabId, false);
+      }
+    },
+    [tabId, filePath]
+  );
+
+  // 全フィルタのクリア
+  const handleClearAllFilters = useCallback(() => {
+    useCsvStore.getState().clearFilters(tabId);
+  }, [tabId]);
+
+  // 表示行（フィルタ結果優先 → クライアントサイドソート）
+  const displayRows = useMemo(() => {
     if (!tabState?.data) return [];
-    const { rows } = tabState.data;
+    const rows = tabState.filteredRows ?? tabState.data.rows;
     const sort = tabState.sort;
     if (!sort) return rows;
     const { columnIndex, direction } = sort;
@@ -104,7 +178,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       const cmp = isNumeric ? numA - numB : va.localeCompare(vb);
       return direction === "asc" ? cmp : -cmp;
     });
-  }, [tabState?.data, tabState?.sort]);
+  }, [tabState?.data, tabState?.filteredRows, tabState?.sort]);
 
   if (!tabState) return null;
 
@@ -134,17 +208,42 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
 
   const { headers, meta } = tabState.data;
 
+  // フィルタポップオーバーで表示する既存条件
+  const existingFilter =
+    filterColIndex !== null
+      ? (tabState.filters.find((f) => f.column === headers[filterColIndex]) ?? null)
+      : null;
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      {/* アクティブフィルタバー */}
+      <ActiveFiltersBar
+        filters={tabState.filters}
+        filePath={filePath}
+        onClearFilter={handleFilterClearColumn}
+        onClearAll={handleClearAllFilters}
+      />
+
+      {/* フィルタ中インジケータ */}
+      {tabState.isFiltering && (
+        <div
+          className="flex items-center justify-center text-xs py-1 flex-shrink-0"
+          style={{ color: "var(--text-secondary)", backgroundColor: "var(--tabbar-bg)" }}
+        >
+          フィルタ適用中...
+        </div>
+      )}
+
       <VirtualTable
         headers={headers}
-        rows={sortedRows}
+        rows={displayRows}
         totalRows={meta.total_rows}
         columnWidths={tabState.columnWidths}
         sort={tabState.sort}
         pinnedCount={tabState.pinnedCount}
         selectedAnchor={tabState.selectedAnchor}
         selectedFocus={tabState.selectedFocus}
+        filters={tabState.filters}
         onSort={handleSort}
         onColumnResize={(ci, w) =>
           useCsvStore.getState().setColumnWidth(tabId, ci, w)
@@ -152,27 +251,36 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
         onPinToggle={handlePinToggle}
         onCellClick={handleCellClick}
         onScrollEnd={handleScrollEnd}
+        onFilterClick={handleFilterClick}
       />
-      {/* ステータスバー（Phase 2.4 で拡張予定） */}
-      <div
-        className="flex items-center gap-4 px-3 text-xs border-t flex-shrink-0"
-        style={{
-          height: 24,
-          borderColor: "var(--border-color)",
-          color: "var(--text-secondary)",
-          backgroundColor: "var(--tabbar-bg)",
-        }}
-      >
-        <span>{meta.total_rows.toLocaleString()} 行</span>
-        <span>{headers.length} 列</span>
-        <span>{meta.encoding}</span>
-        <span>区切り: {meta.delimiter === "\t" ? "TAB" : meta.delimiter}</span>
-        {tabState.loadedRows < meta.total_rows && (
-          <span style={{ color: "#fbbf24" }}>
-            ({tabState.loadedRows.toLocaleString()} 行読み込み済み)
-          </span>
-        )}
-      </div>
+
+      {/* ステータスバー */}
+      <StatusBar
+        totalRows={meta.total_rows}
+        filteredCount={tabState.filteredRows !== null ? tabState.filteredRows.length : null}
+        columns={headers.length}
+        encoding={meta.encoding}
+        delimiter={meta.delimiter}
+        loadedRows={tabState.loadedRows}
+        selectedAnchor={tabState.selectedAnchor}
+        selectedFocus={tabState.selectedFocus}
+        displayRows={displayRows}
+      />
+
+      {/* フィルタポップオーバー */}
+      {filterColIndex !== null && filterAnchorRect !== null && (
+        <FilterPopover
+          column={headers[filterColIndex]}
+          anchorRect={filterAnchorRect}
+          existing={existingFilter}
+          onApply={handleFilterApply}
+          onClear={() => handleFilterClearColumn(headers[filterColIndex])}
+          onClose={() => {
+            setFilterColIndex(null);
+            setFilterAnchorRect(null);
+          }}
+        />
+      )}
     </div>
   );
 }
