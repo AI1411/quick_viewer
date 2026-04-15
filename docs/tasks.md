@@ -60,12 +60,12 @@
 
 ### 2-1. Rust バックエンド — CSV パース
 
-- [ ] `detect_encoding` コマンド実装（chardetng + encoding_rs）
-- [ ] `read_csv` コマンド実装（csv crate、ヘッダ + 先頭 N 行 + メタデータ返却）
-- [ ] 区切り文字の自動検出・手動指定対応（カンマ / タブ / セミコロン / パイプ）
-- [ ] `read_csv_chunk` コマンド実装（offset + limit でチャンク読み込み）
-- [ ] `filter_csv` コマンド実装（完全一致 / 部分一致 / 前方一致 / 正規表現 / 数値比較）
-- [ ] `export_csv` コマンド実装（フィルタ結果を CSV ファイルとして保存）
+- [x] `detect_encoding` コマンド実装（chardetng + encoding_rs）
+- [x] `read_csv` コマンド実装（csv crate、ヘッダ + 先頭 N 行 + メタデータ返却）
+- [x] 区切り文字の自動検出・手動指定対応（カンマ / タブ / セミコロン / パイプ）
+- [x] `read_csv_chunk` コマンド実装（offset + limit でチャンク読み込み）
+- [x] `filter_csv` コマンド実装（完全一致 / 部分一致 / 前方一致 / 正規表現 / 数値比較）
+- [x] `export_csv` コマンド実装（フィルタ結果を CSV ファイルとして保存）
 
 ### 2-2. フロントエンド — テーブル表示
 
