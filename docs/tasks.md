@@ -21,10 +21,10 @@
 
 ### 1-2. ウィンドウ・レイアウト
 
-- [ ] カスタムタイトルバー（TitleBar.tsx）実装
-- [ ] メインレイアウト構成（App.tsx: TitleBar + TabBar + Toolbar + ViewerArea）
-- [ ] サイドバーコンポーネント（Sidebar.tsx）— トグル表示（Cmd+B）
-- [ ] 空状態コンポーネント（EmptyState.tsx）— ファイル未選択時の案内画面
+- [x] カスタムタイトルバー（TitleBar.tsx）実装
+- [x] メインレイアウト構成（App.tsx: TitleBar + TabBar + Toolbar + ViewerArea）
+- [x] サイドバーコンポーネント（Sidebar.tsx）— トグル表示（Cmd+B）
+- [x] 空状態コンポーネント（EmptyState.tsx）— ファイル未選択時の案内画面
 
 ### 1-3. タブ管理
 
