@@ -197,7 +197,10 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
   const currentMatchIndex = useSearchStore((s) => s.currentMatchIndex);
   const scrollToRowRef = useRef<((index: number) => void) | null>(null);
 
-  const csvHeaders = tabState?.data?.headers ?? [];
+  const csvHeaders = useMemo(
+    () => tabState?.data?.headers ?? [],
+    [tabState?.data]
+  );
 
   useEffect(() => {
     if (!searchIsOpen || !searchQuery) {
@@ -245,20 +248,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     [cellMatchSet, currentMatch]
   );
 
-  if (!tabState) return null;
-
-  if (tabState.isLoading) {
-    return (
-      <div
-        className="flex-1 flex items-center justify-center text-sm"
-        style={{ color: "var(--text-secondary)" }}
-      >
-        読み込み中...
-      </div>
-    );
-  }
-
-  if (tabState.error) {
+  if (tabState?.error) {
     return (
       <div
         className="flex-1 flex items-center justify-center text-sm"
@@ -269,7 +259,17 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     );
   }
 
-  if (!tabState.data) return null;
+  // tabState 未初期化（初回 render）/ isLoading / data 未到着はすべて読み込み中表示にする
+  if (!tabState || tabState.isLoading || !tabState.data) {
+    return (
+      <div
+        className="flex-1 flex items-center justify-center text-sm"
+        style={{ color: "var(--text-secondary)" }}
+      >
+        読み込み中...
+      </div>
+    );
+  }
 
   const { headers, meta } = tabState.data;
 
