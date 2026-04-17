@@ -19,6 +19,7 @@ interface ActiveFiltersBarProps {
   filePath: string;
   onClearFilter: (column: string) => void;
   onClearAll: () => void;
+  onExport?: () => Promise<void>;
 }
 
 export function ActiveFiltersBar({
@@ -26,10 +27,15 @@ export function ActiveFiltersBar({
   filePath,
   onClearFilter,
   onClearAll,
+  onExport,
 }: ActiveFiltersBarProps) {
   if (filters.length === 0) return null;
 
   const handleExport = async () => {
+    if (onExport) {
+      await onExport();
+      return;
+    }
     const outputPath = await save({
       filters: [{ name: "CSV", extensions: ["csv"] }],
       defaultPath: "filtered.csv",

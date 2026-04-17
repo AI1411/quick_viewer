@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { XlsxInfo, XlsxSheetData } from "../types";
+import type { XlsxInfo, XlsxSheetData, FilterCondition } from "../types";
 
 export type XlsxSortDirection = "asc" | "desc" | null;
 
@@ -21,6 +21,7 @@ interface XlsxTabState {
   error: string | null;
   columnWidths: Record<number, number>;
   sort: XlsxSortState | null;
+  filters: FilterCondition[];
   selectedAnchor: XlsxSelectedCell | null;
   selectedFocus: XlsxSelectedCell | null;
 }
@@ -34,6 +35,8 @@ interface XlsxStore {
   setError: (tabId: string, error: string | null) => void;
   setColumnWidth: (tabId: string, colIndex: number, width: number) => void;
   setSort: (tabId: string, sort: XlsxSortState | null) => void;
+  setFilters: (tabId: string, filters: FilterCondition[]) => void;
+  clearFilters: (tabId: string) => void;
   setSelection: (
     tabId: string,
     anchor: XlsxSelectedCell | null,
@@ -50,6 +53,7 @@ const defaultTabState = (): XlsxTabState => ({
   error: null,
   columnWidths: {},
   sort: null,
+  filters: [],
   selectedAnchor: null,
   selectedFocus: null,
 });
@@ -78,6 +82,7 @@ export const useXlsxStore = create<XlsxStore>((set) => ({
           isLoading: false,
           columnWidths: {},
           sort: null,
+          filters: [],
           selectedAnchor: null,
           selectedFocus: null,
         },
@@ -111,6 +116,16 @@ export const useXlsxStore = create<XlsxStore>((set) => ({
   setSort: (tabId, sort) =>
     set((state) => ({
       tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], sort } },
+    })),
+
+  setFilters: (tabId, filters) =>
+    set((state) => ({
+      tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], filters } },
+    })),
+
+  clearFilters: (tabId) =>
+    set((state) => ({
+      tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], filters: [] } },
     })),
 
   setSelection: (tabId, anchor, focus) =>

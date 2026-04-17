@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useCallback } from "react";
+import { useEffect, useMemo, useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 import { VirtualTable } from "../csv/VirtualTable";
+import { FilterPopover } from "../csv/FilterPopover";
+import { ActiveFiltersBar } from "../csv/ActiveFiltersBar";
 import { SheetTabs } from "./SheetTabs";
 import { getCellStyleByType } from "./CellFormatter";
 import { useXlsxStore } from "../../stores/xlsxStore";
-import type { XlsxInfo, XlsxSheetData, XlsxCell } from "../../types";
+import type { XlsxInfo, XlsxSheetData, XlsxCell, FilterCondition } from "../../types";
 
 interface XlsxViewerProps {
   tabId: string;
@@ -22,9 +25,28 @@ function colLetter(index: number): string {
   return result;
 }
 
+function matchesFilter(value: string, cond: FilterCondition): boolean {
+  switch (cond.filter_type) {
+    case "exact": return value === cond.value;
+    case "contains": return value.includes(cond.value);
+    case "starts_with": return value.startsWith(cond.value);
+    case "regex": try { return new RegExp(cond.value).test(value); } catch { return false; }
+    case "gt": return parseFloat(value) > parseFloat(cond.value);
+    case "lt": return parseFloat(value) < parseFloat(cond.value);
+    case "gte": return parseFloat(value) >= parseFloat(cond.value);
+    case "lte": return parseFloat(value) <= parseFloat(cond.value);
+    case "eq_num": return Math.abs(parseFloat(value) - parseFloat(cond.value)) < Number.EPSILON;
+    default: return false;
+  }
+}
+
 export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   const store = useXlsxStore();
   const tab = useXlsxStore((s) => s.tabs[tabId]);
+  const [filterPopover, setFilterPopover] = useState<{
+    column: string;
+    anchorRect: DOMRect;
+  } | null>(null);
 
   useEffect(() => {
     store.initTab(tabId);
@@ -58,19 +80,37 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
     [tabId, filePath, tab?.activeSheetName]
   );
 
-  const sortedRows = useMemo((): XlsxCell[][] => {
+  const headers = useMemo((): string[] => {
+    const cols = tab?.sheetData?.total_cols ?? 0;
+    return Array.from({ length: cols }, (_, i) => colLetter(i));
+  }, [tab?.sheetData?.total_cols]);
+
+  const filters = tab?.filters ?? [];
+
+  const filteredSortedRows = useMemo((): XlsxCell[][] => {
     if (!tab?.sheetData) return [];
     const freezeRowCount = tab.sheetData.freeze_pane.rows;
-    const dataRows = tab.sheetData.rows.slice(freezeRowCount);
-    if (!tab.sort) return dataRows;
+    let rows = tab.sheetData.rows.slice(freezeRowCount);
+
+    if (filters.length > 0) {
+      rows = rows.filter((row) =>
+        filters.every((cond) => {
+          const colIdx = headers.indexOf(cond.column);
+          if (colIdx === -1) return false;
+          return matchesFilter(row[colIdx]?.value ?? "", cond);
+        })
+      );
+    }
+
+    if (!tab.sort) return rows;
     const { columnIndex, direction } = tab.sort;
-    return [...dataRows].sort((a, b) => {
+    return [...rows].sort((a, b) => {
       const av = a[columnIndex]?.value ?? "";
       const bv = b[columnIndex]?.value ?? "";
       const cmp = av.localeCompare(bv, undefined, { numeric: true });
       return direction === "asc" ? cmp : -cmp;
     });
-  }, [tab?.sheetData, tab?.sort]);
+  }, [tab?.sheetData, tab?.sort, filters, headers]);
 
   const frozenDisplayRows = useMemo((): string[][] => {
     if (!tab?.sheetData) return [];
@@ -80,21 +120,16 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   }, [tab?.sheetData]);
 
   const displayRows = useMemo((): string[][] => {
-    return sortedRows.map((r) => r.map((c) => c.value));
-  }, [sortedRows]);
-
-  const headers = useMemo((): string[] => {
-    const cols = tab?.sheetData?.total_cols ?? 0;
-    return Array.from({ length: cols }, (_, i) => colLetter(i));
-  }, [tab?.sheetData?.total_cols]);
+    return filteredSortedRows.map((r) => r.map((c) => c.value));
+  }, [filteredSortedRows]);
 
   const getCellStyle = useCallback(
     (rowIdx: number, colIdx: number): React.CSSProperties => {
-      const cell = sortedRows[rowIdx]?.[colIdx];
+      const cell = filteredSortedRows[rowIdx]?.[colIdx];
       if (!cell) return {};
       return getCellStyleByType(cell.cell_type);
     },
-    [sortedRows]
+    [filteredSortedRows]
   );
 
   const handleSort = useCallback(
@@ -128,6 +163,55 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
     },
     [tabId, tab?.selectedAnchor]
   );
+
+  const handleFilterClick = useCallback(
+    (colIndex: number, anchorRect: DOMRect) => {
+      setFilterPopover({ column: headers[colIndex], anchorRect });
+    },
+    [headers]
+  );
+
+  const handleFilterApply = useCallback(
+    (cond: FilterCondition) => {
+      const newFilters = [
+        ...(tab?.filters ?? []).filter((f) => f.column !== cond.column),
+        cond,
+      ];
+      store.setFilters(tabId, newFilters);
+      setFilterPopover(null);
+    },
+    [tabId, tab?.filters]
+  );
+
+  const handleFilterClear = useCallback(
+    (column: string) => {
+      store.setFilters(tabId, (tab?.filters ?? []).filter((f) => f.column !== column));
+      setFilterPopover(null);
+    },
+    [tabId, tab?.filters]
+  );
+
+  const handleClearAllFilters = useCallback(() => {
+    store.clearFilters(tabId);
+  }, [tabId]);
+
+  const handleExport = useCallback(async () => {
+    const outputPath = await save({
+      filters: [{ name: "CSV", extensions: ["csv"] }],
+      defaultPath: "export.csv",
+    });
+    if (!outputPath) return;
+    try {
+      await invoke("export_xlsx_sheet_as_csv", {
+        path: filePath,
+        sheetName: tab?.activeSheetName ?? "",
+        outputPath,
+        conditions: filters,
+      });
+    } catch (err) {
+      console.error("Export error:", err);
+    }
+  }, [filePath, tab?.activeSheetName, filters]);
 
   if (!tab) return null;
 
@@ -163,6 +247,13 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
       className="flex flex-col flex-1 overflow-hidden"
       style={{ backgroundColor: "var(--viewer-bg)" }}
     >
+      <ActiveFiltersBar
+        filters={filters}
+        filePath={filePath}
+        onClearFilter={handleFilterClear}
+        onClearAll={handleClearAllFilters}
+        onExport={handleExport}
+      />
       <VirtualTable
         headers={headers}
         rows={displayRows}
@@ -182,7 +273,19 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
         frozenRows={frozenDisplayRows}
         frozenRowCount={freezeRowCount}
         getCellStyle={getCellStyle}
+        filters={filters}
+        onFilterClick={handleFilterClick}
       />
+      {filterPopover && (
+        <FilterPopover
+          column={filterPopover.column}
+          anchorRect={filterPopover.anchorRect}
+          existing={filters.find((f) => f.column === filterPopover.column) ?? null}
+          onApply={handleFilterApply}
+          onClear={() => handleFilterClear(filterPopover.column)}
+          onClose={() => setFilterPopover(null)}
+        />
+      )}
       <SheetTabs
         sheets={tab.info?.sheets ?? []}
         activeSheetName={tab.activeSheetName}

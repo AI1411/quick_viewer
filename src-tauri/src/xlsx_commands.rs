@@ -615,6 +615,80 @@ pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData
     })
 }
 
+/// XLSX シートを CSV としてエクスポートする。フィルタ条件（AND 複合）を適用可能。
+#[tauri::command]
+pub fn export_xlsx_sheet_as_csv(
+    path: String,
+    sheet_name: String,
+    output_path: String,
+    conditions: Vec<crate::csv_commands::FilterCondition>,
+) -> Result<(), String> {
+    let mut workbook: Xlsx<_> = open_workbook::<Xlsx<_>, _>(&path).map_err(|e| e.to_string())?;
+    let range: Range<Data> = workbook
+        .worksheet_range(&sheet_name)
+        .map_err(|e| e.to_string())?;
+
+    let (total_rows, total_cols) = range.get_size();
+    if total_rows == 0 || total_cols == 0 {
+        return Err("シートにデータがありません".to_string());
+    }
+
+    // 列ヘッダを生成（A, B, C...）
+    let headers: Vec<String> = (0..total_cols)
+        .map(|i| {
+            let mut result = String::new();
+            let mut n = i + 1;
+            while n > 0 {
+                let rem = (n - 1) % 26;
+                result.insert(0, (65 + rem as u8) as char);
+                n = (n - 1) / 26;
+            }
+            result
+        })
+        .collect();
+
+    // 全行を文字列に変換
+    let all_rows: Vec<Vec<String>> = range
+        .rows()
+        .map(|row| {
+            row.iter()
+                .map(|data| match data {
+                    Data::String(s) => s.clone(),
+                    Data::Float(f) => f.to_string(),
+                    Data::Int(i) => i.to_string(),
+                    Data::Bool(b) => if *b { "TRUE".to_string() } else { "FALSE".to_string() },
+                    Data::DateTime(dt) => serial_to_date_string(dt.as_f64()),
+                    Data::DateTimeIso(s) => s.clone(),
+                    Data::DurationIso(s) => s.clone(),
+                    Data::Error(e) => format!("{:?}", e),
+                    Data::Empty => String::new(),
+                })
+                .collect()
+        })
+        .collect();
+
+    // フィルタ適用
+    let filtered = if conditions.is_empty() {
+        all_rows
+    } else {
+        crate::csv_commands::apply_filters(&headers, &all_rows, &conditions)
+    };
+
+    // CSV として書き込み
+    let out_file = std::fs::File::create(&output_path).map_err(|e| e.to_string())?;
+    let mut wtr = csv::WriterBuilder::new()
+        .delimiter(b',')
+        .from_writer(out_file);
+
+    wtr.write_record(&headers).map_err(|e| e.to_string())?;
+    for row in &filtered {
+        wtr.write_record(row).map_err(|e| e.to_string())?;
+    }
+    wtr.flush().map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 // ── テスト ────────────────────────────────────────────────
 
 #[cfg(test)]

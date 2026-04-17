@@ -136,6 +136,7 @@ pub fn run() {
             markdown_commands::save_markdown,
             xlsx_commands::read_xlsx,
             xlsx_commands::read_xlsx_sheet,
+            xlsx_commands::export_xlsx_sheet_as_csv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
