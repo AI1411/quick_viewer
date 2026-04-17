@@ -2,6 +2,7 @@ pub mod csv_commands;
 pub mod file_watcher_commands;
 pub mod markdown_commands;
 pub mod pdf_commands;
+pub mod persistence_commands;
 pub mod xlsx_commands;
 
 use serde::Serialize;
@@ -143,6 +144,8 @@ pub fn run() {
             xlsx_commands::export_xlsx_sheet_as_csv,
             file_watcher_commands::watch_file,
             file_watcher_commands::unwatch_file,
+            persistence_commands::save_app_data,
+            persistence_commands::load_app_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
