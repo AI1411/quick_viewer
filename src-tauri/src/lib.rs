@@ -1,4 +1,5 @@
 pub mod csv_commands;
+pub mod markdown_commands;
 pub mod pdf_commands;
 
 use serde::Serialize;
