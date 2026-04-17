@@ -35,7 +35,7 @@ describe("MarkdownViewer", () => {
 
   it("shows loading state when isLoading=true", () => {
     useMarkdownStore.setState({
-      tabs: { t1: { data: null, isLoading: true, error: null } },
+      tabs: { t1: { data: null, isLoading: true, error: null, viewMode: "preview", editContent: null, isDirty: false } },
     });
     render(<MarkdownViewer tabId="t1" filePath="/test.md" />);
     expect(screen.getByText(/読み込み中/)).toBeTruthy();
@@ -43,7 +43,7 @@ describe("MarkdownViewer", () => {
 
   it("shows error state", () => {
     useMarkdownStore.setState({
-      tabs: { t1: { data: null, isLoading: false, error: "read failed" } },
+      tabs: { t1: { data: null, isLoading: false, error: "read failed", viewMode: "preview", editContent: null, isDirty: false } },
     });
     render(<MarkdownViewer tabId="t1" filePath="/test.md" />);
     expect(screen.getByText(/read failed/)).toBeTruthy();
@@ -61,6 +61,9 @@ describe("MarkdownViewer", () => {
           },
           isLoading: false,
           error: null,
+          viewMode: "preview",
+          editContent: null,
+          isDirty: false,
         },
       },
     });
@@ -81,6 +84,9 @@ describe("MarkdownViewer", () => {
           },
           isLoading: false,
           error: null,
+          viewMode: "preview",
+          editContent: null,
+          isDirty: false,
         },
       },
     });
