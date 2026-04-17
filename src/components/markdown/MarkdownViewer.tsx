@@ -33,7 +33,7 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
       });
   }, [tabId, filePath]);
 
-  function handleScroll(scrollTop: number) {
+  function handleScroll() {
     if (!tab?.data?.toc || !containerRef.current) return;
     const container = containerRef.current;
     const containerRect = container.getBoundingClientRect();
@@ -86,7 +86,7 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
         html={tab.data.html}
         filePath={filePath}
         containerRef={containerRef}
-        onScroll={handleScroll}
+        onScroll={() => handleScroll()}
       />
     </div>
   );

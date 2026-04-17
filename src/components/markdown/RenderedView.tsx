@@ -38,7 +38,7 @@ interface RenderedViewProps {
   html: string;
   filePath: string;
   containerRef: React.RefObject<HTMLDivElement | null>;
-  onScroll?: (scrollTop: number) => void;
+  onScroll?: () => void;
 }
 
 export function RenderedView({ html, filePath, containerRef, onScroll }: RenderedViewProps) {
@@ -146,7 +146,7 @@ export function RenderedView({ html, filePath, containerRef, onScroll }: Rendere
       ref={containerRef}
       className="flex-1 overflow-y-auto"
       style={{ backgroundColor: "var(--viewer-bg)" }}
-      onScroll={(e) => onScroll?.((e.currentTarget as HTMLDivElement).scrollTop)}
+      onScroll={() => onScroll?.()}
     >
       <div
         ref={innerRef}
