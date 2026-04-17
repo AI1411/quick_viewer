@@ -121,6 +121,19 @@ pub(crate) fn render_markdown(content: &str) -> (String, Vec<TocItem>) {
     (html_output, toc)
 }
 
+#[tauri::command]
+pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
+    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let (frontmatter, content) = parse_frontmatter(&raw);
+    let (html, toc) = render_markdown(content);
+    Ok(MarkdownResult { html, toc, frontmatter, raw })
+}
+
+#[tauri::command]
+pub fn save_markdown(path: String, content: String) -> Result<(), String> {
+    fs::write(&path, content).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,5 +246,31 @@ mod tests {
         assert_eq!(toc[2].level, 3);
         assert_eq!(toc[3].level, 2);
         assert_eq!(toc[3].anchor, "h2-again");
+    }
+
+    #[test]
+    fn test_read_markdown_nonexistent() {
+        let result = read_markdown("/nonexistent/path/file.md".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_save_and_read_markdown_roundtrip() {
+        let path = std::env::temp_dir().join("quickview_test_markdown.md");
+        let path_str = path.to_string_lossy().to_string();
+        let content = "---\ntitle: Test\nauthor: Alice\n---\n# Hello\n\nBody text.";
+
+        save_markdown(path_str.clone(), content.to_string()).unwrap();
+        let result = read_markdown(path_str).unwrap();
+
+        assert_eq!(result.raw, content);
+        assert!(result.html.contains("<h1"));
+        assert_eq!(result.toc.len(), 1);
+        assert_eq!(result.toc[0].text, "Hello");
+        let fm = result.frontmatter.unwrap();
+        assert_eq!(fm["title"], serde_json::json!("Test"));
+        assert_eq!(fm["author"], serde_json::json!("Alice"));
+
+        fs::remove_file(path).ok();
     }
 }
