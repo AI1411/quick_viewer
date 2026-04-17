@@ -78,6 +78,7 @@ pub(crate) fn render_markdown(content: &str) -> (String, Vec<TocItem>) {
     let mut toc: Vec<TocItem> = Vec::new();
     let mut in_heading: Option<u32> = None;
     let mut heading_text = String::new();
+    let mut anchor_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
     for event in &raw_events {
         match event {
@@ -88,9 +89,19 @@ pub(crate) fn render_markdown(content: &str) -> (String, Vec<TocItem>) {
             Event::Text(t) if in_heading.is_some() => {
                 heading_text.push_str(t);
             }
+            Event::Code(t) if in_heading.is_some() => {
+                heading_text.push_str(t);
+            }
             Event::End(TagEnd::Heading(_)) => {
                 if let Some(level) = in_heading.take() {
-                    let anchor = slugify(&heading_text);
+                    let base = slugify(&heading_text);
+                    let entry = anchor_counts.entry(base.clone()).or_insert(0);
+                    let anchor = if *entry == 0 {
+                        base
+                    } else {
+                        format!("{}-{}", base, entry)
+                    };
+                    *entry += 1;
                     toc.push(TocItem { level, text: heading_text.clone(), anchor });
                     heading_text.clear();
                 }
@@ -246,6 +257,25 @@ mod tests {
         assert_eq!(toc[2].level, 3);
         assert_eq!(toc[3].level, 2);
         assert_eq!(toc[3].anchor, "h2-again");
+    }
+
+    #[test]
+    fn test_render_markdown_duplicate_anchors() {
+        let md = "## Introduction\n## Introduction\n## Introduction";
+        let (html, toc) = render_markdown(md);
+        assert_eq!(toc[0].anchor, "introduction");
+        assert_eq!(toc[1].anchor, "introduction-1");
+        assert_eq!(toc[2].anchor, "introduction-2");
+        assert!(html.contains("id=\"introduction\""));
+        assert!(html.contains("id=\"introduction-1\""));
+        assert!(html.contains("id=\"introduction-2\""));
+    }
+
+    #[test]
+    fn test_render_markdown_heading_with_code() {
+        let (_, toc) = render_markdown("# Hello `world`");
+        assert_eq!(toc[0].text, "Hello world");
+        assert_eq!(toc[0].anchor, "hello-world");
     }
 
     #[test]
