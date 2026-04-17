@@ -29,6 +29,42 @@ pub(crate) fn slugify(text: &str) -> String {
         .collect()
 }
 
+pub(crate) fn parse_frontmatter(input: &str) -> (Option<serde_json::Value>, &str) {
+    // "---\n" または "---\r\n" で始まる場合のみfrontmatterとみなす
+    let body = match input
+        .strip_prefix("---\n")
+        .or_else(|| input.strip_prefix("---\r\n"))
+    {
+        Some(b) => b,
+        None => return (None, input),
+    };
+
+    // 閉じ "---" を探す（行頭の \n--- パターン）
+    let close_pos = match body.find("\n---") {
+        Some(p) => p,
+        None => return (None, input),
+    };
+
+    let yaml_str = &body[..close_pos];
+
+    // "\n---" の後ろを取得（"\n" or "\r\n" をスキップ）
+    let rest_start = close_pos + 4; // "\n---".len() == 4
+    let after_marker = if rest_start <= body.len() {
+        &body[rest_start..]
+    } else {
+        ""
+    };
+    let markdown_content = after_marker
+        .strip_prefix('\n')
+        .or_else(|| after_marker.strip_prefix("\r\n"))
+        .unwrap_or(after_marker);
+
+    match serde_yaml::from_str::<serde_json::Value>(yaml_str) {
+        Ok(val) => (Some(val), markdown_content),
+        Err(_) => (None, input),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,5 +92,38 @@ mod tests {
     #[test]
     fn test_slugify_cjk() {
         assert_eq!(slugify("日本語見出し"), "日本語見出し");
+    }
+
+    #[test]
+    fn test_parse_frontmatter_none() {
+        let (fm, content) = parse_frontmatter("# Hello\n\nBody text.");
+        assert!(fm.is_none());
+        assert_eq!(content, "# Hello\n\nBody text.");
+    }
+
+    #[test]
+    fn test_parse_frontmatter_basic() {
+        let md = "---\ntitle: Test\nauthor: Alice\n---\n# Hello\n\nBody.";
+        let (fm, content) = parse_frontmatter(md);
+        let fm = fm.expect("frontmatter should be Some");
+        assert_eq!(fm["title"], serde_json::json!("Test"));
+        assert_eq!(fm["author"], serde_json::json!("Alice"));
+        assert_eq!(content, "# Hello\n\nBody.");
+    }
+
+    #[test]
+    fn test_parse_frontmatter_invalid_yaml() {
+        let md = "---\nkey: [unclosed bracket\n---\n# Hello";
+        let (fm, content) = parse_frontmatter(md);
+        assert!(fm.is_none());
+        assert_eq!(content, "---\nkey: [unclosed bracket\n---\n# Hello");
+    }
+
+    #[test]
+    fn test_parse_frontmatter_no_closing() {
+        let md = "---\ntitle: Test\n# Hello";
+        let (fm, content) = parse_frontmatter(md);
+        assert!(fm.is_none());
+        assert_eq!(content, "---\ntitle: Test\n# Hello");
     }
 }
