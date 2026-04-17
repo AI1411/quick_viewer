@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { useSearchStore } from "../../stores/searchStore";
+import { highlightTextNodes, clearSearchMarks, applyMarkStyles } from "../../lib/searchHighlight";
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist";
 import "pdfjs-dist/web/pdf_viewer.css";
@@ -58,6 +60,13 @@ export function PdfCanvas({
   const textLayerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isRendering, setIsRendering] = useState(true);
+  const searchMarksRef = useRef<HTMLElement[]>([]);
+  const searchIsOpen = useSearchStore((s) => s.isOpen);
+  const searchQuery = useSearchStore((s) => s.isOpen ? s.query : "");
+  const searchUseRegex = useSearchStore((s) => s.options.useRegex);
+  const searchCaseSensitive = useSearchStore((s) => s.options.caseSensitive);
+  const currentMatchIndex = useSearchStore((s) => s.currentMatchIndex);
+
   const [colorPickerPos, setColorPickerPos] = useState<{
     x: number;
     y: number;
@@ -114,6 +123,29 @@ export function PdfCanvas({
       textLayer?.cancel();
     };
   }, [pdfDocument, pageIndex, scale, rotation]);
+
+  // テキストレイヤーへの検索ハイライト（レンダリング完了後に適用）
+  useEffect(() => {
+    if (isRendering) return;
+    const textDiv = textLayerRef.current;
+    if (!textDiv) return;
+
+    clearSearchMarks(textDiv);
+    searchMarksRef.current = [];
+
+    if (!searchIsOpen || !searchQuery) return;
+
+    const marks = highlightTextNodes(textDiv, searchQuery, {
+      useRegex: searchUseRegex,
+      caseSensitive: searchCaseSensitive,
+    });
+    searchMarksRef.current = marks;
+
+    if (marks.length > 0) {
+      const idx = currentMatchIndex % marks.length;
+      applyMarkStyles(marks, idx);
+    }
+  }, [isRendering, searchIsOpen, searchQuery, searchUseRegex, searchCaseSensitive, currentMatchIndex]);
 
   // テキスト選択完了時にカラーピッカーを表示（highlightモード時のみ）
   const handleMouseUp = useCallback(() => {
