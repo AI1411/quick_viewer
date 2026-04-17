@@ -134,6 +134,8 @@ pub fn run() {
             pdf_commands::load_annotations,
             markdown_commands::read_markdown,
             markdown_commands::save_markdown,
+            xlsx_commands::read_xlsx,
+            xlsx_commands::read_xlsx_sheet,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

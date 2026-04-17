@@ -1,4 +1,4 @@
-use calamine::{open_workbook, Data, ExcelDateTime, ExcelDateTimeType, Range, Reader, Xlsx};
+use calamine::{open_workbook, Data, Range, Reader, Xlsx};
 use chrono::NaiveDate;
 use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
@@ -555,7 +555,7 @@ fn load_sheet_file_map(xlsx_path: &str) -> HashMap<String, String> {
 
 #[tauri::command]
 pub fn read_xlsx(path: String) -> Result<XlsxInfo, String> {
-    let mut workbook: Xlsx<_> = open_workbook::<Xlsx<_>, _>(&path).map_err(|e| e.to_string())?;
+    let workbook: Xlsx<_> = open_workbook::<Xlsx<_>, _>(&path).map_err(|e| e.to_string())?;
     let names = workbook.sheet_names().to_vec();
     let sheets = names
         .into_iter()
@@ -620,6 +620,7 @@ pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData
 #[cfg(test)]
 mod tests {
     use super::*;
+    use calamine::{ExcelDateTime, ExcelDateTimeType};
 
     // serial_to_date_string tests
 
