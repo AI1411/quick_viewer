@@ -1,9 +1,11 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { dirname, join } from "@tauri-apps/api/path";
 import { createHighlighter, type Highlighter } from "shiki";
 import mermaid from "mermaid";
 import "katex/dist/katex.min.css";
+import { useSearchStore } from "../../stores/searchStore";
+import { highlightTextNodes, clearSearchMarks, applyMarkStyles } from "../../lib/searchHighlight";
 
 let _highlighter: Highlighter | null = null;
 let _highlighterPromise: Promise<Highlighter> | null = null;
@@ -43,6 +45,8 @@ interface RenderedViewProps {
 
 export function RenderedView({ html, filePath, containerRef, onScroll }: RenderedViewProps) {
   const innerRef = useRef<HTMLDivElement>(null);
+  const [postProcessKey, setPostProcessKey] = useState(0);
+  const searchMarksRef = useRef<HTMLElement[]>([]);
 
   const postProcess = useCallback(async () => {
     const el = innerRef.current;
@@ -135,11 +139,45 @@ export function RenderedView({ html, filePath, containerRef, onScroll }: Rendere
     } catch {
       // パス解決失敗は無視
     }
+
+    setPostProcessKey((k) => k + 1);
   }, [html, filePath]);
 
   useEffect(() => {
     postProcess();
   }, [postProcess]);
+
+  // 検索ハイライト（postProcess 完了後に適用）
+  const searchIsOpen = useSearchStore((s) => s.isOpen);
+  const searchQuery = useSearchStore((s) => s.isOpen ? s.query : "");
+  const searchUseRegex = useSearchStore((s) => s.options.useRegex);
+  const searchCaseSensitive = useSearchStore((s) => s.options.caseSensitive);
+  const currentMatchIndex = useSearchStore((s) => s.currentMatchIndex);
+
+  useEffect(() => {
+    const el = innerRef.current;
+    if (!el) return;
+    clearSearchMarks(el);
+    searchMarksRef.current = [];
+
+    if (!searchIsOpen || !searchQuery) {
+      useSearchStore.getState().setMatchCount(0);
+      return;
+    }
+
+    const marks = highlightTextNodes(el, searchQuery, {
+      useRegex: searchUseRegex,
+      caseSensitive: searchCaseSensitive,
+    });
+    searchMarksRef.current = marks;
+    useSearchStore.getState().setMatchCount(marks.length);
+
+    if (marks.length > 0) {
+      const idx = currentMatchIndex % marks.length;
+      applyMarkStyles(marks, idx);
+      marks[idx].scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [postProcessKey, searchIsOpen, searchQuery, searchUseRegex, searchCaseSensitive, currentMatchIndex]);
 
   return (
     <div
