@@ -27,6 +27,7 @@ interface VirtualTableProps {
   frozenRows?: string[][];
   frozenRowCount?: number;
   getCellStyle?: (rowIdx: number, colIdx: number) => React.CSSProperties;
+  scrollToRowRef?: React.MutableRefObject<((index: number) => void) | null>;
 }
 
 function isCellSelected(
@@ -63,6 +64,7 @@ export function VirtualTable({
   frozenRows,
   frozenRowCount,
   getCellStyle,
+  scrollToRowRef,
 }: VirtualTableProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const resizingRef = useRef<{
@@ -77,6 +79,13 @@ export function VirtualTable({
     estimateSize: () => ROW_HEIGHT,
     overscan: 10,
   });
+
+  useEffect(() => {
+    if (scrollToRowRef) {
+      scrollToRowRef.current = (index: number) =>
+        rowVirtualizer.scrollToIndex(index, { align: "center" });
+    }
+  }, [rowVirtualizer, scrollToRowRef]);
 
   // スクロール末尾でチャンク読み込みトリガー
   useEffect(() => {

@@ -1,11 +1,15 @@
-import { useEffect, useCallback, useMemo, useState } from "react";
+import { useEffect, useCallback, useMemo, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useCsvStore } from "../../stores/csvStore";
+import { useSearchStore } from "../../stores/searchStore";
+import { buildRegex } from "../../lib/searchHighlight";
+import type { CellMatch } from "../../stores/searchStore";
 import { VirtualTable } from "./VirtualTable";
 import { FilterPopover } from "./FilterPopover";
 import { ActiveFiltersBar } from "./ActiveFiltersBar";
 import { StatusBar } from "./StatusBar";
 import type { CsvData, CsvChunk, FilterCondition } from "../../types";
+import type React from "react";
 
 const CHUNK_SIZE = 200;
 const INITIAL_LIMIT = 100;
@@ -180,6 +184,63 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     });
   }, [tabState?.data, tabState?.filteredRows, tabState?.sort]);
 
+  // 検索ハイライト
+  const searchIsOpen = useSearchStore((s) => s.isOpen);
+  const searchQuery = useSearchStore((s) => s.query);
+  const searchUseRegex = useSearchStore((s) => s.options.useRegex);
+  const searchCaseSensitive = useSearchStore((s) => s.options.caseSensitive);
+  const cellMatches = useSearchStore((s) => s.cellMatches);
+  const currentMatchIndex = useSearchStore((s) => s.currentMatchIndex);
+  const scrollToRowRef = useRef<((index: number) => void) | null>(null);
+
+  const csvHeaders = tabState?.data?.headers ?? [];
+
+  useEffect(() => {
+    if (!searchIsOpen || !searchQuery) {
+      useSearchStore.getState().setCellMatches([]);
+      return;
+    }
+    const regex = buildRegex(searchQuery, { useRegex: searchUseRegex, caseSensitive: searchCaseSensitive });
+    if (!regex) {
+      useSearchStore.getState().setCellMatches([]);
+      return;
+    }
+    const matches: CellMatch[] = [];
+    for (let r = 0; r < displayRows.length; r++) {
+      for (let c = 0; c < csvHeaders.length; c++) {
+        regex.lastIndex = 0;
+        if (regex.test(displayRows[r][c] ?? "")) matches.push({ row: r, col: c });
+      }
+    }
+    useSearchStore.getState().setCellMatches(matches);
+  }, [searchIsOpen, searchQuery, searchUseRegex, searchCaseSensitive, displayRows, csvHeaders]);
+
+  useEffect(() => {
+    const matches = useSearchStore.getState().cellMatches;
+    if (matches.length === 0 || !scrollToRowRef.current) return;
+    const match = matches[currentMatchIndex];
+    if (match) scrollToRowRef.current(match.row);
+  }, [currentMatchIndex]);
+
+  const cellMatchSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of cellMatches) set.add(`${m.row}:${m.col}`);
+    return set;
+  }, [cellMatches]);
+
+  const currentMatch = cellMatches[currentMatchIndex] ?? null;
+
+  const getCellStyleSearch = useCallback(
+    (rowIdx: number, colIdx: number): React.CSSProperties => {
+      if (currentMatch?.row === rowIdx && currentMatch?.col === colIdx)
+        return { backgroundColor: "#f59e0b", color: "#000000" };
+      if (cellMatchSet.has(`${rowIdx}:${colIdx}`))
+        return { backgroundColor: "rgba(254,240,138,0.4)" };
+      return {};
+    },
+    [cellMatchSet, currentMatch]
+  );
+
   if (!tabState) return null;
 
   if (tabState.isLoading) {
@@ -252,6 +313,8 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
         onCellClick={handleCellClick}
         onScrollEnd={handleScrollEnd}
         onFilterClick={handleFilterClick}
+        getCellStyle={getCellStyleSearch}
+        scrollToRowRef={scrollToRowRef}
       />
 
       {/* ステータスバー */}

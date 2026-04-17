@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useCallback, useState } from "react";
+import React, { useEffect, useMemo, useCallback, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { VirtualTable } from "../csv/VirtualTable";
@@ -7,6 +7,9 @@ import { ActiveFiltersBar } from "../csv/ActiveFiltersBar";
 import { SheetTabs } from "./SheetTabs";
 import { getCellStyleByType } from "./CellFormatter";
 import { useXlsxStore } from "../../stores/xlsxStore";
+import { useSearchStore } from "../../stores/searchStore";
+import { buildRegex } from "../../lib/searchHighlight";
+import type { CellMatch } from "../../stores/searchStore";
 import type { XlsxInfo, XlsxSheetData, XlsxCell, FilterCondition } from "../../types";
 
 interface XlsxViewerProps {
@@ -130,6 +133,62 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
       return getCellStyleByType(cell.cell_type);
     },
     [filteredSortedRows]
+  );
+
+  // 検索ハイライト
+  const searchIsOpen = useSearchStore((s) => s.isOpen);
+  const searchQuery = useSearchStore((s) => s.query);
+  const searchUseRegex = useSearchStore((s) => s.options.useRegex);
+  const searchCaseSensitive = useSearchStore((s) => s.options.caseSensitive);
+  const cellMatches = useSearchStore((s) => s.cellMatches);
+  const currentMatchIndex = useSearchStore((s) => s.currentMatchIndex);
+  const scrollToRowRef = useRef<((index: number) => void) | null>(null);
+
+  useEffect(() => {
+    if (!searchIsOpen || !searchQuery) {
+      useSearchStore.getState().setCellMatches([]);
+      return;
+    }
+    const regex = buildRegex(searchQuery, { useRegex: searchUseRegex, caseSensitive: searchCaseSensitive });
+    if (!regex) {
+      useSearchStore.getState().setCellMatches([]);
+      return;
+    }
+    const matches: CellMatch[] = [];
+    for (let r = 0; r < displayRows.length; r++) {
+      for (let c = 0; c < headers.length; c++) {
+        regex.lastIndex = 0;
+        if (regex.test(displayRows[r][c] ?? "")) matches.push({ row: r, col: c });
+      }
+    }
+    useSearchStore.getState().setCellMatches(matches);
+  }, [searchIsOpen, searchQuery, searchUseRegex, searchCaseSensitive, displayRows, headers]);
+
+  useEffect(() => {
+    const matches = useSearchStore.getState().cellMatches;
+    if (matches.length === 0 || !scrollToRowRef.current) return;
+    const match = matches[currentMatchIndex];
+    if (match) scrollToRowRef.current(match.row);
+  }, [currentMatchIndex]);
+
+  const searchMatchSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of cellMatches) set.add(`${m.row}:${m.col}`);
+    return set;
+  }, [cellMatches]);
+
+  const currentSearchMatch = cellMatches[currentMatchIndex] ?? null;
+
+  const getCellStyleComposed = useCallback(
+    (rowIdx: number, colIdx: number): React.CSSProperties => {
+      const base = getCellStyle(rowIdx, colIdx);
+      if (currentSearchMatch?.row === rowIdx && currentSearchMatch?.col === colIdx)
+        return { ...base, backgroundColor: "#f59e0b", color: "#000000" };
+      if (searchMatchSet.has(`${rowIdx}:${colIdx}`))
+        return { ...base, backgroundColor: "rgba(254,240,138,0.4)" };
+      return base;
+    },
+    [getCellStyle, searchMatchSet, currentSearchMatch]
   );
 
   const handleSort = useCallback(
@@ -272,7 +331,8 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
         onCellClick={handleCellClick}
         frozenRows={frozenDisplayRows}
         frozenRowCount={freezeRowCount}
-        getCellStyle={getCellStyle}
+        getCellStyle={getCellStyleComposed}
+        scrollToRowRef={scrollToRowRef}
         filters={filters}
         onFilterClick={handleFilterClick}
       />
