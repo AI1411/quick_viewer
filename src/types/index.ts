@@ -162,3 +162,10 @@ export interface XlsxSheetData {
   total_cols: number;
   freeze_pane: FreezePane;
 }
+
+// ─── Error Types ─────────────────────────────────────────────────────────────
+
+export interface AppError {
+  code: "io" | "parse" | "not_found" | "unsupported" | "unknown";
+  message: string;
+}
