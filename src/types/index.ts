@@ -113,3 +113,18 @@ export interface NoteAnnotation {
 }
 
 export type Annotation = HighlightAnnotation | NoteAnnotation;
+
+// ─── Markdown Types ───────────────────────────────────────────────────────────
+
+export interface TocItem {
+  level: number;   // Heading level 1–6
+  text: string;    // Heading text (plain)
+  anchor: string;  // Slug ID used as element id
+}
+
+export interface MarkdownResult {
+  html: string;
+  toc: TocItem[];
+  frontmatter: Record<string, unknown> | null;
+  raw: string;
+}
