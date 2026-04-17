@@ -1,16 +1,30 @@
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { LogicalSize, LogicalPosition } from "@tauri-apps/api/dpi";
+import { invoke } from "@tauri-apps/api/core";
 import { EmptyState } from "./components/EmptyState";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
 import { ViewerArea } from "./components/ViewerArea";
+import { SettingsDialog } from "./components/SettingsDialog";
+import { RecentFilesMenu } from "./components/RecentFilesMenu";
 import { openFile, showOpenDialog } from "./lib/fileCommands";
-import { useTabStore, useSettingsStore, useSearchStore } from "./stores";
+import { useTabStore, useSettingsStore, useSearchStore, useRecentFilesStore } from "./stores";
+import type { RecentFile } from "./stores";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { FileChangedDialog } from "./components/FileChangedDialog";
 import "./App.css";
+
+interface WindowState {
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  isMaximized: boolean;
+}
 
 async function handleOpenPath(
   path: string,
@@ -22,6 +36,12 @@ async function handleOpenPath(
     const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     addTab({ id, title: info.name, filePath: info.path, format: info.format, isDirty: false, reloadCount: 0 });
     setActiveTab(id);
+    useRecentFilesStore.getState().addRecentFile({
+      path: info.path,
+      name: info.name,
+      format: info.format as RecentFile["format"],
+      openedAt: new Date().toISOString(),
+    });
   } catch (err) {
     console.error("Failed to open file:", err);
   }
@@ -29,6 +49,8 @@ async function handleOpenPath(
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [recentMenuOpen, setRecentMenuOpen] = useState(false);
   const [pendingReload, setPendingReload] = useState<{
     tabId: string;
     filePath: string;
@@ -46,6 +68,65 @@ function App() {
   );
 
   useFileWatcher(handleFileChanged);
+
+  // 起動時にディスクから設定と最近ファイルを読み込む
+  useEffect(() => {
+    useSettingsStore.getState().loadFromDisk();
+    useRecentFilesStore.getState().loadFromDisk();
+  }, []);
+
+  // ウィンドウ状態の復元
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await invoke<string | null>("load_app_data", { key: "window_state" });
+        if (raw) {
+          const state = JSON.parse(raw) as WindowState;
+          const win = getCurrentWindow();
+          if (state.isMaximized) {
+            await win.maximize();
+          } else {
+            await win.setSize(new LogicalSize(state.width, state.height));
+            await win.setPosition(new LogicalPosition(state.x, state.y));
+          }
+        }
+      } catch {
+        // 初回起動 or エラー時はデフォルト
+      }
+    })();
+  }, []);
+
+  // ウィンドウ状態の保存（リサイズ / 移動）
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let saveTimer: ReturnType<typeof setTimeout>;
+    const save = async () => {
+      try {
+        const size = await win.innerSize();
+        const pos = await win.outerPosition();
+        const isMaximized = await win.isMaximized();
+        await invoke("save_app_data", {
+          key: "window_state",
+          value: JSON.stringify({ width: size.width, height: size.height, x: pos.x, y: pos.y, isMaximized }),
+        });
+      } catch {
+        // サイレント
+      }
+    };
+    const debouncedSave = () => {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(save, 500);
+    };
+    let unlisten1: (() => void) | undefined;
+    let unlisten2: (() => void) | undefined;
+    win.onResized(debouncedSave).then((fn) => { unlisten1 = fn; });
+    win.onMoved(debouncedSave).then((fn) => { unlisten2 = fn; });
+    return () => {
+      clearTimeout(saveTimer);
+      unlisten1?.();
+      unlisten2?.();
+    };
+  }, []);
 
   // テーマを data-theme 属性に反映
   useEffect(() => {
@@ -71,6 +152,8 @@ function App() {
         if (path) handleOpenPath(path, addTab, setActiveTab);
       });
     },
+    // 設定
+    "cmd+,": () => setSettingsOpen((prev) => !prev),
     // タブ操作
     "cmd+w": () => {
       const { activeTabId: aid, removeTab } = useTabStore.getState();
@@ -151,12 +234,21 @@ function App() {
       className="flex flex-col h-full"
       style={{ color: "var(--text-primary)" }}
     >
-      <TitleBar />
+      <TitleBar onRecentClick={() => setRecentMenuOpen((prev) => !prev)} />
       <TabBar />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar isOpen={sidebarOpen} />
         <main className="flex-1 flex overflow-hidden">
-          {activeTabId ? <ViewerArea /> : <EmptyState />}
+          {activeTabId ? (
+            <ViewerArea />
+          ) : (
+            <EmptyState
+              onOpenFile={async (path) => {
+                const { addTab, setActiveTab } = useTabStore.getState();
+                await handleOpenPath(path, addTab, setActiveTab);
+              }}
+            />
+          )}
         </main>
       </div>
       {pendingReload && (
@@ -167,6 +259,16 @@ function App() {
             setPendingReload(null);
           }}
           onDismiss={() => setPendingReload(null)}
+        />
+      )}
+      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {recentMenuOpen && (
+        <RecentFilesMenu
+          onOpen={async (file) => {
+            const { addTab, setActiveTab } = useTabStore.getState();
+            await handleOpenPath(file.path, addTab, setActiveTab);
+          }}
+          onClose={() => setRecentMenuOpen(false)}
         />
       )}
     </div>

@@ -1,6 +1,10 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-export function TitleBar() {
+interface Props {
+  onRecentClick?: () => void;
+}
+
+export function TitleBar({ onRecentClick }: Props) {
   const appWindow = getCurrentWindow();
 
   return (
@@ -30,6 +34,23 @@ export function TitleBar() {
           aria-label="最大化"
         />
       </div>
+
+      {/* 最近開いたファイルボタン */}
+      {onRecentClick && (
+        <button
+          title="最近開いたファイル"
+          onClick={onRecentClick}
+          className="ml-4 px-2 py-0.5 text-xs rounded cursor-pointer z-10"
+          style={{
+            color: "var(--text-secondary)",
+            backgroundColor: "transparent",
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--bg-hover)")}
+          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+        >
+          最近
+        </button>
+      )}
 
       {/* タイトル（中央配置） */}
       <span
