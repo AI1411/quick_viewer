@@ -130,3 +130,35 @@ export interface MarkdownResult {
   frontmatter: Record<string, unknown> | null;
   raw: string;
 }
+
+// ─── XLSX Types ───────────────────────────────────────────────────────────────
+
+export interface XlsxSheetMeta {
+  name: string;
+  index: number;
+}
+
+export interface XlsxInfo {
+  sheets: XlsxSheetMeta[];
+  active_sheet_index: number;
+}
+
+export interface XlsxCell {
+  value: string;
+  raw: string;
+  cell_type: "string" | "number" | "integer" | "boolean" | "date" | "empty" | "error";
+  format_code: string | null;
+}
+
+export interface FreezePane {
+  rows: number;
+  cols: number;
+}
+
+export interface XlsxSheetData {
+  name: string;
+  rows: XlsxCell[][];
+  total_rows: number;
+  total_cols: number;
+  freeze_pane: FreezePane;
+}
