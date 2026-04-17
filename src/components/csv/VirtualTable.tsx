@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect } from "react";
+import React, { useRef, useCallback, useEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { SortState, SelectedCell } from "../../stores/csvStore";
 import type { FilterCondition } from "../../types";
@@ -19,11 +19,14 @@ interface VirtualTableProps {
   selectedFocus: SelectedCell | null;
   onSort: (colIndex: number) => void;
   onColumnResize: (colIndex: number, width: number) => void;
-  onPinToggle: (colIndex: number) => void;
   onCellClick: (row: number, col: number, shift: boolean) => void;
-  onScrollEnd: () => void;
+  onPinToggle?: (colIndex: number) => void;
+  onScrollEnd?: () => void;
   filters?: FilterCondition[];
   onFilterClick?: (colIndex: number, anchorRect: DOMRect) => void;
+  frozenRows?: string[][];
+  frozenRowCount?: number;
+  getCellStyle?: (rowIdx: number, colIdx: number) => React.CSSProperties;
 }
 
 function isCellSelected(
@@ -52,11 +55,14 @@ export function VirtualTable({
   selectedFocus,
   onSort,
   onColumnResize,
-  onPinToggle,
   onCellClick,
+  onPinToggle,
   onScrollEnd,
   filters,
   onFilterClick,
+  frozenRows,
+  frozenRowCount,
+  getCellStyle,
 }: VirtualTableProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const resizingRef = useRef<{
@@ -75,7 +81,7 @@ export function VirtualTable({
   // スクロール末尾でチャンク読み込みトリガー
   useEffect(() => {
     const el = parentRef.current;
-    if (!el) return;
+    if (!el || !onScrollEnd) return;
     const handler = () => {
       if (el.scrollTop + el.clientHeight >= el.scrollHeight - ROW_HEIGHT * 5) {
         if (rows.length < totalRows) onScrollEnd();
@@ -187,7 +193,7 @@ export function VirtualTable({
                 onClick={() => onSort(i)}
                 onContextMenu={(e) => {
                   e.preventDefault();
-                  onPinToggle(i);
+                  onPinToggle?.(i);
                 }}
                 title={`クリック: ソート | 右クリック: ピン留め切り替え`}
               >
@@ -243,6 +249,45 @@ export function VirtualTable({
         })}
       </div>
 
+      {/* フリーズ行（sticky） */}
+      {frozenRows?.map((frozenRow, frozenIdx) => (
+        <div
+          key={`frozen-${frozenIdx}`}
+          className="flex sticky z-[5]"
+          style={{
+            top: ROW_HEIGHT * (frozenIdx + 1),
+            height: ROW_HEIGHT,
+            minWidth: totalColWidth,
+            borderBottom: "1px solid var(--border-color)",
+            backgroundColor: "var(--tabbar-bg)",
+          }}
+        >
+          <div
+            className="flex-shrink-0 flex items-center justify-center text-xs"
+            style={{
+              width: ROW_NUM_WIDTH,
+              borderRight: "1px solid var(--border-color)",
+              color: "var(--text-secondary)",
+            }}
+          >
+            {frozenIdx + 1}
+          </div>
+          {headers.map((_, colIdx) => (
+            <div
+              key={colIdx}
+              className="flex items-center px-2 text-xs overflow-hidden"
+              style={{
+                width: getColWidth(colIdx),
+                flexShrink: 0,
+                borderRight: "1px solid var(--border-color)",
+              }}
+            >
+              <span className="truncate">{frozenRow[colIdx] ?? ""}</span>
+            </div>
+          ))}
+        </div>
+      ))}
+
       {/* Virtual rows */}
       <div
         style={{
@@ -273,7 +318,7 @@ export function VirtualTable({
                   backgroundColor: "var(--tabbar-bg)",
                 }}
               >
-                {virtualRow.index + 1}
+                {virtualRow.index + 1 + (frozenRowCount ?? 0)}
               </div>
 
               {/* Cells */}
@@ -313,7 +358,12 @@ export function VirtualTable({
                     }
                     title={row?.[colIdx] ?? ""}
                   >
-                    <span className="truncate">{row?.[colIdx] ?? ""}</span>
+                    <span
+                      className="truncate"
+                      style={getCellStyle?.(virtualRow.index, colIdx)}
+                    >
+                      {row?.[colIdx] ?? ""}
+                    </span>
                   </div>
                 );
               })}
