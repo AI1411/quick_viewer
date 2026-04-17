@@ -6,7 +6,7 @@ import { TabBar } from "./components/TabBar";
 import { TitleBar } from "./components/TitleBar";
 import { ViewerArea } from "./components/ViewerArea";
 import { openFile, showOpenDialog } from "./lib/fileCommands";
-import { useTabStore, useSettingsStore } from "./stores";
+import { useTabStore, useSettingsStore, useSearchStore } from "./stores";
 import { useShortcuts } from "./hooks/useShortcuts";
 import "./App.css";
 
@@ -91,7 +91,25 @@ function App() {
     "cmd+=": () => useSettingsStore.getState().increaseZoom(),
     "cmd+-": () => useSettingsStore.getState().decreaseZoom(),
     "cmd+0": () => useSettingsStore.getState().resetZoom(),
+    "cmd+f": () => {
+      const { isOpen, setOpen } = useSearchStore.getState();
+      setOpen(!isOpen);
+    },
+    "cmd+g": () => {
+      const { isOpen, nextMatch } = useSearchStore.getState();
+      if (isOpen) nextMatch();
+    },
+    "cmd+shift+g": () => {
+      const { isOpen, prevMatch } = useSearchStore.getState();
+      if (isOpen) prevMatch();
+    },
   });
+
+  useEffect(() => {
+    const store = useSearchStore.getState();
+    store.setCellMatches([]);
+    store.setMatchCount(0);
+  }, [activeTabId]);
 
   useEffect(() => {
     // ドラッグ&ドロップ

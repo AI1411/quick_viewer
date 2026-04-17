@@ -168,3 +168,11 @@ body,
 .mermaid-diagram svg {
   max-width: 100%;
 }
+
+/* 検索ハイライト */
+mark[data-search-match] {
+  background-color: #fef08a;
+  color: #000000;
+  border-radius: 2px;
+  padding: 0 1px;
+}
