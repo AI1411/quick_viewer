@@ -60,7 +60,7 @@ interface CsvStore {
 
 const defaultTabState = (): CsvTabState => ({
   data: null,
-  isLoading: false,
+  isLoading: true,
   error: null,
   columnWidths: {},
   sort: null,
