@@ -1,11 +1,11 @@
-import { useEffect, useCallback, useRef, useState } from "react";
+import { useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { usePdfStore } from "../../stores/pdfStore";
 import { loadPdfDocument } from "../../lib/pdfLib";
 import { PdfCanvas } from "./PdfCanvas";
 import { ThumbnailSidebar } from "./ThumbnailSidebar";
 import { OutlineSidebar } from "./OutlineSidebar";
-import type { PdfInfo } from "../../types";
+import type { Annotation, PdfInfo } from "../../types";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 
 const MIN_ZOOM = 0.25;
@@ -23,40 +23,43 @@ interface LazyPdfCanvasProps {
   pageIndex: number;
   scale: number;
   rotation: number;
+  annotations: Annotation[];
+  annotationMode: "none" | "highlight" | "note";
+  selectedAnnotationId: string | null;
+  onAnnotationCreate: (annotation: Annotation) => void;
+  onAnnotationDelete: (pageIndex: number, id: string) => void;
+  onAnnotationSelect: (id: string | null) => void;
 }
 
-function LazyPdfCanvas({ pdfDocument, pageIndex, scale, rotation }: LazyPdfCanvasProps) {
+function LazyPdfCanvas({
+  pdfDocument,
+  pageIndex,
+  scale,
+  rotation,
+  annotations,
+  annotationMode,
+  selectedAnnotationId,
+  onAnnotationCreate,
+  onAnnotationDelete,
+  onAnnotationSelect,
+}: LazyPdfCanvasProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const [isVisible, setIsVisible] = useState(false);
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => { if (entries[0].isIntersecting) setIsVisible(true); },
-      { rootMargin: "200px" }
-    );
-    if (ref.current) observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, []);
 
   return (
     <div ref={ref} style={{ minHeight: 400 }}>
-      {isVisible ? (
-        <PdfCanvas
-          pdfDocument={pdfDocument}
-          pageIndex={pageIndex}
-          scale={scale}
-          rotation={rotation}
-        />
-      ) : (
-        <div
-          style={{
-            width: 400,
-            height: 560,
-            backgroundColor: "#e5e7eb",
-            borderRadius: 4,
-          }}
-        />
-      )}
+      <PdfCanvas
+        pdfDocument={pdfDocument}
+        pageIndex={pageIndex}
+        scale={scale}
+        rotation={rotation}
+        annotations={annotations}
+        annotationMode={annotationMode}
+        highlightColor="yellow"
+        selectedAnnotationId={selectedAnnotationId}
+        onAnnotationCreate={onAnnotationCreate}
+        onAnnotationDelete={onAnnotationDelete}
+        onAnnotationSelect={onAnnotationSelect}
+      />
     </div>
   );
 }
@@ -65,8 +68,9 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
   const tabState = usePdfStore((s) => s.tabs[tabId]);
   const containerRef = useRef<HTMLDivElement>(null);
   const pageInputRef = useRef<HTMLInputElement>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Initialization ─────────────────────────────────────────────────────────
+  // ── 初期化 ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     let localDoc: PDFDocumentProxy | null = null;
     const store = usePdfStore.getState();
@@ -76,12 +80,21 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
     Promise.all([
       invoke<PdfInfo>("read_pdf_info", { path: filePath }),
       loadPdfDocument(filePath),
+      invoke<string>("load_annotations", { pdfPath: filePath }),
     ])
-      .then(([info, doc]) => {
+      .then(([info, doc, annsJson]) => {
         localDoc = doc;
         store.setPdfInfo(tabId, info);
         store.setPdfDocument(tabId, doc);
         store.setLoading(tabId, false);
+        try {
+          const anns: Annotation[] = JSON.parse(annsJson);
+          if (Array.isArray(anns) && anns.length > 0) {
+            store.setAnnotations(tabId, anns);
+          }
+        } catch {
+          // 注釈ファイルが不正な場合は無視
+        }
       })
       .catch((err) => store.setError(tabId, String(err)));
 
@@ -91,7 +104,23 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
     };
   }, [tabId, filePath]);
 
-  // ── Keyboard navigation ────────────────────────────────────────────────────
+  // ── 注釈の自動保存（デバウンス 500ms）────────────────────────────────────
+  useEffect(() => {
+    if (!tabState?.annotations) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      const allAnnotations = Object.values(tabState.annotations).flat();
+      invoke("save_annotations", {
+        pdfPath: filePath,
+        annotationsJson: JSON.stringify(allAnnotations),
+      }).catch(console.error);
+    }, 500);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [tabState?.annotations, filePath]);
+
+  // ── キーボードナビゲーション ───────────────────────────────────────────────
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       const store = usePdfStore.getState();
@@ -109,13 +138,16 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
         if (tab.currentPage > 1) {
           store.setCurrentPage(tabId, tab.currentPage - 1);
         }
+      } else if (e.key === "Escape") {
+        store.setAnnotationMode(tabId, "none");
+        store.setSelectedAnnotationId(tabId, null);
       }
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [tabId]);
 
-  // ── Zoom helpers ───────────────────────────────────────────────────────────
+  // ── ズームヘルパー ─────────────────────────────────────────────────────────
   const handleZoomIn = useCallback(() => {
     const tab = usePdfStore.getState().tabs[tabId];
     if (!tab) return;
@@ -169,7 +201,29 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
     [tabId]
   );
 
-  // ── Loading / Error states ─────────────────────────────────────────────────
+  // ── アノテーションコールバック ─────────────────────────────────────────────
+  const handleAnnotationCreate = useCallback(
+    (annotation: Annotation) => {
+      usePdfStore.getState().addAnnotation(tabId, annotation);
+    },
+    [tabId]
+  );
+
+  const handleAnnotationDelete = useCallback(
+    (pageIndex: number, id: string) => {
+      usePdfStore.getState().deleteAnnotation(tabId, pageIndex, id);
+    },
+    [tabId]
+  );
+
+  const handleAnnotationSelect = useCallback(
+    (id: string | null) => {
+      usePdfStore.getState().setSelectedAnnotationId(tabId, id);
+    },
+    [tabId]
+  );
+
+  // ── ローディング / エラー状態 ──────────────────────────────────────────────
   if (!tabState) return null;
 
   if (tabState.isLoading || (!tabState.pdfDocument && !tabState.error)) {
@@ -196,12 +250,25 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
 
   if (!tabState.pdfDocument || !tabState.pdfInfo) return null;
 
-  const { pdfDocument, pdfInfo, currentPage, zoom, rotation, displayMode, isSidebarOpen, sidebarMode } = tabState;
+  const {
+    pdfDocument,
+    pdfInfo,
+    currentPage,
+    zoom,
+    rotation,
+    displayMode,
+    isSidebarOpen,
+    sidebarMode,
+    annotationMode,
+    selectedAnnotationId,
+    highlightColor,
+    annotations,
+  } = tabState;
   const pageCount = pdfInfo.page_count;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Toolbar */}
+      {/* ツールバー */}
       <div
         className="flex items-center gap-2 px-3 py-1.5 flex-shrink-0 text-sm select-none"
         style={{
@@ -210,7 +277,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
           color: "var(--text-primary)",
         }}
       >
-        {/* Sidebar toggle */}
+        {/* サイドバー切り替え */}
         <button
           onClick={() => usePdfStore.getState().toggleSidebar(tabId)}
           className="px-2 py-0.5 rounded hover:bg-white/10"
@@ -219,7 +286,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
           ☰
         </button>
 
-        {/* Sidebar mode toggle — アウトラインがある場合のみ表示 */}
+        {/* サイドバーモード切り替え — アウトラインがある場合のみ表示 */}
         {isSidebarOpen && pdfInfo.outlines.length > 0 && (
           <button
             onClick={() =>
@@ -237,7 +304,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
 
         <div style={{ width: 1, height: 16, backgroundColor: "var(--border-color)" }} />
 
-        {/* Page navigation */}
+        {/* ページナビゲーション */}
         <button
           onClick={() => {
             if (currentPage > 1) usePdfStore.getState().setCurrentPage(tabId, currentPage - 1);
@@ -285,7 +352,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
 
         <div style={{ width: 1, height: 16, backgroundColor: "var(--border-color)" }} />
 
-        {/* Zoom controls */}
+        {/* ズームコントロール */}
         <button
           onClick={handleZoomOut}
           disabled={zoom <= MIN_ZOOM}
@@ -322,7 +389,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
 
         <div style={{ width: 1, height: 16, backgroundColor: "var(--border-color)" }} />
 
-        {/* Rotation */}
+        {/* 回転 */}
         <button
           onClick={handleRotate}
           className="px-2 py-0.5 rounded hover:bg-white/10 text-xs"
@@ -331,7 +398,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
           ↻
         </button>
 
-        {/* Display mode */}
+        {/* 表示モード */}
         <button
           onClick={() =>
             usePdfStore.getState().setDisplayMode(
@@ -344,9 +411,72 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
         >
           {displayMode === "single" ? "連続" : "単頁"}
         </button>
+
+        <div style={{ width: 1, height: 16, backgroundColor: "var(--border-color)" }} />
+
+        {/* アノテーション: ハイライトモード */}
+        <button
+          onClick={() =>
+            usePdfStore.getState().setAnnotationMode(
+              tabId,
+              annotationMode === "highlight" ? "none" : "highlight"
+            )
+          }
+          className="px-2 py-0.5 rounded text-xs"
+          style={{
+            backgroundColor:
+              annotationMode === "highlight" ? "rgba(234,179,8,0.3)" : "transparent",
+            color: "var(--text-primary)",
+          }}
+          title="テキストハイライト（テキストを選択して色を選ぶ）"
+        >
+          HL
+        </button>
+
+        {/* アノテーション: メモモード */}
+        <button
+          onClick={() =>
+            usePdfStore.getState().setAnnotationMode(
+              tabId,
+              annotationMode === "note" ? "none" : "note"
+            )
+          }
+          className="px-2 py-0.5 rounded text-xs"
+          style={{
+            backgroundColor:
+              annotationMode === "note" ? "rgba(234,179,8,0.3)" : "transparent",
+            color: "var(--text-primary)",
+          }}
+          title="メモ注釈（ページ上の任意の位置にクリック）"
+        >
+          📌
+        </button>
+
+        {/* 選択中アノテーション削除 */}
+        {selectedAnnotationId && (
+          <button
+            onClick={() => {
+              const store = usePdfStore.getState();
+              const tab = store.tabs[tabId];
+              if (!tab || !selectedAnnotationId) return;
+              for (const [pageIdx, anns] of Object.entries(tab.annotations)) {
+                const found = anns.find((a) => a.id === selectedAnnotationId);
+                if (found) {
+                  store.deleteAnnotation(tabId, Number(pageIdx), selectedAnnotationId);
+                  break;
+                }
+              }
+            }}
+            className="px-2 py-0.5 rounded text-xs hover:bg-red-500/20"
+            style={{ color: "#f87171" }}
+            title="選択中の注釈を削除"
+          >
+            🗑
+          </button>
+        )}
       </div>
 
-      {/* Main content */}
+      {/* メインコンテンツ */}
       <div className="flex flex-1 overflow-hidden">
         {isSidebarOpen && (
           sidebarMode === "outline" && pdfInfo.outlines.length > 0 ? (
@@ -375,6 +505,13 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
               pageIndex={currentPage - 1}
               scale={zoom * 1.5}
               rotation={rotation}
+              annotations={annotations[currentPage - 1] ?? []}
+              annotationMode={annotationMode}
+              highlightColor={highlightColor}
+              selectedAnnotationId={selectedAnnotationId}
+              onAnnotationCreate={handleAnnotationCreate}
+              onAnnotationDelete={handleAnnotationDelete}
+              onAnnotationSelect={handleAnnotationSelect}
             />
           ) : (
             <div className="flex flex-col items-center gap-6">
@@ -385,6 +522,12 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
                   pageIndex={i}
                   scale={zoom * 1.5}
                   rotation={rotation}
+                  annotations={annotations[i] ?? []}
+                  annotationMode={annotationMode}
+                  selectedAnnotationId={selectedAnnotationId}
+                  onAnnotationCreate={handleAnnotationCreate}
+                  onAnnotationDelete={handleAnnotationDelete}
+                  onAnnotationSelect={handleAnnotationSelect}
                 />
               ))}
             </div>
