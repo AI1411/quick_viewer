@@ -2,6 +2,7 @@ import { useTabStore } from "../stores/tabStore";
 import { CsvViewer } from "./csv/CsvViewer";
 import { PdfViewer } from "./pdf/PdfViewer";
 import { MarkdownViewer } from "./markdown/MarkdownViewer";
+import { XlsxViewer } from "./xlsx/XlsxViewer";
 
 export function ViewerArea() {
   const activeTabId = useTabStore((s) => s.activeTabId);
@@ -30,6 +31,14 @@ export function ViewerArea() {
     return (
       <div className="flex-1 flex overflow-hidden">
         <MarkdownViewer tabId={activeTab.id} filePath={activeTab.filePath} />
+      </div>
+    );
+  }
+
+  if (activeTab.format === "xlsx") {
+    return (
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <XlsxViewer tabId={activeTab.id} filePath={activeTab.filePath} />
       </div>
     );
   }
