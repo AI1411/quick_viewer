@@ -4,3 +4,5 @@ export { useCsvStore } from "./csvStore";
 export { useMarkdownStore } from "./markdownStore";
 export { useSearchStore } from "./searchStore";
 export type { SearchOptions, CellMatch } from "./searchStore";
+export { useRecentFilesStore } from "./recentFilesStore";
+export type { RecentFile } from "./recentFilesStore";
