@@ -130,11 +130,11 @@
 
 ### 4-1. Rust バックエンド — Markdown
 
-- [ ] `read_markdown` コマンド実装（pulldown-cmark: MD → HTML 変換）
-- [ ] GFM 拡張有効化（テーブル / タスクリスト / 脚注 / Strikethrough）
-- [ ] 目次（ToC）データ抽出（見出しレベル + テキスト + アンカー）
-- [ ] Frontmatter パース（YAML メタデータ抽出）
-- [ ] `save_markdown` コマンド実装（ソーステキストをファイル保存）
+- [x] `read_markdown` コマンド実装（pulldown-cmark: MD → HTML 変換）
+- [x] GFM 拡張有効化（テーブル / タスクリスト / 脚注 / Strikethrough）
+- [x] 目次（ToC）データ抽出（見出しレベル + テキスト + アンカー）
+- [x] Frontmatter パース（YAML メタデータ抽出）
+- [x] `save_markdown` コマンド実装（ソーステキストをファイル保存）
 
 ### 4-2. フロントエンド — プレビュー表示
 
