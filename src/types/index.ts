@@ -116,6 +116,8 @@ export type Annotation = HighlightAnnotation | NoteAnnotation;
 
 // ─── Markdown Types ───────────────────────────────────────────────────────────
 
+export type ViewMode = "preview" | "source" | "split";
+
 export interface TocItem {
   level: number;   // Heading level 1–6
   text: string;    // Heading text (plain)

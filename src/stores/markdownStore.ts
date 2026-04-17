@@ -1,10 +1,13 @@
 import { create } from "zustand";
-import type { MarkdownResult } from "../types";
+import type { MarkdownResult, ViewMode } from "../types";
 
 interface MarkdownTabState {
   data: MarkdownResult | null;
   isLoading: boolean;
   error: string | null;
+  viewMode: ViewMode;
+  editContent: string | null;
+  isDirty: boolean;
 }
 
 interface MarkdownStore {
@@ -14,6 +17,9 @@ interface MarkdownStore {
   setLoading: (tabId: string, isLoading: boolean) => void;
   setError: (tabId: string, error: string | null) => void;
   removeTab: (tabId: string) => void;
+  setViewMode: (tabId: string, mode: ViewMode) => void;
+  setEditContent: (tabId: string, content: string) => void;
+  setDirty: (tabId: string, isDirty: boolean) => void;
 }
 
 export const useMarkdownStore = create<MarkdownStore>((set) => ({
@@ -23,7 +29,16 @@ export const useMarkdownStore = create<MarkdownStore>((set) => ({
     set((s) => ({
       tabs: {
         ...s.tabs,
-        [tabId]: s.tabs[tabId] ?? { data: null, isLoading: false, error: null },
+        [tabId]:
+          s.tabs[tabId] ??
+          {
+            data: null,
+            isLoading: false,
+            error: null,
+            viewMode: "preview",
+            editContent: null,
+            isDirty: false,
+          },
       },
     })),
 
@@ -47,4 +62,19 @@ export const useMarkdownStore = create<MarkdownStore>((set) => ({
       const { [tabId]: _, ...rest } = s.tabs;
       return { tabs: rest };
     }),
+
+  setViewMode: (tabId, viewMode) =>
+    set((s) => ({
+      tabs: { ...s.tabs, [tabId]: { ...s.tabs[tabId], viewMode } },
+    })),
+
+  setEditContent: (tabId, editContent) =>
+    set((s) => ({
+      tabs: { ...s.tabs, [tabId]: { ...s.tabs[tabId], editContent } },
+    })),
+
+  setDirty: (tabId, isDirty) =>
+    set((s) => ({
+      tabs: { ...s.tabs, [tabId]: { ...s.tabs[tabId], isDirty } },
+    })),
 }));

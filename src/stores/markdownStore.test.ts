@@ -53,3 +53,42 @@ describe("markdownStore", () => {
     expect(useMarkdownStore.getState().tabs["t1"]).toBeUndefined();
   });
 });
+
+describe("viewMode / editContent / isDirty", () => {
+  beforeEach(() => {
+    useMarkdownStore.setState({ tabs: {} });
+  });
+
+  it("initTab initializes viewMode=preview, editContent=null, isDirty=false", () => {
+    useMarkdownStore.getState().initTab("e1");
+    const tab = useMarkdownStore.getState().tabs["e1"];
+    expect(tab.viewMode).toBe("preview");
+    expect(tab.editContent).toBeNull();
+    expect(tab.isDirty).toBe(false);
+  });
+
+  it("setViewMode updates viewMode", () => {
+    useMarkdownStore.getState().initTab("e2");
+    useMarkdownStore.getState().setViewMode("e2", "split");
+    expect(useMarkdownStore.getState().tabs["e2"].viewMode).toBe("split");
+  });
+
+  it("setEditContent updates editContent", () => {
+    useMarkdownStore.getState().initTab("e3");
+    useMarkdownStore.getState().setEditContent("e3", "# Hello");
+    expect(useMarkdownStore.getState().tabs["e3"].editContent).toBe("# Hello");
+  });
+
+  it("setDirty updates isDirty", () => {
+    useMarkdownStore.getState().initTab("e4");
+    useMarkdownStore.getState().setDirty("e4", true);
+    expect(useMarkdownStore.getState().tabs["e4"].isDirty).toBe(true);
+  });
+
+  it("initTab is idempotent for new fields", () => {
+    useMarkdownStore.getState().initTab("e5");
+    useMarkdownStore.getState().setViewMode("e5", "source");
+    useMarkdownStore.getState().initTab("e5");
+    expect(useMarkdownStore.getState().tabs["e5"].viewMode).toBe("source");
+  });
+});
