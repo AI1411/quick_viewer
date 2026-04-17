@@ -1,6 +1,7 @@
 pub mod csv_commands;
 pub mod markdown_commands;
 pub mod pdf_commands;
+pub mod xlsx_commands;
 
 use serde::Serialize;
 use std::fs;
