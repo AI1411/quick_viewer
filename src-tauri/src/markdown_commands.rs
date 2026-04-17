@@ -65,6 +65,62 @@ pub(crate) fn parse_frontmatter(input: &str) -> (Option<serde_json::Value>, &str
     }
 }
 
+pub(crate) fn render_markdown(content: &str) -> (String, Vec<TocItem>) {
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_TABLES);
+    opts.insert(Options::ENABLE_TASKLISTS);
+    opts.insert(Options::ENABLE_FOOTNOTES);
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+
+    // 第1パス: イベントを収集してToC構築
+    let raw_events: Vec<Event> = Parser::new_ext(content, opts).collect();
+
+    let mut toc: Vec<TocItem> = Vec::new();
+    let mut in_heading: Option<u32> = None;
+    let mut heading_text = String::new();
+
+    for event in &raw_events {
+        match event {
+            Event::Start(Tag::Heading { level, .. }) => {
+                in_heading = Some(*level as u32);
+                heading_text.clear();
+            }
+            Event::Text(t) if in_heading.is_some() => {
+                heading_text.push_str(t);
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some(level) = in_heading.take() {
+                    let anchor = slugify(&heading_text);
+                    toc.push(TocItem { level, text: heading_text.clone(), anchor });
+                    heading_text.clear();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // 第2パス: 見出しにid属性を注入してHTMLレンダリング
+    let mut toc_idx = 0usize;
+    let events_with_ids: Vec<Event> = raw_events
+        .into_iter()
+        .map(|event| match event {
+            Event::Start(Tag::Heading { level, id: _, classes, attrs }) => {
+                let anchor = toc.get(toc_idx).map(|t| {
+                    toc_idx += 1;
+                    CowStr::Boxed(t.anchor.clone().into_boxed_str())
+                });
+                Event::Start(Tag::Heading { level, id: anchor, classes, attrs })
+            }
+            other => other,
+        })
+        .collect();
+
+    let mut html_output = String::new();
+    html::push_html(&mut html_output, events_with_ids.into_iter());
+
+    (html_output, toc)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,5 +181,57 @@ mod tests {
         let (fm, content) = parse_frontmatter(md);
         assert!(fm.is_none());
         assert_eq!(content, "---\ntitle: Test\n# Hello");
+    }
+
+    #[test]
+    fn test_render_markdown_basic() {
+        let (html, toc) = render_markdown("# Hello\n\nWorld.");
+        assert!(html.contains("<h1"));
+        assert!(html.contains("Hello"));
+        assert!(html.contains("<p>World.</p>"));
+        assert_eq!(toc.len(), 1);
+        assert_eq!(toc[0].level, 1);
+        assert_eq!(toc[0].text, "Hello");
+        assert_eq!(toc[0].anchor, "hello");
+    }
+
+    #[test]
+    fn test_render_markdown_heading_id_in_html() {
+        let (html, toc) = render_markdown("## My Section");
+        assert_eq!(toc[0].anchor, "my-section");
+        assert!(html.contains("id=\"my-section\""));
+    }
+
+    #[test]
+    fn test_render_markdown_gfm_table() {
+        let md = "| A | B |\n|---|---|\n| 1 | 2 |";
+        let (html, _) = render_markdown(md);
+        assert!(html.contains("<table>"));
+    }
+
+    #[test]
+    fn test_render_markdown_gfm_strikethrough() {
+        let (html, _) = render_markdown("~~deleted~~");
+        assert!(html.contains("<del>deleted</del>"));
+    }
+
+    #[test]
+    fn test_render_markdown_gfm_tasklist() {
+        let md = "- [x] Done\n- [ ] Pending";
+        let (html, _) = render_markdown(md);
+        assert!(html.contains("checkbox"));
+        assert!(html.contains("checked"));
+    }
+
+    #[test]
+    fn test_render_markdown_toc_multiple_headings() {
+        let md = "# H1\n## H2\n### H3\n## H2 Again";
+        let (_, toc) = render_markdown(md);
+        assert_eq!(toc.len(), 4);
+        assert_eq!(toc[0].level, 1);
+        assert_eq!(toc[1].level, 2);
+        assert_eq!(toc[2].level, 3);
+        assert_eq!(toc[3].level, 2);
+        assert_eq!(toc[3].anchor, "h2-again");
     }
 }
