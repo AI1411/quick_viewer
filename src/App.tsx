@@ -11,8 +11,10 @@ import { ViewerArea } from "./components/ViewerArea";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { RecentFilesMenu } from "./components/RecentFilesMenu";
 import { openFile, showOpenDialog } from "./lib/fileCommands";
-import { useTabStore, useSettingsStore, useSearchStore, useRecentFilesStore } from "./stores";
+import { useTabStore, useSettingsStore, useSearchStore, useRecentFilesStore, showError } from "./stores";
 import type { RecentFile } from "./stores";
+import { Toast } from "./components/Toast";
+import { errorMessage } from "./lib/errorUtils";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { FileChangedDialog } from "./components/FileChangedDialog";
@@ -43,7 +45,7 @@ async function handleOpenPath(
       openedAt: new Date().toISOString(),
     });
   } catch (err) {
-    console.error("Failed to open file:", err);
+    showError(`ファイルを開けませんでした: ${errorMessage(err)}`);
   }
 }
 
@@ -271,6 +273,7 @@ function App() {
           onClose={() => setRecentMenuOpen(false)}
         />
       )}
+      <Toast />
     </div>
   );
 }
