@@ -7,14 +7,14 @@ describe("tabStore", () => {
   });
 
   it("addTab でタブが追加される", () => {
-    const tab = { id: "1", title: "test.csv", filePath: "/tmp/test.csv", isDirty: false };
+    const tab = { id: "1", title: "test.csv", filePath: "/tmp/test.csv", isDirty: false, reloadCount: 0 };
     useTabStore.getState().addTab(tab);
     expect(useTabStore.getState().tabs).toHaveLength(1);
     expect(useTabStore.getState().tabs[0]).toEqual(tab);
   });
 
   it("removeTab でタブが削除される", () => {
-    const tab = { id: "1", title: "test.csv", filePath: "/tmp/test.csv", isDirty: false };
+    const tab = { id: "1", title: "test.csv", filePath: "/tmp/test.csv", isDirty: false, reloadCount: 0 };
     useTabStore.getState().addTab(tab);
     useTabStore.getState().removeTab("1");
     expect(useTabStore.getState().tabs).toHaveLength(0);
@@ -33,9 +33,9 @@ describe("reorderTabs", () => {
 
   it("指定インデックスにタブを移動できる", () => {
     const { addTab, reorderTabs } = useTabStore.getState();
-    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false });
-    addTab({ id: "b", title: "B", filePath: "/b.csv", isDirty: false });
-    addTab({ id: "c", title: "C", filePath: "/c.csv", isDirty: false });
+    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false, reloadCount: 0 });
+    addTab({ id: "b", title: "B", filePath: "/b.csv", isDirty: false, reloadCount: 0 });
+    addTab({ id: "c", title: "C", filePath: "/c.csv", isDirty: false, reloadCount: 0 });
     reorderTabs("a", 2);
     const { tabs } = useTabStore.getState();
     expect(tabs.map((t) => t.id)).toEqual(["b", "c", "a"]);
@@ -49,8 +49,8 @@ describe("removeTab - active tab handling", () => {
 
   it("アクティブなタブを閉じたとき左隣タブがアクティブになる", () => {
     const { addTab, removeTab, setActiveTab } = useTabStore.getState();
-    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false });
-    addTab({ id: "b", title: "B", filePath: "/b.csv", isDirty: false });
+    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false, reloadCount: 0 });
+    addTab({ id: "b", title: "B", filePath: "/b.csv", isDirty: false, reloadCount: 0 });
     setActiveTab("b");
     removeTab("b");
     expect(useTabStore.getState().activeTabId).toBe("a");
@@ -58,7 +58,7 @@ describe("removeTab - active tab handling", () => {
 
   it("最後のタブを閉じたとき activeTabId が null になる", () => {
     const { addTab, removeTab, setActiveTab } = useTabStore.getState();
-    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false });
+    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false, reloadCount: 0 });
     setActiveTab("a");
     removeTab("a");
     expect(useTabStore.getState().activeTabId).toBeNull();
@@ -72,9 +72,9 @@ describe("closeOtherTabs", () => {
 
   it("指定タブ以外を全て閉じる", () => {
     const { addTab, closeOtherTabs } = useTabStore.getState();
-    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false });
-    addTab({ id: "b", title: "B", filePath: "/b.csv", isDirty: false });
-    addTab({ id: "c", title: "C", filePath: "/c.csv", isDirty: false });
+    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false, reloadCount: 0 });
+    addTab({ id: "b", title: "B", filePath: "/b.csv", isDirty: false, reloadCount: 0 });
+    addTab({ id: "c", title: "C", filePath: "/c.csv", isDirty: false, reloadCount: 0 });
     closeOtherTabs("b");
     expect(useTabStore.getState().tabs.map((t) => t.id)).toEqual(["b"]);
     expect(useTabStore.getState().activeTabId).toBe("b");
@@ -88,9 +88,9 @@ describe("closeTabsToRight", () => {
 
   it("指定タブより右を全て閉じる", () => {
     const { addTab, closeTabsToRight } = useTabStore.getState();
-    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false });
-    addTab({ id: "b", title: "B", filePath: "/b.csv", isDirty: false });
-    addTab({ id: "c", title: "C", filePath: "/c.csv", isDirty: false });
+    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false, reloadCount: 0 });
+    addTab({ id: "b", title: "B", filePath: "/b.csv", isDirty: false, reloadCount: 0 });
+    addTab({ id: "c", title: "C", filePath: "/c.csv", isDirty: false, reloadCount: 0 });
     closeTabsToRight("a");
     expect(useTabStore.getState().tabs.map((t) => t.id)).toEqual(["a"]);
   });
@@ -103,7 +103,7 @@ describe("setDirty", () => {
 
   it("タブの isDirty を更新できる", () => {
     const { addTab, setDirty } = useTabStore.getState();
-    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false });
+    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false, reloadCount: 0 });
     setDirty("a", true);
     expect(useTabStore.getState().tabs[0].isDirty).toBe(true);
   });

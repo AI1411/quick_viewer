@@ -7,6 +7,7 @@ export interface Tab {
   filePath: string;
   format?: FileFormat;
   isDirty: boolean;
+  reloadCount: number;
 }
 
 interface TabState {
@@ -19,6 +20,7 @@ interface TabState {
   closeOtherTabs: (id: string) => void;
   closeTabsToRight: (id: string) => void;
   setDirty: (id: string, isDirty: boolean) => void;
+  bumpReload: (id: string) => void;
 }
 
 export const useTabStore = create<TabState>((set) => ({
@@ -77,5 +79,12 @@ export const useTabStore = create<TabState>((set) => ({
   setDirty: (id, isDirty) =>
     set((state) => ({
       tabs: state.tabs.map((t) => (t.id === id ? { ...t, isDirty } : t)),
+    })),
+
+  bumpReload: (id) =>
+    set((state) => ({
+      tabs: state.tabs.map((t) =>
+        t.id === id ? { ...t, reloadCount: t.reloadCount + 1 } : t
+      ),
     })),
 }));

@@ -1,0 +1,53 @@
+import { useEffect, useRef } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import { useTabStore } from "../stores/tabStore";
+
+export function useFileWatcher(
+  onFileChanged: (tabId: string, filePath: string) => void
+) {
+  const tabs = useTabStore((s) => s.tabs);
+  const watchedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    const current = new Set(tabs.map((t) => t.filePath));
+
+    for (const path of current) {
+      if (!watchedRef.current.has(path)) {
+        invoke("watch_file", { path }).catch(console.error);
+        watchedRef.current.add(path);
+      }
+    }
+
+    for (const path of watchedRef.current) {
+      if (!current.has(path)) {
+        invoke("unwatch_file", { path }).catch(console.error);
+        watchedRef.current.delete(path);
+      }
+    }
+  }, [tabs]);
+
+  useEffect(() => {
+    return () => {
+      for (const path of watchedRef.current) {
+        invoke("unwatch_file", { path }).catch(console.error);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    listen<string>("file-changed", (event) => {
+      const changedPath = event.payload;
+      const tab = useTabStore
+        .getState()
+        .tabs.find((t) => t.filePath === changedPath);
+      if (tab) {
+        onFileChanged(tab.id, changedPath);
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, [onFileChanged]);
+}

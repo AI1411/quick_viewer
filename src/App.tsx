@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { EmptyState } from "./components/EmptyState";
 import { Sidebar } from "./components/Sidebar";
@@ -8,6 +8,8 @@ import { ViewerArea } from "./components/ViewerArea";
 import { openFile, showOpenDialog } from "./lib/fileCommands";
 import { useTabStore, useSettingsStore, useSearchStore } from "./stores";
 import { useShortcuts } from "./hooks/useShortcuts";
+import { useFileWatcher } from "./hooks/useFileWatcher";
+import { FileChangedDialog } from "./components/FileChangedDialog";
 import "./App.css";
 
 async function handleOpenPath(
@@ -18,7 +20,7 @@ async function handleOpenPath(
   try {
     const info = await openFile(path);
     const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    addTab({ id, title: info.name, filePath: info.path, format: info.format, isDirty: false });
+    addTab({ id, title: info.name, filePath: info.path, format: info.format, isDirty: false, reloadCount: 0 });
     setActiveTab(id);
   } catch (err) {
     console.error("Failed to open file:", err);
@@ -27,9 +29,23 @@ async function handleOpenPath(
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [pendingReload, setPendingReload] = useState<{
+    tabId: string;
+    filePath: string;
+  } | null>(null);
   const activeTabId = useTabStore((state) => state.activeTabId);
+  const bumpReload = useTabStore((s) => s.bumpReload);
   const theme = useSettingsStore((state) => state.theme);
   const zoomLevel = useSettingsStore((state) => state.zoomLevel);
+
+  const handleFileChanged = useCallback(
+    (tabId: string, filePath: string) => {
+      setPendingReload((prev) => prev ?? { tabId, filePath });
+    },
+    []
+  );
+
+  useFileWatcher(handleFileChanged);
 
   // テーマを data-theme 属性に反映
   useEffect(() => {
@@ -143,6 +159,16 @@ function App() {
           {activeTabId ? <ViewerArea /> : <EmptyState />}
         </main>
       </div>
+      {pendingReload && (
+        <FileChangedDialog
+          filePath={pendingReload.filePath}
+          onReload={() => {
+            bumpReload(pendingReload.tabId);
+            setPendingReload(null);
+          }}
+          onDismiss={() => setPendingReload(null)}
+        />
+      )}
     </div>
   );
 }

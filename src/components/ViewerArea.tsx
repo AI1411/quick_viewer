@@ -16,13 +16,13 @@ export function ViewerArea() {
     <div className="flex-1 flex flex-col overflow-hidden">
       <SearchBar />
       {activeTab.format === "csv" || activeTab.format === "tsv" ? (
-        <CsvViewer tabId={activeTab.id} filePath={activeTab.filePath} />
+        <CsvViewer key={`${activeTab.id}-${activeTab.reloadCount}`} tabId={activeTab.id} filePath={activeTab.filePath} />
       ) : activeTab.format === "pdf" ? (
-        <PdfViewer tabId={activeTab.id} filePath={activeTab.filePath} />
+        <PdfViewer key={`${activeTab.id}-${activeTab.reloadCount}`} tabId={activeTab.id} filePath={activeTab.filePath} />
       ) : activeTab.format === "markdown" ? (
-        <MarkdownViewer tabId={activeTab.id} filePath={activeTab.filePath} />
+        <MarkdownViewer key={`${activeTab.id}-${activeTab.reloadCount}`} tabId={activeTab.id} filePath={activeTab.filePath} />
       ) : activeTab.format === "xlsx" ? (
-        <XlsxViewer tabId={activeTab.id} filePath={activeTab.filePath} />
+        <XlsxViewer key={`${activeTab.id}-${activeTab.reloadCount}`} tabId={activeTab.id} filePath={activeTab.filePath} />
       ) : (
         <div
           className="flex-1 flex items-center justify-center text-sm"

@@ -1,4 +1,5 @@
 pub mod csv_commands;
+pub mod file_watcher_commands;
 pub mod markdown_commands;
 pub mod pdf_commands;
 pub mod xlsx_commands;
@@ -120,6 +121,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(file_watcher_commands::WatcherState(std::sync::Mutex::new(
+            std::collections::HashMap::new(),
+        )))
         .invoke_handler(tauri::generate_handler![
             open_file,
             csv_commands::detect_encoding,
@@ -137,6 +141,8 @@ pub fn run() {
             xlsx_commands::read_xlsx,
             xlsx_commands::read_xlsx_sheet,
             xlsx_commands::export_xlsx_sheet_as_csv,
+            file_watcher_commands::watch_file,
+            file_watcher_commands::unwatch_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
