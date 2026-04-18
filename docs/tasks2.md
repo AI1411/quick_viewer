@@ -194,16 +194,16 @@ Codex による通常レビュー + 攻撃者視点レビュー（セッショ�
   - `tabStore.removeTab()` しか呼ばない。未使用の各ストア `removeTab()` が残存。
   - 修正: ビューアンマウント時に必ず後始末。
 
-- [ ] **巨大 JSON を `JSON.parse()` 直打ち（300MB で OOM）**
+- [x] **巨大 JSON を `JSON.parse()` 直打ち（300MB で OOM）**
   - `src/components/pdf/PdfViewer.tsx:83`, `src/stores/recentFilesStore.ts:45`, `src/stores/settingsStore.ts:104`
   - 修正: ファイルサイズ上限、schema validation、streaming parser。
 
-- [ ] **Mermaid / Shiki / KaTeX の CPU 爆弾でメインスレッド固まる**
+- [x] **Mermaid / Shiki / KaTeX の CPU 爆弾でメインスレッド固まる**
   - `src/components/markdown/RenderedView.tsx:55`
   - 500 個の Mermaid ブロック、数十 MB の code fence、数万個の `$...$` で発火。
-  - 修正: ブロック数・文字数の上限、Web Worker オフロード、タイムアウトとキャンセル。
+  - 修正: ブロック数・文字数の上限を設定（MERMAID_MAX_BLOCKS=20, CODE_MAX_CHARS=500k, MATH_MAX_CHARS=200k）。
 
-- [ ] **`recent_files.json` / `settings.json` が妥当 JSON なら中身を無検証で飲む**
+- [x] **`recent_files.json` / `settings.json` が妥当 JSON なら中身を無検証で飲む**
   - `src/stores/recentFilesStore.ts:45`, `src/stores/settingsStore.ts:104`
   - 100 万件 recent files で起動後メモリ爆発。
   - 修正: schema 検証、件数・文字列長・数値範囲に hard cap。

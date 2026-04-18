@@ -106,7 +106,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       const raw = await invoke<string | null>("load_app_data", { key: STORAGE_KEY });
       if (raw) {
+        if (raw.length > 1 * 1024 * 1024) {
+          console.warn("settings.json が大きすぎるためデフォルト設定を使用");
+          return;
+        }
         const parsed = JSON.parse(raw);
+        if (typeof parsed !== "object" || parsed === null) return;
         if (parsed.pdfSettings?.defaultViewMode === "double") {
           parsed.pdfSettings.defaultViewMode = "continuous";
         }

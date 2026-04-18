@@ -47,8 +47,21 @@ export const useRecentFilesStore = create<RecentFilesState>((set, get) => ({
     try {
       const raw = await invoke<string | null>("load_app_data", { key: STORAGE_KEY });
       if (raw) {
-        const parsed = JSON.parse(raw) as RecentFile[];
-        set({ recentFiles: parsed });
+        if (raw.length > 5 * 1024 * 1024) {
+          console.warn("recent_files.json が大きすぎるためスキップ");
+          return;
+        }
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return;
+        const files = (parsed as unknown[])
+          .slice(0, MAX_RECENT)
+          .filter(
+            (f): f is RecentFile =>
+              typeof f === "object" && f !== null &&
+              typeof (f as RecentFile).path === "string" &&
+              typeof (f as RecentFile).name === "string"
+          );
+        set({ recentFiles: files });
       }
     } catch {
       // 初回起動時はファイルなし
