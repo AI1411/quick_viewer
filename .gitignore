@@ -28,3 +28,8 @@ src-tauri/target/
 
 # Superpowers brainstorming artifacts
 .superpowers/
+
+# Tauri icon extras (iOS/Android/64x64 are outside this project's scope)
+src-tauri/icons/64x64.png
+src-tauri/icons/android/
+src-tauri/icons/ios/
