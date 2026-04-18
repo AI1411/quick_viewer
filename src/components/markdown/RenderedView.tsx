@@ -52,10 +52,17 @@ export function RenderedView({ html, filePath, containerRef, onScroll }: Rendere
     const el = innerRef.current;
     if (!el) return;
 
+    // ブロック数・文字数の制限
+    const MERMAID_MAX_BLOCKS = 20;
+    const CODE_MAX_CHARS = 500_000;
+    const MATH_MAX_CHARS = 200_000;
+
     // 1. Mermaid（先に処理してコードブロックをSVGに置換）
-    const mermaidEls = el.querySelectorAll<HTMLElement>("code.language-mermaid");
+    const mermaidEls = Array.from(
+      el.querySelectorAll<HTMLElement>("code.language-mermaid")
+    ).slice(0, MERMAID_MAX_BLOCKS);
     await Promise.all(
-      Array.from(mermaidEls).map(async (codeEl, i) => {
+      mermaidEls.map(async (codeEl, i) => {
         const pre = codeEl.parentElement;
         if (!pre) return;
         const code = codeEl.textContent ?? "";
@@ -86,6 +93,7 @@ export function RenderedView({ html, filePath, containerRef, onScroll }: Rendere
         if (!match) continue;
         const lang = match[1];
         const code = codeEl.textContent ?? "";
+        if (code.length > CODE_MAX_CHARS) continue;
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const safeLang = loadedLangs.includes(lang as any) ? (lang as any) : "text";
         const highlighted = highlighter.codeToHtml(code, { lang: safeLang, theme });
@@ -107,16 +115,20 @@ export function RenderedView({ html, filePath, containerRef, onScroll }: Rendere
 
     // 3. KaTeX 数式レンダリング
     try {
-      const { default: renderMathInElement } = await import("katex/contrib/auto-render");
-      renderMathInElement(el, {
-        delimiters: [
-          { left: "$$", right: "$$", display: true },
-          { left: "$", right: "$", display: false },
-          { left: "\\(", right: "\\)", display: false },
-          { left: "\\[", right: "\\]", display: true },
-        ],
-        throwOnError: false,
-      });
+      if ((el.textContent?.length ?? 0) > MATH_MAX_CHARS) {
+        // 数式が多すぎる場合はスキップ
+      } else {
+        const { default: renderMathInElement } = await import("katex/contrib/auto-render");
+        renderMathInElement(el, {
+          delimiters: [
+            { left: "$$", right: "$$", display: true },
+            { left: "$", right: "$", display: false },
+            { left: "\\(", right: "\\)", display: false },
+            { left: "\\[", right: "\\]", display: true },
+          ],
+          throwOnError: false,
+        });
+      }
     } catch {
       // KaTeX 失敗は無視
     }
