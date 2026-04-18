@@ -54,13 +54,13 @@ export const useRecentFilesStore = create<RecentFilesState>((set, get) => ({
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed)) return;
         const files = (parsed as unknown[])
-          .slice(0, MAX_RECENT)
           .filter(
             (f): f is RecentFile =>
               typeof f === "object" && f !== null &&
               typeof (f as RecentFile).path === "string" &&
               typeof (f as RecentFile).name === "string"
-          );
+          )
+          .slice(0, MAX_RECENT);
         set({ recentFiles: files });
       }
     } catch {
