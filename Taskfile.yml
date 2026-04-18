@@ -1,0 +1,58 @@
+version: "3"
+
+# Install go-task: brew install go-task/tap/go-task
+# List tasks:     task --list-all
+
+tasks:
+  default:
+    desc: タスク一覧を表示
+    cmds:
+      - task --list-all
+    silent: true
+
+  changelog:
+    desc: 次のリリースに入る変更点をプレビュー（git-cliff --unreleased）
+    cmds:
+      - npx --yes --package git-cliff@latest git-cliff --unreleased --config cliff.toml
+
+  bump:patch:
+    desc: "patch バージョンを上げて commit + tag（例: 0.1.2 -> 0.1.3）"
+    cmds:
+      - npm run version:bump -- patch
+
+  bump:minor:
+    desc: "minor バージョンを上げて commit + tag（例: 0.1.2 -> 0.2.0）"
+    cmds:
+      - npm run version:bump -- minor
+
+  bump:major:
+    desc: "major バージョンを上げて commit + tag（例: 0.1.2 -> 1.0.0）"
+    cmds:
+      - npm run version:bump -- major
+
+  push:
+    desc: commit と tag を origin に push してリリース CI を起動
+    cmds:
+      - git push origin main
+      - git push origin --tags
+
+  release:patch:
+    desc: "patch リリース: changelog 確認 → bump → push"
+    cmds:
+      - task: changelog
+      - task: bump:patch
+      - task: push
+
+  release:minor:
+    desc: "minor リリース: changelog 確認 → bump → push"
+    cmds:
+      - task: changelog
+      - task: bump:minor
+      - task: push
+
+  release:major:
+    desc: "major リリース: changelog 確認 → bump → push"
+    cmds:
+      - task: changelog
+      - task: bump:major
+      - task: push
