@@ -178,18 +178,18 @@ Codex による通常レビュー + 攻撃者視点レビュー（セッショ�
 
 ### エラーハンドリング
 
-- [ ] **PDF 注釈保存失敗が `console.error` で握りつぶされる**
+- [x] **PDF 注釈保存失敗が `console.error` で握りつぶされる**
   - `src-tauri/src/pdf_commands.rs:303`, `src/components/pdf/PdfViewer.tsx:107`
   - 読取専用ディレクトリ上の PDF では「保存できたように見えて消える」。
   - 修正: app data 配下へ保存先を移動、失敗時はトースト表示。
 
-- [ ] **CSV フィルタ失敗 / CSV・XLSX エクスポート失敗が無表示 or `console.error` のみ**
+- [x] **CSV フィルタ失敗 / CSV・XLSX エクスポート失敗が無表示 or `console.error` のみ**
   - `src/components/csv/CsvViewer.tsx:127`, `src/components/csv/ActiveFiltersBar.tsx:44`, `src/components/xlsx/XlsxViewer.tsx:257`
   - 修正: `showError()` に統一、リトライ可否を含むエラー UX を揃える。
 
 ### メモリ / リソース
 
-- [ ] **タブを閉じても CSV/XLSX の重いストア状態が残る**
+- [x] **タブを閉じても CSV/XLSX の重いストア状態が残る**
   - `src/App.tsx:173`, `src/components/TabBar.tsx:88`, `src/stores/csvStore.ts:179`, `src/stores/xlsxStore.ts:139`
   - `tabStore.removeTab()` しか呼ばない。未使用の各ストア `removeTab()` が残存。
   - 修正: ビューアンマウント時に必ず後始末。

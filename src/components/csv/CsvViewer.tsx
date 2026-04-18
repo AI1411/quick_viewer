@@ -2,6 +2,7 @@ import { useEffect, useCallback, useMemo, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useCsvStore } from "../../stores/csvStore";
 import { useSearchStore } from "../../stores/searchStore";
+import { showError } from "../../stores/toastStore";
 import { buildRegex } from "../../lib/searchHighlight";
 import type { CellMatch } from "../../stores/searchStore";
 import { VirtualTable } from "./VirtualTable";
@@ -39,6 +40,13 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       })
       .catch((err) => setError(tabId, String(err)));
   }, [tabId, filePath]);
+
+  // アンマウント時にストア状態をクリーンアップ
+  useEffect(() => {
+    return () => {
+      useCsvStore.getState().removeTab(tabId);
+    };
+  }, [tabId]);
 
   // チャンク追加読み込み（フィルタ中は無効）
   const handleScrollEnd = useCallback(() => {
@@ -131,8 +139,9 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
           conditions: newFilters,
         });
         setFilters(tabId, newFilters, data.rows);
-      } catch {
+      } catch (err) {
         setFiltering(tabId, false);
+        showError(`フィルタの適用に失敗しました: ${String(err)}`);
       }
     },
     [tabId, filePath]
@@ -158,8 +167,9 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
           conditions: newFilters,
         });
         setFilters(tabId, newFilters, data.rows);
-      } catch {
+      } catch (err) {
         setFiltering(tabId, false);
+        showError(`フィルタのクリアに失敗しました: ${String(err)}`);
       }
     },
     [tabId, filePath]

@@ -8,6 +8,7 @@ import { SheetTabs } from "./SheetTabs";
 import { getCellStyleByType } from "./CellFormatter";
 import { useXlsxStore } from "../../stores/xlsxStore";
 import { useSearchStore } from "../../stores/searchStore";
+import { showError } from "../../stores/toastStore";
 import { buildRegex } from "../../lib/searchHighlight";
 import type { CellMatch } from "../../stores/searchStore";
 import type { XlsxInfo, XlsxSheetData, XlsxCell, FilterCondition } from "../../types";
@@ -71,6 +72,13 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
       })
       .catch((e) => store.setError(tabId, String(e)));
   }, [tabId, filePath]);
+
+  // アンマウント時にストア状態をクリーンアップ
+  useEffect(() => {
+    return () => {
+      store.removeTab(tabId);
+    };
+  }, [tabId, store]);
 
   const sheetRequestSeqRef = useRef(0);
 
@@ -277,7 +285,7 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
         conditions: filters,
       });
     } catch (err) {
-      console.error("Export error:", err);
+      showError(`XLSX エクスポートに失敗しました: ${String(err)}`);
     }
   }, [filePath, tab?.activeSheetName, filters]);
 
