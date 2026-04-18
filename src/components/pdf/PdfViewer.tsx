@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { usePdfStore } from "../../stores/pdfStore";
 import { showError } from "../../stores/toastStore";
@@ -45,22 +45,38 @@ function LazyPdfCanvas({
   onAnnotationSelect,
 }: LazyPdfCanvasProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const [isVisible, setIsVisible] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setIsVisible(entries[0].isIntersecting);
+      },
+      { rootMargin: "200px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   return (
     <div ref={ref} style={{ minHeight: 400 }}>
-      <PdfCanvas
-        pdfDocument={pdfDocument}
-        pageIndex={pageIndex}
-        scale={scale}
-        rotation={rotation}
-        annotations={annotations}
-        annotationMode={annotationMode}
-        highlightColor="yellow"
-        selectedAnnotationId={selectedAnnotationId}
-        onAnnotationCreate={onAnnotationCreate}
-        onAnnotationDelete={onAnnotationDelete}
-        onAnnotationSelect={onAnnotationSelect}
-      />
+      {isVisible && (
+        <PdfCanvas
+          pdfDocument={pdfDocument}
+          pageIndex={pageIndex}
+          scale={scale}
+          rotation={rotation}
+          annotations={annotations}
+          annotationMode={annotationMode}
+          highlightColor="yellow"
+          selectedAnnotationId={selectedAnnotationId}
+          onAnnotationCreate={onAnnotationCreate}
+          onAnnotationDelete={onAnnotationDelete}
+          onAnnotationSelect={onAnnotationSelect}
+        />
+      )}
     </div>
   );
 }
