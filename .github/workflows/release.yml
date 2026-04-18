@@ -35,10 +35,13 @@ jobs:
 
       - name: Generate changelog
         id: git-cliff
-        uses: orhun/git-cliff-action@v3
-        with:
-          config: cliff.toml
-          args: --latest
+        run: |
+          CHANGELOG=$(npx --yes --package git-cliff@latest git-cliff --latest --config cliff.toml)
+          {
+            echo "content<<GITCLIFF_EOF"
+            echo "$CHANGELOG"
+            echo "GITCLIFF_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
