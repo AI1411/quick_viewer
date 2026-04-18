@@ -76,6 +76,10 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npx tsc --noEmit
 ```
 
+## リリース
+
+リリース手順は [docs/RELEASE.md](docs/RELEASE.md) を参照。ワンコマンドで changelog 確認 → バージョン bump → tag push までを行い、GitHub Actions が DMG ビルドと Release 作成を自動実行します。
+
 ## ライセンス
 
 MIT
