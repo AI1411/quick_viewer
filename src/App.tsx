@@ -148,11 +148,14 @@ function App() {
   // キーボードショートカット
   useShortcuts({
     // ファイル
-    "cmd+o": () => {
-      const { addTab, setActiveTab } = useTabStore.getState();
-      showOpenDialog().then((path) => {
-        if (path) handleOpenPath(path, addTab, setActiveTab);
-      });
+    "cmd+o": async () => {
+      try {
+        const { addTab, setActiveTab } = useTabStore.getState();
+        const path = await showOpenDialog();
+        if (path) await handleOpenPath(path, addTab, setActiveTab);
+      } catch (err) {
+        showError(`ファイルダイアログを開けませんでした: ${errorMessage(err)}`);
+      }
     },
     // 設定
     "cmd+,": () => setSettingsOpen((prev) => !prev),
