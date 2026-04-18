@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useTabStore } from "../stores/tabStore";
+import { isSelfWrite } from "../lib/selfWriteGuard";
 
 export function useFileWatcher(
   onFileChanged: (tabId: string, filePath: string) => void
@@ -41,6 +42,7 @@ export function useFileWatcher(
     listen<string>("file-changed", (event) => {
       if (cancelled) return;
       const changedPath = event.payload;
+      if (isSelfWrite(changedPath)) return; // 自分の保存を無視
       const matchingTabs = useTabStore
         .getState()
         .tabs.filter((t) => t.filePath === changedPath);
