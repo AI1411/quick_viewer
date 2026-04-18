@@ -11,7 +11,7 @@ export interface CsvSettings {
 }
 
 export interface PdfSettings {
-  defaultViewMode: "single" | "double" | "continuous";
+  defaultViewMode: "single" | "continuous";
 }
 
 export interface MarkdownSettings {
@@ -107,6 +107,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const raw = await invoke<string | null>("load_app_data", { key: STORAGE_KEY });
       if (raw) {
         const parsed = JSON.parse(raw);
+        if (parsed.pdfSettings?.defaultViewMode === "double") {
+          parsed.pdfSettings.defaultViewMode = "continuous";
+        }
         set({ ...DEFAULT_SETTINGS, ...parsed });
       }
     } catch {

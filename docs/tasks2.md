@@ -152,14 +152,14 @@ Codex による通常レビュー + 攻撃者視点レビュー（セッショ�
   - `src/components/SettingsDialog.tsx:134`, `src/stores/settingsStore.ts:84`, `src/App.tsx:151`
   - 修正: `document.documentElement.style.fontFamily` か CSS 変数へ反映、Markdown/表/エディタ全てで効くように。
 
-- [ ] **PDF「見開き 2 ページ」設定が UI にあるのに未実装**
+- [x] **PDF「見開き 2 ページ」設定が UI にあるのに未実装**
   - `src/components/SettingsDialog.tsx:173`, `src/stores/settingsStore.ts:13`, `src/types/index.ts:81`, `src/components/pdf/PdfViewer.tsx:401`
   - 表示モード型が `single | continuous` の 2 択のみ。
   - 修正: 設定を削除するか、2-up レイアウトを実装する。
 
 ### 競合 / 並行性
 
-- [ ] **同ファイルを複数タブで開くと最初の 1 タブしか監視通知を受けない**
+- [x] **同ファイルを複数タブで開くと最初の 1 タブしか監視通知を受けない**
   - `src/hooks/useFileWatcher.ts:41`
   - `find()` で先頭タブだけに reload を送る → stale タブが最新を上書きで消失。
   - 修正: `filePath -> Set<tabId>` で全タブ通知。

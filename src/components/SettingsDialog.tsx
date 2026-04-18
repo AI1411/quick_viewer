@@ -170,7 +170,6 @@ export function SettingsDialog({ onClose }: Props) {
                   style={selectStyle}
                 >
                   <option value="single">1 ページ</option>
-                  <option value="double">見開き 2 ページ</option>
                   <option value="continuous">連続スクロール</option>
                 </select>
               </SettingRow>
