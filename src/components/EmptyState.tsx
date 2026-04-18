@@ -1,4 +1,5 @@
 import { useRecentFilesStore } from "../stores/recentFilesStore";
+import { showOpenDialog } from "../lib/fileCommands";
 
 interface Props {
   onOpenFile?: (path: string) => void;
@@ -7,8 +8,13 @@ interface Props {
 export function EmptyState({ onOpenFile }: Props) {
   const recentFiles = useRecentFilesStore((s) => s.recentFiles);
 
+  const handleSelectFile = async () => {
+    const path = await showOpenDialog();
+    if (path && onOpenFile) onOpenFile(path);
+  };
+
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-6">
+    <div className="flex-1 flex flex-col items-center justify-center h-full gap-6">
       <div className="flex flex-col items-center gap-2">
         <svg
           width="48"
@@ -31,6 +37,21 @@ export function EmptyState({ onOpenFile }: Props) {
           ファイルを開いてください
         </p>
       </div>
+
+      <button
+        type="button"
+        onClick={handleSelectFile}
+        className="px-4 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors"
+        style={{
+          backgroundColor: "#3b82f6",
+          color: "#ffffff",
+        }}
+        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#2563eb")}
+        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#3b82f6")}
+      >
+        ファイルを選択
+      </button>
+
       <div
         className="flex flex-col items-center gap-1.5 text-sm"
         style={{ color: "var(--text-secondary)", opacity: 0.6 }}
@@ -42,7 +63,7 @@ export function EmptyState({ onOpenFile }: Props) {
           >
             ⌘O
           </kbd>{" "}
-          でファイルを選択
+          でも選択できます
         </p>
         <p>または ドラッグ&ドロップ でファイルを追加</p>
       </div>
