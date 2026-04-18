@@ -37,7 +37,9 @@ export function useFileWatcher(
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let cancelled = false;
     listen<string>("file-changed", (event) => {
+      if (cancelled) return;
       const changedPath = event.payload;
       const tab = useTabStore
         .getState()
@@ -46,8 +48,12 @@ export function useFileWatcher(
         onFileChanged(tab.id, changedPath);
       }
     }).then((fn) => {
-      unlisten = fn;
+      if (cancelled) fn();
+      else unlisten = fn;
     });
-    return () => unlisten?.();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, [onFileChanged]);
 }

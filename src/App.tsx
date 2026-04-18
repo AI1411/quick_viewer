@@ -121,9 +121,17 @@ function App() {
     };
     let unlisten1: (() => void) | undefined;
     let unlisten2: (() => void) | undefined;
-    win.onResized(debouncedSave).then((fn) => { unlisten1 = fn; });
-    win.onMoved(debouncedSave).then((fn) => { unlisten2 = fn; });
+    let cancelled = false;
+    win.onResized(debouncedSave).then((fn) => {
+      if (cancelled) fn();
+      else unlisten1 = fn;
+    });
+    win.onMoved(debouncedSave).then((fn) => {
+      if (cancelled) fn();
+      else unlisten2 = fn;
+    });
     return () => {
+      cancelled = true;
       clearTimeout(saveTimer);
       unlisten1?.();
       unlisten2?.();
@@ -218,8 +226,10 @@ function App() {
   useEffect(() => {
     // ドラッグ&ドロップ
     let unlisten: (() => void) | undefined;
+    let cancelled = false;
     getCurrentWebview()
       .onDragDropEvent((event) => {
+        if (cancelled) return;
         if (event.payload.type === "drop") {
           const paths = event.payload.paths ?? [];
           const { addTab, setActiveTab } = useTabStore.getState();
@@ -229,9 +239,13 @@ function App() {
         }
       })
       .then((fn) => {
-        unlisten = fn;
+        if (cancelled) fn();
+        else unlisten = fn;
       });
-    return () => unlisten?.();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   return (
