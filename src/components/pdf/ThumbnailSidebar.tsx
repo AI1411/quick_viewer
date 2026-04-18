@@ -3,6 +3,27 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { invoke } from "@tauri-apps/api/core";
 import type { PdfPageData } from "../../types";
 
+const MAX_CONCURRENT = 4;
+let activeRenders = 0;
+const renderQueue: Array<() => void> = [];
+
+function acquireSemaphore(): Promise<void> {
+  return new Promise((resolve) => {
+    if (activeRenders < MAX_CONCURRENT) {
+      activeRenders++;
+      resolve();
+    } else {
+      renderQueue.push(() => { activeRenders++; resolve(); });
+    }
+  });
+}
+
+function releaseSemaphore() {
+  activeRenders--;
+  const next = renderQueue.shift();
+  if (next) next();
+}
+
 interface ThumbnailItemProps {
   filePath: string;
   pageIndex: number;
@@ -20,7 +41,6 @@ function ThumbnailItem({
   const [isVisible, setIsVisible] = useState(false);
   const ref = useRef<HTMLButtonElement>(null);
 
-  // Lazy-load: only invoke Rust when the thumbnail scrolls into view
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
@@ -34,13 +54,19 @@ function ThumbnailItem({
 
   useEffect(() => {
     if (!isVisible) return;
-    invoke<PdfPageData>("read_pdf_page", {
-      path: filePath,
-      pageIndex,
-      scale: 0.2,
-    })
-      .then(setImageData)
-      .catch(console.error);
+    let cancelled = false;
+    acquireSemaphore().then(() => {
+      if (cancelled) { releaseSemaphore(); return; }
+      invoke<PdfPageData>("read_pdf_page", {
+        path: filePath,
+        pageIndex,
+        scale: 0.2,
+      })
+        .then((data) => { if (!cancelled) setImageData(data); })
+        .catch(() => {})
+        .finally(() => releaseSemaphore());
+    });
+    return () => { cancelled = true; };
   }, [isVisible, filePath, pageIndex]);
 
   return (
@@ -110,13 +136,10 @@ export function ThumbnailSidebar({
   const virtualizer = useVirtualizer({
     count: pageCount,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 152, // thumbnail height + page number + gap
+    estimateSize: () => 152,
     overscan: 3,
   });
 
-  // Scroll active thumbnail into view when page changes.
-  // virtualizer is intentionally omitted from deps — it's re-created each render
-  // and scrollToIndex is idempotent for the same currentPage value.
   useEffect(() => {
     virtualizer.scrollToIndex(currentPage - 1, { align: "auto" });
   // eslint-disable-next-line react-hooks/exhaustive-deps
