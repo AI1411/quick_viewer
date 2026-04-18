@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMarkdownStore } from "../../stores/markdownStore";
 import { useTabStore } from "../../stores/tabStore";
-import { readMarkdown, saveMarkdown } from "../../lib/markdownCommands";
+import { readMarkdown, saveMarkdown, renderMarkdownString } from "../../lib/markdownCommands";
 import { useShortcuts } from "../../hooks/useShortcuts";
 import { RenderedView } from "./RenderedView";
 import { TocSidebar } from "./TocSidebar";
@@ -21,6 +21,7 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
   const tab = useMarkdownStore((s) => s.tabs[tabId]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
+  const [liveHtml, setLiveHtml] = useState<string | null>(null);
 
   useEffect(() => {
     initTab(tabId);
@@ -35,6 +36,21 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
         setLoading(tabId, false);
       });
   }, [tabId, filePath]);
+
+  // split モード時: editContent が変わるたびデバウンス 300ms でライブプレビュー更新
+  useEffect(() => {
+    const viewMode = useMarkdownStore.getState().tabs[tabId]?.viewMode ?? "preview";
+    if (viewMode !== "split") return;
+    const content = tab?.editContent ?? tab?.data?.raw;
+    if (content == null) return;
+
+    const timer = setTimeout(() => {
+      renderMarkdownString(content)
+        .then((result) => setLiveHtml(result.html))
+        .catch(() => {}); // preview failure is non-fatal
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [tab?.editContent, tab?.viewMode, tabId]);
 
   function handleScroll() {
     if (!tab?.data?.toc || !containerRef.current) return;
@@ -58,6 +74,15 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
     const state = useMarkdownStore.getState().tabs[tabId];
     if (mode !== "preview" && state?.editContent === null && state?.data) {
       setEditContent(tabId, state.data.raw);
+    }
+    // split に切り替わったらすぐ初期 liveHtml を設定
+    if (mode === "split") {
+      const content = state?.editContent ?? state?.data?.raw;
+      if (content) {
+        renderMarkdownString(content)
+          .then((result) => setLiveHtml(result.html))
+          .catch(() => {});
+      }
     }
     setViewMode(tabId, mode);
   }
@@ -177,7 +202,7 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
         {viewMode === "split" && (
           <SplitView
             content={editValue}
-            html={tab.data.html}
+            html={liveHtml ?? tab.data.html}
             filePath={filePath}
             onChange={handleContentChange}
           />

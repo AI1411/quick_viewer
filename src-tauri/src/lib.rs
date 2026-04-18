@@ -145,6 +145,7 @@ pub fn run() {
             pdf_commands::load_annotations,
             markdown_commands::read_markdown,
             markdown_commands::save_markdown,
+            markdown_commands::render_markdown_string,
             xlsx_commands::read_xlsx,
             xlsx_commands::read_xlsx_sheet,
             xlsx_commands::export_xlsx_sheet_as_csv,

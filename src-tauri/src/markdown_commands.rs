@@ -166,6 +166,13 @@ pub fn save_markdown(path: String, content: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn render_markdown_string(content: String) -> Result<MarkdownResult, String> {
+    let (frontmatter, body) = parse_frontmatter(&content);
+    let (html, toc) = render_markdown(body);
+    Ok(MarkdownResult { html, toc, frontmatter, raw: content })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
