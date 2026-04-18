@@ -189,8 +189,14 @@ function App() {
     "cmd+,": () => setSettingsOpen((prev) => !prev),
     // タブ操作
     "cmd+w": () => {
-      const { activeTabId: aid, removeTab } = useTabStore.getState();
-      if (aid) removeTab(aid);
+      const { activeTabId: aid, removeTab, tabs } = useTabStore.getState();
+      if (!aid) return;
+      const tab = tabs.find((t) => t.id === aid);
+      if (tab?.isDirty) {
+        const ok = window.confirm(`「${tab.title}」には未保存の変更があります。閉じますか？`);
+        if (!ok) return;
+      }
+      removeTab(aid);
     },
     "ctrl+tab": () => {
       const { tabs, activeTabId: aid, setActiveTab } = useTabStore.getState();

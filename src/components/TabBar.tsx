@@ -3,6 +3,15 @@ import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { Tab } from "./Tab";
 import { useTabStore } from "../stores";
 
+function closeTabSafely(tabId: string, removeTab: (id: string) => void) {
+  const tab = useTabStore.getState().tabs.find((t) => t.id === tabId);
+  if (tab?.isDirty) {
+    const ok = window.confirm(`「${tab.title}」には未保存の変更があります。閉じますか？`);
+    if (!ok) return;
+  }
+  removeTab(tabId);
+}
+
 interface ContextMenuState {
   x: number;
   y: number;
@@ -85,7 +94,7 @@ export function TabBar() {
             isActive={tab.id === activeTabId}
             index={index}
             onActivate={() => setActiveTab(tab.id)}
-            onClose={() => removeTab(tab.id)}
+            onClose={() => closeTabSafely(tab.id, removeTab)}
             onContextMenu={handleContextMenu}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
@@ -132,7 +141,7 @@ function buildContextMenuItems(
   const hasRight = tabIndex < tabs.length - 1;
 
   return [
-    { label: "閉じる", onClick: () => removeTab(tabId) },
+    { label: "閉じる", onClick: () => closeTabSafely(tabId, removeTab) },
     { separator: true, label: "", onClick: () => {} },
     {
       label: "他を全て閉じる",

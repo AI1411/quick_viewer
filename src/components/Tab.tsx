@@ -47,7 +47,7 @@ export function Tab({
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button === 1) {
-      // ミドルクリックで閉じる
+      // ミドルクリックで閉じる（isDirty チェックは onClose 側で実施）
       e.preventDefault();
       onClose();
     }
