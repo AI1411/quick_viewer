@@ -1,5 +1,6 @@
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
+import { showError } from "../../stores/toastStore";
 import type { FilterCondition } from "../../types";
 
 const FILTER_TYPE_LABELS: Record<FilterCondition["filter_type"], string> = {
@@ -48,7 +49,7 @@ export function ActiveFiltersBar({
         conditions: filters,
       });
     } catch (err) {
-      console.error("Export error:", err);
+      showError(`CSV エクスポートに失敗しました: ${String(err)}`);
     }
   };
 

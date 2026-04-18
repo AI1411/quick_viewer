@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { usePdfStore } from "../../stores/pdfStore";
+import { showError } from "../../stores/toastStore";
 import { loadPdfDocument } from "../../lib/pdfLib";
 import { PdfCanvas } from "./PdfCanvas";
 import { ThumbnailSidebar } from "./ThumbnailSidebar";
@@ -113,7 +114,9 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
       invoke("save_annotations", {
         pdfPath: filePath,
         annotationsJson: JSON.stringify(allAnnotations),
-      }).catch(console.error);
+      }).catch((err: unknown) => {
+        showError(`注釈の保存に失敗しました: ${String(err)}`);
+      });
     }, 500);
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
