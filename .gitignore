@@ -25,3 +25,6 @@ dist-ssr
 
 # Rust / Tauri
 src-tauri/target/
+
+# Superpowers brainstorming artifacts
+.superpowers/
