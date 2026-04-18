@@ -103,8 +103,12 @@ function App() {
           if (state.isMaximized) {
             await win.maximize();
           } else {
-            await win.setSize(new LogicalSize(state.width, state.height));
-            await win.setPosition(new LogicalPosition(state.x, state.y));
+            const safeWidth = Math.max(400, Math.min(state.width, 7680));
+            const safeHeight = Math.max(300, Math.min(state.height, 4320));
+            const safeX = Math.max(-200, state.x);
+            const safeY = Math.max(0, state.y);
+            await win.setSize(new LogicalSize(safeWidth, safeHeight));
+            await win.setPosition(new LogicalPosition(safeX, safeY));
           }
         }
       } catch {

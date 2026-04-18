@@ -31,14 +31,17 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
   useEffect(() => {
     const { initTab, setLoading, setData, setError } = useCsvStore.getState();
     initTab(tabId);
+    let cancelled = false;
     setLoading(tabId, true);
     const t0 = performance.now();
     invoke<CsvData>("read_csv", { path: filePath, limit: INITIAL_LIMIT })
       .then((data) => {
+        if (cancelled) return;
         console.info(`[perf] read_csv: ${(performance.now() - t0).toFixed(1)}ms`);
         setData(tabId, data);
       })
-      .catch((err) => setError(tabId, String(err)));
+      .catch((err) => { if (!cancelled) setError(tabId, String(err)); });
+    return () => { cancelled = true; };
   }, [tabId, filePath]);
 
   // アンマウント時にストア状態をクリーンアップ

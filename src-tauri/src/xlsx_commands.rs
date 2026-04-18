@@ -601,8 +601,11 @@ pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData
 
     let (start_row, start_col) = range.start().unwrap_or((0, 0));
 
+    const MAX_DISPLAY_ROWS: usize = 10_000;
+
     let rows: Vec<Vec<XlsxCell>> = range
         .rows()
+        .take(MAX_DISPLAY_ROWS)
         .enumerate()
         .map(|(row_rel, row): (usize, &[Data])| {
             row.iter()

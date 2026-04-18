@@ -41,6 +41,9 @@ pub struct FilterCondition {
 
 /// ファイルバイト列をエンコーディング自動検出してデコードし、(テキスト, エンコーディング名) を返す。
 pub(crate) fn decode_file(raw: &[u8]) -> (String, String) {
+    // UTF-8 BOM を除去してからデコード
+    let raw = raw.strip_prefix(b"\xef\xbb\xbf").unwrap_or(raw);
+
     let mut detector = EncodingDetector::new();
     detector.feed(raw, true);
     let encoding = detector.guess(None, true);
@@ -48,13 +51,29 @@ pub(crate) fn decode_file(raw: &[u8]) -> (String, String) {
     (cow.into_owned(), encoding.name().to_string())
 }
 
-/// 先頭 5 行のサンプルから最も多く現れる区切り文字を返す。
+/// 先頭 5 行のサンプルから最も多く現れる区切り文字を返す（クォート内は除外）。
 pub(crate) fn detect_delimiter_auto(sample: &str) -> u8 {
-    let sample_5: String = sample.lines().take(5).collect::<Vec<_>>().join("\n");
+    let sample_lines: Vec<&str> = sample.lines().take(5).collect();
+
+    let count_unquoted = |line: &str, delim: char| -> usize {
+        let mut count = 0usize;
+        let mut in_quote = false;
+        for ch in line.chars() {
+            if ch == '"' {
+                in_quote = !in_quote;
+            } else if !in_quote && ch == delim {
+                count += 1;
+            }
+        }
+        count
+    };
+
     let candidates: &[(u8, char)] = &[(b',', ','), (b'\t', '\t'), (b';', ';'), (b'|', '|')];
     candidates
         .iter()
-        .max_by_key(|(_, c)| sample_5.chars().filter(|x| x == c).count())
+        .max_by_key(|(_, c)| {
+            sample_lines.iter().map(|line| count_unquoted(line, *c)).sum::<usize>()
+        })
         .map(|(d, _)| *d)
         .unwrap_or(b',')
 }

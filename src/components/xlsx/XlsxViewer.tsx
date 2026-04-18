@@ -58,19 +58,24 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
 
   useEffect(() => {
     if (!filePath) return;
+    let cancelled = false;
     store.setLoading(tabId, true);
     invoke<XlsxInfo>("read_xlsx", { path: filePath })
       .then((info) => {
+        if (cancelled) return;
         store.setInfo(tabId, info);
         const firstSheet = info.sheets[0];
         if (firstSheet) {
           return invoke<XlsxSheetData>("read_xlsx_sheet", {
             path: filePath,
             sheetName: firstSheet.name,
-          }).then((data) => store.setSheetData(tabId, data, firstSheet.name));
+          }).then((data) => {
+            if (!cancelled) store.setSheetData(tabId, data, firstSheet.name);
+          });
         }
       })
-      .catch((e) => store.setError(tabId, String(e)));
+      .catch((e) => { if (!cancelled) store.setError(tabId, String(e)); });
+    return () => { cancelled = true; };
   }, [tabId, filePath]);
 
   // アンマウント時にストア状態をクリーンアップ
@@ -330,6 +335,14 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
         onClearAll={handleClearAllFilters}
         onExport={handleExport}
       />
+      {tab.sheetData.rows.length < tab.sheetData.total_rows && (
+        <div
+          className="px-3 py-1 text-xs shrink-0"
+          style={{ color: "var(--text-secondary)", backgroundColor: "var(--toolbar-bg)", borderBottom: "1px solid var(--border-color)" }}
+        >
+          先頭 {tab.sheetData.rows.length.toLocaleString()} 行を表示（全 {tab.sheetData.total_rows.toLocaleString()} 行）
+        </div>
+      )}
       <VirtualTable
         headers={headers}
         rows={displayRows}

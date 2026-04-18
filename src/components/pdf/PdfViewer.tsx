@@ -90,6 +90,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
   // ── 初期化 ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     let localDoc: PDFDocumentProxy | null = null;
+    let cancelled = false;
     const store = usePdfStore.getState();
     store.initTab(tabId);
     store.setLoading(tabId, true);
@@ -100,22 +101,27 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
       invoke<string>("load_annotations", { pdfPath: filePath }),
     ])
       .then(([info, doc, annsJson]) => {
+        if (cancelled) { doc.destroy(); return; }
         localDoc = doc;
         store.setPdfInfo(tabId, info);
         store.setPdfDocument(tabId, doc);
         store.setLoading(tabId, false);
-        try {
-          const anns: Annotation[] = JSON.parse(annsJson);
-          if (Array.isArray(anns) && anns.length > 0) {
-            store.setAnnotations(tabId, anns);
+        // 注釈 JSON が巨大（5MB 超）または破損していても無視
+        if (annsJson.length < 5 * 1024 * 1024) {
+          try {
+            const anns: Annotation[] = JSON.parse(annsJson);
+            if (Array.isArray(anns) && anns.length > 0) {
+              store.setAnnotations(tabId, anns);
+            }
+          } catch {
+            // 注釈ファイルが不正な場合は無視
           }
-        } catch {
-          // 注釈ファイルが不正な場合は無視
         }
       })
-      .catch((err) => store.setError(tabId, String(err)));
+      .catch((err) => { if (!cancelled) store.setError(tabId, String(err)); });
 
     return () => {
+      cancelled = true;
       localDoc?.destroy();
       usePdfStore.getState().removeTab(tabId);
     };

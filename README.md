@@ -17,13 +17,15 @@ macOS向けの高速ファイルビューアアプリ。CSV/TSV、PDF、Markdown
 
 1. [Releases](https://github.com/yourname/quick_viewer/releases) から最新の `QuickView_x.x.x_aarch64.dmg` をダウンロード
 2. DMGを開いてアプリを `/Applications` にドラッグ
-3. 初回起動時に **「壊れているため開けません」と表示される場合**は、未署名アプリのためターミナルで以下を実行してください:
+3. 初回起動時に **「壊れているため開けません」と表示される場合**は、現在コード署名・公証が未実装のため macOS Gatekeeper がブロックします。ターミナルで以下を実行してください:
 
    ```bash
    xattr -cr /Applications/QuickView.app
    ```
 
    quarantine フラグが剥がれて起動できるようになります。
+
+   > **注意:** 現在のリリースは Apple Developer ID 署名なし（未公証）です。将来のバージョンでコード署名・公証を追加予定です。
 
 ### 方法2: ソースからビルド
 
