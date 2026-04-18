@@ -171,7 +171,7 @@ Codex による通常レビュー + 攻撃者視点レビュー（セッショ�
 
 ### 外部変更 / リロード
 
-- [ ] **Markdown だけ外部変更のリロードが壊れている**
+- [x] **Markdown だけ外部変更のリロードが壊れている**
   - `src/components/ViewerArea.tsx:22`, `src/App.tsx:273`, `src/components/markdown/MarkdownViewer.tsx:25`
   - `reloadCount` で再マウントしても既存データを見て早期 return。
   - 修正: `reloadCount` を依存に含める、またはストアを明示クリア。

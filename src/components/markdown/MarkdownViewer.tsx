@@ -24,9 +24,6 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
 
   useEffect(() => {
     initTab(tabId);
-    const current = useMarkdownStore.getState().tabs[tabId];
-    if (current?.data != null || current?.error != null) return;
-
     setLoading(tabId, true);
     readMarkdown(filePath)
       .then((result) => {
