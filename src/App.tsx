@@ -172,14 +172,14 @@ function App() {
       const { activeTabId: aid, removeTab } = useTabStore.getState();
       if (aid) removeTab(aid);
     },
-    "cmd+tab": () => {
+    "ctrl+tab": () => {
       const { tabs, activeTabId: aid, setActiveTab } = useTabStore.getState();
       if (tabs.length < 2) return;
       const idx = tabs.findIndex((t) => t.id === aid);
       const next = tabs[(idx + 1) % tabs.length];
       setActiveTab(next.id);
     },
-    "cmd+shift+tab": () => {
+    "ctrl+shift+tab": () => {
       const { tabs, activeTabId: aid, setActiveTab } = useTabStore.getState();
       if (tabs.length < 2) return;
       const idx = tabs.findIndex((t) => t.id === aid);

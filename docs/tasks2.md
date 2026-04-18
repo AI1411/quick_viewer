@@ -139,7 +139,7 @@ Codex による通常レビュー + 攻撃者視点レビュー（セッショ�
 
 ### UX / アクセシビリティ
 
-- [ ] **`Cmd+Tab` タブ切替は macOS で OS に奪われる**
+- [x] **`Cmd+Tab` タブ切替は macOS で OS に奪われる**
   - `README.md:65`, `docs/requirements.md:222`, `src/App.tsx:175`, `src/hooks/useShortcuts.ts:50`
   - 修正: `Ctrl+Tab` / `Cmd+Option+Arrow` に変更、ドキュメント文言も合わせる。
 

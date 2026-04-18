@@ -62,7 +62,7 @@ npm run tauri build
 | `Cmd+O` | ファイルを開く |
 | `Cmd+W` | 現在のタブを閉じる |
 | `Cmd+1`〜`9` | タブ切り替え |
-| `Cmd+Tab` | 次のタブ |
+| `Ctrl+Tab` | 次のタブ |
 | `Cmd+F` | 検索 |
 | `Cmd+B` | サイドバー表示切り替え |
 | `Cmd+,` | 設定 |
