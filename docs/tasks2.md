@@ -61,36 +61,36 @@ Codex による通常レビュー + 攻撃者視点レビュー（セッショ�
 
 ### Markdown
 
-- [ ] **分割表示のリアルタイムプレビューが機能していない**
+- [x] **分割表示のリアルタイムプレビューが機能していない**
   - `src/components/markdown/MarkdownViewer.tsx:68`, `:180`, `src/components/markdown/RenderedView.tsx:192`
   - 編集中は `editContent` を更新するだけで、プレビューは保存済み `tab.data.html` を見続ける。
   - 修正: `editContent` をソースにデバウンス付き再レンダリング、ToC も同時更新。
 
-- [ ] **未保存 Markdown を閉じても確認ダイアログなしで破棄**
+- [x] **未保存 Markdown を閉じても確認ダイアログなしで破棄**
   - `src/components/markdown/MarkdownViewer.tsx:72`, `src/App.tsx:171`, `src/components/Tab.tsx:97`, `src/stores/tabStore.ts:32`
   - 未保存フラグは立てているが close は `removeTab()` 直行。
   - 修正: 確認ダイアログ、ドラフト退避、`beforeunload` 相当の保護。
 
 ### PDF
 
-- [ ] **continuous モードが「Lazy」と称して全ページ即描画**
+- [x] **continuous モードが「Lazy」と称して全ページ即描画**
   - `src/components/pdf/PdfViewer.tsx:20`, `:517`
   - `LazyPdfCanvas` は常に `PdfCanvas` を描く。1000ページで CPU/メモリ即死。
   - 修正: `IntersectionObserver` で本当に遅延描画、一定距離外はアンマウント、bitmap cache、同時レンダ数制限。
 
-- [ ] **1000 ページ級 PDF でサムネイル高速スクロール発火**
+- [x] **1000 ページ級 PDF でサムネイル高速スクロール発火**
   - `src/lib/pdfLib.ts:14`, `src/components/pdf/ThumbnailSidebar.tsx:35`
   - 本文を `read_pdf_bytes → base64 → atob → Uint8Array` で丸ごと複製。サムネは可視化ごとに新規実行。
   - 修正: asset/stream 読込、page bitmap cache、throttle/cancel、同時レンダ数制限。
 
-- [ ] **特定 PDF を「二度と開けないファイル」にできる（巨大 sidecar）**
+- [x] **特定 PDF を「二度と開けないファイル」にできる（巨大 sidecar）**
   - `src/components/pdf/PdfViewer.tsx:80`, `src-tauri/src/pdf_commands.rs:309`
   - 対象 PDF の隣に巨大 `.annotations.json` を置くと open のたびに `Promise.all()` で読みに行き恒久的に重い。共有フォルダの PDF が実質ブリック。
   - 修正: sidecar を app data 隔離、破損/巨大 sidecar を無視して削除提案。
 
 ### XLSX
 
-- [ ] **「大規模シート対応」と謳うが全セルを Rust で丸読込・フロントで全走査**
+- [x] **「大規模シート対応」と謳うが全セルを Rust で丸読込・フロントで全走査**
   - `src-tauri/src/xlsx_commands.rs:572`, `src/components/xlsx/XlsxViewer.tsx:93`
   - 100 万行 / 100MB 級で OOM・長時間フリーズ確定。
   - 修正: sheet metadata / viewport chunk 分離、CSV と同じサーバー側ソート/フィルタ、行列両方の遅延ロード。
@@ -102,33 +102,33 @@ Codex による通常レビュー + 攻撃者視点レビュー（セッショ�
   - `read_csv` / `filter_csv` / `export_csv` が毎回 `fs::read()` から起動。メモリ二重三重消費。
   - 修正: ストリーミング、インデックス、サーバー側 chunk filter。
 
-- [ ] **CSV の BOM と区切り推定が壊れる**
+- [x] **CSV の BOM と区切り推定が壊れる**
   - `src-tauri/src/csv_commands.rs:43`, `:52`, `:189`
   - `\xEF\xBB\xBFname` が見えないヘッダになる。quoted comma を無視した sniffing で `;` 区切り誤判定。
   - 修正: BOM 除去、RFC 4180 準拠の delimiter sniffing、encoding/delimiter を手動指定できる UI。
 
 ### ファイル監視・並行性
 
-- [ ] **自分の保存を自分で「外部変更」として検知して再読込ダイアログ暴発**
+- [x] **自分の保存を自分で「外部変更」として検知して再読込ダイアログ暴発**
   - `src-tauri/src/file_watcher_commands.rs:21`, `src-tauri/src/markdown_commands.rs:143`, `src/App.tsx:65`
   - `Cmd+S` 連打で発火。ユーザーが自分の保存と外部変更を区別不能、誤って stale に戻す。
   - 修正: self-write suppression、mtime/generation token 比較、保存直後 watcher 無視。
 
-- [ ] **タブ close 中の遅延レスポンスでゾンビ state 復活**
+- [x] **タブ close 中の遅延レスポンスでゾンビ state 復活**
   - `src/components/pdf/PdfViewer.tsx:74`, `src/components/xlsx/XlsxViewer.tsx:58`, `src/components/csv/CsvViewer.tsx:30`
   - 重いファイルを開いてすぐ `Cmd+W` → `setPdfInfo()` / `setSheetData()` / `setData()` がアンマウント後に走る。
   - 修正: `AbortController` / cancelled flag で late response 破棄。
 
 ### 設定・起動
 
-- [ ] **`window_state.json` 未検証で「起動してるのに見えない」状態を作れる**
+- [x] **`window_state.json` 未検証で「起動してるのに見えない」状態を作れる**
   - `src/App.tsx:84`
   - `x=-30000, y=-30000, width=1, height=1` を仕込めばウィンドウが画面外。ユーザーから見ると起動不能。
   - 修正: ディスプレイ境界に clamp、`Shift` 起動などのセーフモードで state 無視。
 
 ### リリース
 
-- [ ] **コード署名 / 公証が未設定、`xattr -cr` 回避策前提の配布**
+- [x] **コード署名 / 公証が未設定、`xattr -cr` 回避策前提の配布**
   - `src-tauri/tauri.conf.json:33`, `README.md:20`, `docs/tasks.md:216`
   - `signingIdentity` が `null` のまま。タスク表には「コード署名設定済み」と虚偽記載あり。
   - 修正: Developer ID 署名と notarization を CI に組み込み、未署名回避策の案内を削除。
