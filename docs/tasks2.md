@@ -164,7 +164,7 @@ Codex による通常レビュー + 攻撃者視点レビュー（セッショ�
   - `find()` で先頭タブだけに reload を送る → stale タブが最新を上書きで消失。
   - 修正: `filePath -> Set<tabId>` で全タブ通知。
 
-- [ ] **XLSX シート高速切替で非同期レスポンス順序逆転（Sheet3 表示中に中身 Sheet2）**
+- [x] **XLSX シート高速切替で非同期レスポンス順序逆転（Sheet3 表示中に中身 Sheet2）**
   - `src/components/xlsx/XlsxViewer.tsx:75`
   - `read_xlsx_sheet()` に request id なし。
   - 修正: tab 毎の request sequence、古い応答は破棄。

@@ -72,13 +72,22 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
       .catch((e) => store.setError(tabId, String(e)));
   }, [tabId, filePath]);
 
+  const sheetRequestSeqRef = useRef(0);
+
   const handleSheetSelect = useCallback(
     (sheetName: string) => {
       if (sheetName === tab?.activeSheetName) return;
       store.setLoading(tabId, true);
+      const seq = ++sheetRequestSeqRef.current;
       invoke<XlsxSheetData>("read_xlsx_sheet", { path: filePath, sheetName })
-        .then((data) => store.setSheetData(tabId, data, sheetName))
-        .catch((e) => store.setError(tabId, String(e)));
+        .then((data) => {
+          if (seq !== sheetRequestSeqRef.current) return;
+          store.setSheetData(tabId, data, sheetName);
+        })
+        .catch((e) => {
+          if (seq !== sheetRequestSeqRef.current) return;
+          store.setError(tabId, String(e));
+        });
     },
     [tabId, filePath, tab?.activeSheetName]
   );
