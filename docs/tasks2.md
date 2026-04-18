@@ -210,7 +210,7 @@ Codex による通常レビュー + 攻撃者視点レビュー（セッショ�
 
 ### リリース / CI
 
-- [ ] **リリース自動化が危険（lint/test なしで bump/push）**
+- [x] **リリース自動化が危険（lint/test なしで bump/push）**
   - `Taskfile.yml:39`, `scripts/bump-version.mjs:42`
   - changelog 確認のあと即 bump/commit/tag。ワークツリーの汚れ確認もない。
   - 修正: `git diff --quiet`, `npm run lint`, `npm run test -- --run`, `cargo test`, `npm run tauri build` を通してから tag。
