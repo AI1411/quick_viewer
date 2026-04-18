@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 
 /**
  * キーコンボの文字列形式: "cmd+key" | "cmd+shift+key" | "cmd+alt+key"
@@ -40,7 +40,9 @@ function matchesEvent(combo: ParsedCombo, e: KeyboardEvent): boolean {
  */
 export function useShortcuts(shortcuts: ShortcutMap): void {
   const shortcutsRef = useRef(shortcuts);
-  shortcutsRef.current = shortcuts;
+  useLayoutEffect(() => {
+    shortcutsRef.current = shortcuts;
+  });
 
   useEffect(() => {
     const parsedCombos = Object.entries(shortcutsRef.current).map(

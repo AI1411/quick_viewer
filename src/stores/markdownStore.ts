@@ -59,8 +59,9 @@ export const useMarkdownStore = create<MarkdownStore>((set) => ({
 
   removeTab: (tabId) =>
     set((s) => {
-      const { [tabId]: _, ...rest } = s.tabs;
-      return { tabs: rest };
+      const tabs = { ...s.tabs };
+      delete tabs[tabId];
+      return { tabs };
     }),
 
   setViewMode: (tabId, viewMode) =>

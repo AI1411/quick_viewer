@@ -77,9 +77,9 @@ export function PdfCanvas({
     let cancelled = false;
     let renderTask: RenderTask | null = null;
     let textLayer: TextLayer | null = null;
-    setIsRendering(true);
 
     async function render() {
+      setIsRendering(true);
       const page = await pdfDocument.getPage(pageIndex + 1); // PDF.js is 1-based
       if (cancelled) return;
 
@@ -169,8 +169,9 @@ export function PdfCanvas({
     pendingRangeRef.current = range.cloneRange();
 
     const lastRect = clientRects[clientRects.length - 1];
+    const rawX = lastRect.right - containerBounds.left;
     setColorPickerPos({
-      x: lastRect.right - containerBounds.left,
+      x: Math.min(rawX, (canvasRef.current?.width ?? 400) - 180),
       y: lastRect.bottom - containerBounds.top,
     });
   }, [annotationMode]);
@@ -271,10 +272,7 @@ export function PdfCanvas({
         <div
           className="absolute z-50 flex items-center gap-1 p-1.5 rounded shadow-xl"
           style={{
-            left: Math.min(
-              colorPickerPos.x,
-              (canvasRef.current?.width ?? 400) - 180
-            ),
+            left: colorPickerPos.x,
             top: colorPickerPos.y + 4,
             backgroundColor: "#1e1e1e",
             border: "1px solid #3e3e42",

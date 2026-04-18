@@ -14,7 +14,7 @@ const HIGHLIGHT_COLORS_CSS: Record<AnnotationColor, string> = {
 };
 
 interface NoteEditorState {
-  screenX: number;
+  popupLeft: number;
   screenY: number;
   normalX: number;
   normalY: number;
@@ -53,9 +53,10 @@ export function AnnotationLayer({
     const rect = layerRef.current!.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
+    const layerWidth = layerRef.current!.clientWidth;
 
     setNoteEditor({
-      screenX,
+      popupLeft: Math.min(screenX, layerWidth - 210),
       screenY,
       normalX: screenX / scale,
       normalY: screenY / scale,
@@ -204,10 +205,7 @@ export function AnnotationLayer({
         <div
           className="absolute z-50 shadow-xl rounded p-2 flex flex-col gap-1"
           style={{
-            left: Math.min(
-              noteEditor.screenX,
-              (layerRef.current?.clientWidth ?? 400) - 210
-            ),
+            left: noteEditor.popupLeft,
             top: noteEditor.screenY + 8,
             width: 200,
             backgroundColor: "#fffde7",
