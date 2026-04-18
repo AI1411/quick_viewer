@@ -1,0 +1,37 @@
+# Configuration for git-cliff. Used by the Release workflow to generate
+# changelog entries from conventional commits between tags.
+# https://git-cliff.org/docs/configuration
+
+[changelog]
+header = ""
+body = """
+{% for group, commits in commits | group_by(attribute="group") -%}
+### {{ group | split(pat=">") | last }}
+{% for commit in commits -%}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first }}
+{% endfor %}
+{% endfor -%}
+"""
+trim = true
+footer = ""
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+filter_commits = true
+protect_breaking_commits = false
+tag_pattern = "v[0-9].*"
+topo_order = false
+sort_commits = "newest"
+
+commit_parsers = [
+    { message = "^feat", group = "<!--0-->新機能" },
+    { message = "^fix", group = "<!--1-->バグ修正" },
+    { message = "^perf", group = "<!--2-->パフォーマンス" },
+    { message = "^chore", skip = true },
+    { message = "^docs", skip = true },
+    { message = "^test", skip = true },
+    { message = "^ci", skip = true },
+    { message = "^style", skip = true },
+    { message = "^refactor", skip = true },
+]
