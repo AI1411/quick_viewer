@@ -41,10 +41,10 @@ export function useFileWatcher(
     listen<string>("file-changed", (event) => {
       if (cancelled) return;
       const changedPath = event.payload;
-      const tab = useTabStore
+      const matchingTabs = useTabStore
         .getState()
-        .tabs.find((t) => t.filePath === changedPath);
-      if (tab) {
+        .tabs.filter((t) => t.filePath === changedPath);
+      for (const tab of matchingTabs) {
         onFileChanged(tab.id, changedPath);
       }
     }).then((fn) => {
