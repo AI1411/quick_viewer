@@ -160,9 +160,20 @@ pub(crate) fn apply_filters(
 
 // ─── Tauri Commands ───────────────────────────────────────────────────────────
 
+const MAX_CSV_SIZE: u64 = 512 * 1024 * 1024; // 512 MB
+
+fn check_csv_file(path: &str) -> Result<(), String> {
+    let size = crate::utils::assert_regular_file(std::path::Path::new(path))?;
+    if size > MAX_CSV_SIZE {
+        return Err(format!("CSV file too large: {} bytes (max 512 MB)", size));
+    }
+    Ok(())
+}
+
 /// ファイルのテキストエンコーディングを検出して返す。
 #[tauri::command]
 pub fn detect_encoding(path: String) -> Result<String, String> {
+    check_csv_file(&path)?;
     let raw = fs::read(&path).map_err(|e| e.to_string())?;
     let (_, encoding_name) = decode_file(&raw);
     Ok(encoding_name)
@@ -175,6 +186,7 @@ pub fn read_csv(
     delimiter: Option<String>,
     limit: Option<usize>,
 ) -> Result<CsvData, String> {
+    check_csv_file(&path)?;
     let raw = fs::read(&path).map_err(|e| e.to_string())?;
     let (content, encoding_name) = decode_file(&raw);
     let delim = parse_delimiter(delimiter, &content);
@@ -228,6 +240,7 @@ pub fn read_csv_chunk(
     offset: usize,
     limit: usize,
 ) -> Result<CsvChunk, String> {
+    check_csv_file(&path)?;
     let raw = fs::read(&path).map_err(|e| e.to_string())?;
     let (content, _) = decode_file(&raw);
     let delim = parse_delimiter(delimiter, &content);
@@ -274,6 +287,7 @@ pub fn filter_csv(
     delimiter: Option<String>,
     conditions: Vec<FilterCondition>,
 ) -> Result<CsvData, String> {
+    check_csv_file(&path)?;
     let raw = fs::read(&path).map_err(|e| e.to_string())?;
     let (content, encoding_name) = decode_file(&raw);
     let delim = parse_delimiter(delimiter, &content);
@@ -331,6 +345,7 @@ pub fn export_csv(
     output_path: String,
     conditions: Vec<FilterCondition>,
 ) -> Result<(), String> {
+    check_csv_file(&path)?;
     let raw = fs::read(&path).map_err(|e| e.to_string())?;
     let (content, _) = decode_file(&raw);
     let delim = parse_delimiter(delimiter, &content);

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { FileFormat } from "../types";
+import { showError } from "./toastStore";
 
 const MAX_RECENT = 20;
 const STORAGE_KEY = "recent_files";
@@ -28,18 +29,18 @@ export const useRecentFilesStore = create<RecentFilesState>((set, get) => ({
     const prev = get().recentFiles.filter((f) => f.path !== file.path);
     const next = [file, ...prev].slice(0, MAX_RECENT);
     set({ recentFiles: next });
-    get().saveToDisk(next);
+    get().saveToDisk(next).catch(() => showError("最近のファイル一覧の保存に失敗しました"));
   },
 
   removeRecentFile: (path) => {
     const next = get().recentFiles.filter((f) => f.path !== path);
     set({ recentFiles: next });
-    get().saveToDisk(next);
+    get().saveToDisk(next).catch(() => showError("最近のファイル一覧の保存に失敗しました"));
   },
 
   clearRecentFiles: () => {
     set({ recentFiles: [] });
-    get().saveToDisk([]);
+    get().saveToDisk([]).catch(() => showError("最近のファイル一覧の保存に失敗しました"));
   },
 
   loadFromDisk: async () => {
@@ -55,10 +56,6 @@ export const useRecentFilesStore = create<RecentFilesState>((set, get) => ({
   },
 
   saveToDisk: async (files) => {
-    try {
-      await invoke("save_app_data", { key: STORAGE_KEY, value: JSON.stringify(files) });
-    } catch {
-      // サイレント失敗
-    }
+    await invoke("save_app_data", { key: STORAGE_KEY, value: JSON.stringify(files) });
   },
 }));

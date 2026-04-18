@@ -27,7 +27,7 @@ async function getHighlighter(): Promise<Highlighter> {
   return _highlighterPromise;
 }
 
-mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
+mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
 
 function isDarkTheme(): boolean {
   const theme = document.documentElement.getAttribute("data-theme");

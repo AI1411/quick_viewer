@@ -38,3 +38,5 @@ calamine = { version = "0.24", features = ["dates"] }
 chrono = "0.4"
 zip = "2"
 quick-xml = "0.37"
+sha2 = "0.10"
+ammonia = "3"

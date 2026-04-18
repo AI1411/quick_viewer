@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
+import { showError } from "./toastStore";
 
 export type Theme = "system" | "light" | "dark";
 
@@ -56,49 +57,49 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setTheme: (theme) => {
     set({ theme });
-    get().saveToDisk();
+    get().saveToDisk().catch(() => showError("設定の保存に失敗しました"));
   },
 
   setZoomLevel: (level) => {
     set({ zoomLevel: Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, level)) });
-    get().saveToDisk();
+    get().saveToDisk().catch(() => showError("設定の保存に失敗しました"));
   },
 
   increaseZoom: () => {
     const { zoomLevel } = get();
     set({ zoomLevel: Math.min(ZOOM_MAX, zoomLevel + ZOOM_STEP) });
-    get().saveToDisk();
+    get().saveToDisk().catch(() => showError("設定の保存に失敗しました"));
   },
 
   decreaseZoom: () => {
     const { zoomLevel } = get();
     set({ zoomLevel: Math.max(ZOOM_MIN, zoomLevel - ZOOM_STEP) });
-    get().saveToDisk();
+    get().saveToDisk().catch(() => showError("設定の保存に失敗しました"));
   },
 
   resetZoom: () => {
     set({ zoomLevel: ZOOM_DEFAULT });
-    get().saveToDisk();
+    get().saveToDisk().catch(() => showError("設定の保存に失敗しました"));
   },
 
   setFontFamily: (fontFamily) => {
     set({ fontFamily });
-    get().saveToDisk();
+    get().saveToDisk().catch(() => showError("設定の保存に失敗しました"));
   },
 
   setCsvSettings: (s) => {
     set((prev) => ({ csvSettings: { ...prev.csvSettings, ...s } }));
-    get().saveToDisk();
+    get().saveToDisk().catch(() => showError("設定の保存に失敗しました"));
   },
 
   setPdfSettings: (s) => {
     set((prev) => ({ pdfSettings: { ...prev.pdfSettings, ...s } }));
-    get().saveToDisk();
+    get().saveToDisk().catch(() => showError("設定の保存に失敗しました"));
   },
 
   setMarkdownSettings: (s) => {
     set((prev) => ({ markdownSettings: { ...prev.markdownSettings, ...s } }));
-    get().saveToDisk();
+    get().saveToDisk().catch(() => showError("設定の保存に失敗しました"));
   },
 
   loadFromDisk: async () => {
@@ -114,14 +115,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   saveToDisk: async () => {
-    try {
-      const { theme, zoomLevel, fontFamily, csvSettings, pdfSettings, markdownSettings } = get();
-      await invoke("save_app_data", {
-        key: STORAGE_KEY,
-        value: JSON.stringify({ theme, zoomLevel, fontFamily, csvSettings, pdfSettings, markdownSettings }),
-      });
-    } catch {
-      // サイレント失敗
-    }
+    const { theme, zoomLevel, fontFamily, csvSettings, pdfSettings, markdownSettings } = get();
+    await invoke("save_app_data", {
+      key: STORAGE_KEY,
+      value: JSON.stringify({ theme, zoomLevel, fontFamily, csvSettings, pdfSettings, markdownSettings }),
+    });
   },
 }));

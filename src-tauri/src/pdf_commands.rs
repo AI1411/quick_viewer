@@ -3,6 +3,7 @@ use pdfium_render::prelude::*;
 use base64::{Engine as _, engine::general_purpose};
 use image::ImageFormat;
 use serde::Serialize;
+use sha2::{Sha256, Digest};
 use std::collections::BTreeMap;
 use std::io::Cursor;
 
@@ -55,6 +56,9 @@ fn decode_pdf_string(raw: &[u8]) -> String {
 
 // ─── Outline (Bookmark) Extraction ───────────────────────────────────────────
 
+const MAX_OUTLINE_DEPTH: u32 = 50;
+const MAX_OUTLINE_ITEMS: usize = 10_000;
+
 fn extract_outlines(doc: &Document) -> Vec<OutlineItem> {
     let catalog_ref = match doc.trailer.get(b"Root").and_then(|r| r.as_reference()) {
         Ok(r) => r,
@@ -76,14 +80,34 @@ fn extract_outlines(doc: &Document) -> Vec<OutlineItem> {
         Ok(r) => r,
         Err(_) => return vec![],
     };
-    collect_outline_items(doc, first_ref, 0)
+    let mut visited = std::collections::HashSet::new();
+    let mut count = 0usize;
+    collect_outline_items(doc, first_ref, 0, &mut visited, &mut count)
 }
 
-fn collect_outline_items(doc: &Document, start_ref: lopdf::ObjectId, level: u32) -> Vec<OutlineItem> {
+fn collect_outline_items(
+    doc: &Document,
+    start_ref: lopdf::ObjectId,
+    level: u32,
+    visited: &mut std::collections::HashSet<lopdf::ObjectId>,
+    count: &mut usize,
+) -> Vec<OutlineItem> {
+    if level > MAX_OUTLINE_DEPTH {
+        return vec![];
+    }
     let mut items = Vec::new();
     let mut current_ref = start_ref;
 
     loop {
+        if *count >= MAX_OUTLINE_ITEMS {
+            break;
+        }
+        if !visited.insert(current_ref) {
+            // 循環参照を検出 → 終了
+            break;
+        }
+        *count += 1;
+
         let dict = match doc.get_dictionary(current_ref) {
             Ok(d) => d.clone(),
             Err(_) => break,
@@ -102,7 +126,9 @@ fn collect_outline_items(doc: &Document, start_ref: lopdf::ObjectId, level: u32)
             .get(b"First")
             .ok()
             .and_then(|r| r.as_reference().ok())
-            .map(|first_ref| collect_outline_items(doc, first_ref, level + 1))
+            .map(|first_ref| {
+                collect_outline_items(doc, first_ref, level + 1, visited, count)
+            })
             .unwrap_or_default();
 
         items.push(OutlineItem { title, page, level, children });
@@ -182,9 +208,14 @@ fn get_pdfium() -> Result<Pdfium, String> {
 
 // ─── Commands ─────────────────────────────────────────────────────────────────
 
+const MAX_PDF_SIZE: u64 = 512 * 1024 * 1024; // 512 MB
+
 /// Returns PDF metadata, page count, and outline (bookmarks).
 #[tauri::command]
 pub fn read_pdf_info(path: String) -> Result<PdfInfo, String> {
+    crate::utils::assert_regular_file(std::path::Path::new(&path))
+        .map_err(|e| format!("Failed to load PDF: {}", e))?;
+
     let doc = Document::load(&path)
         .map_err(|e| format!("Failed to load PDF: {}", e))?;
 
@@ -240,6 +271,9 @@ pub fn read_pdf_info(path: String) -> Result<PdfInfo, String> {
 /// `page_index` is 0-based. `scale` controls render resolution (default 1.5).
 #[tauri::command]
 pub fn read_pdf_page(path: String, page_index: u32, scale: Option<f32>) -> Result<PdfPageData, String> {
+    crate::utils::assert_regular_file(std::path::Path::new(&path))
+        .map_err(|e| format!("Failed to load PDF: {}", e))?;
+
     let scale = scale.unwrap_or(1.5_f32);
     let target_width = (595.0 * scale) as i32; // A4 width in points × scale
 
@@ -292,6 +326,11 @@ pub fn read_pdf_page(path: String, page_index: u32, scale: Option<f32>) -> Resul
 /// Used by the frontend to load PDFs into PDF.js without asset protocol.
 #[tauri::command]
 pub fn read_pdf_bytes(path: String) -> Result<String, String> {
+    let size = crate::utils::assert_regular_file(std::path::Path::new(&path))
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    if size > MAX_PDF_SIZE {
+        return Err(format!("PDF too large: {} bytes (max 512 MB)", size));
+    }
     std::fs::read(&path)
         .map(|bytes| general_purpose::STANDARD.encode(bytes))
         .map_err(|e| format!("Failed to read file: {}", e))
@@ -299,19 +338,50 @@ pub fn read_pdf_bytes(path: String) -> Result<String, String> {
 
 // ─── Annotation Persistence ───────────────────────────────────────────────────
 
-#[tauri::command]
-pub fn save_annotations(pdf_path: String, annotations_json: String) -> Result<(), String> {
-    let ann_path = format!("{}.annotations.json", pdf_path);
-    std::fs::write(&ann_path, annotations_json).map_err(|e| e.to_string())
+fn annotation_key(pdf_path: &str) -> String {
+    Sha256::digest(pdf_path.as_bytes())
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
 }
 
 #[tauri::command]
-pub fn load_annotations(pdf_path: String) -> Result<String, String> {
-    let ann_path = format!("{}.annotations.json", pdf_path);
-    if !std::path::Path::new(&ann_path).exists() {
+pub fn save_annotations(
+    app: tauri::AppHandle,
+    pdf_path: String,
+    annotations_json: String,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("annotations");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let key = annotation_key(&pdf_path);
+    let file = dir.join(format!("{}.json", key));
+    crate::utils::atomic_write(&file, annotations_json.as_bytes()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn load_annotations(app: tauri::AppHandle, pdf_path: String) -> Result<String, String> {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("annotations");
+    let key = annotation_key(&pdf_path);
+    let file = dir.join(format!("{}.json", key));
+    if !file.exists() {
         return Ok("[]".to_string());
     }
-    std::fs::read_to_string(&ann_path).map_err(|e| e.to_string())
+    let meta = std::fs::metadata(&file).map_err(|e| e.to_string())?;
+    if meta.len() > 10 * 1024 * 1024 {
+        // 巨大な sidecar は破損とみなし無視
+        return Ok("[]".to_string());
+    }
+    std::fs::read_to_string(&file).map_err(|e| e.to_string())
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -369,5 +439,26 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.contains("Failed to read file"), "Unexpected error: {}", err);
+    }
+
+    #[test]
+    fn test_annotation_key_is_hex() {
+        let key = annotation_key("/some/path/doc.pdf");
+        assert_eq!(key.len(), 64); // SHA-256 = 32 bytes = 64 hex chars
+        assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_annotation_key_is_deterministic() {
+        let k1 = annotation_key("/foo/bar.pdf");
+        let k2 = annotation_key("/foo/bar.pdf");
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn test_annotation_key_differs_for_different_paths() {
+        let k1 = annotation_key("/foo/bar.pdf");
+        let k2 = annotation_key("/foo/baz.pdf");
+        assert_ne!(k1, k2);
     }
 }

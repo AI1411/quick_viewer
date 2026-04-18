@@ -1,3 +1,4 @@
+use ammonia::Builder as AmmoniaBuilder;
 use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag, TagEnd};
 use serde::Serialize;
 use std::fs;
@@ -129,7 +130,26 @@ pub(crate) fn render_markdown(content: &str) -> (String, Vec<TocItem>) {
     let mut html_output = String::new();
     html::push_html(&mut html_output, events_with_ids.into_iter());
 
-    (html_output, toc)
+    let sanitized = sanitize_markdown_html(&html_output);
+    (sanitized, toc)
+}
+
+fn sanitize_markdown_html(html: &str) -> String {
+    let mut b = AmmoniaBuilder::default();
+    // task list チェックボックス・Mermaid 用 div を許可
+    b.add_tags(["input", "div"]);
+    b.add_tag_attributes("input", ["type", "disabled", "checked"]);
+    // 見出し id 属性 (ToC アンカー)
+    for tag in &["h1", "h2", "h3", "h4", "h5", "h6"] {
+        b.add_tag_attributes(tag, ["id"]);
+    }
+    // コードブロック言語クラス (Shiki 用)
+    b.add_tag_attributes("code", ["class"]);
+    b.add_tag_attributes("pre", ["class"]);
+    // リンク・画像
+    b.add_tag_attributes("a", ["href", "title", "id", "name"]);
+    b.add_tag_attributes("img", ["src", "alt", "title", "width", "height"]);
+    b.clean(html).to_string()
 }
 
 #[tauri::command]
@@ -142,7 +162,8 @@ pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
 
 #[tauri::command]
 pub fn save_markdown(path: String, content: String) -> Result<(), String> {
-    fs::write(&path, content).map_err(|e| e.to_string())
+    crate::utils::atomic_write(std::path::Path::new(&path), content.as_bytes())
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -276,6 +297,36 @@ mod tests {
         let (_, toc) = render_markdown("# Hello `world`");
         assert_eq!(toc[0].text, "Hello world");
         assert_eq!(toc[0].anchor, "hello-world");
+    }
+
+    #[test]
+    fn sanitize_strips_script_tags() {
+        let html = "<p>hello</p><script>alert(1)</script>";
+        let out = sanitize_markdown_html(html);
+        assert!(!out.contains("<script>"), "script tag should be removed");
+        assert!(out.contains("hello"));
+    }
+
+    #[test]
+    fn sanitize_strips_event_handlers() {
+        let html = "<p onclick=\"alert(1)\">click</p>";
+        let out = sanitize_markdown_html(html);
+        assert!(!out.contains("onclick"), "onclick should be removed");
+        assert!(out.contains("click"));
+    }
+
+    #[test]
+    fn sanitize_preserves_heading_id() {
+        let html = "<h1 id=\"introduction\">Introduction</h1>";
+        let out = sanitize_markdown_html(html);
+        assert!(out.contains("id=\"introduction\""), "heading id should be preserved");
+    }
+
+    #[test]
+    fn sanitize_preserves_code_class() {
+        let html = "<pre><code class=\"language-rust\">fn main() {}</code></pre>";
+        let out = sanitize_markdown_html(html);
+        assert!(out.contains("class=\"language-rust\""), "code class should be preserved");
     }
 
     #[test]

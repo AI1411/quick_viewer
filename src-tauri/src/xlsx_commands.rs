@@ -198,6 +198,10 @@ fn load_styles(xlsx_path: &str) -> Result<HashMap<u32, String>, String> {
     let mut content = String::new();
     match archive.by_name("xl/styles.xml") {
         Ok(mut f) => {
+            const MAX_STYLES_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+            if f.size() > MAX_STYLES_SIZE {
+                return Err("xl/styles.xml exceeds size limit (10 MB)".to_string());
+            }
             f.read_to_string(&mut content).map_err(|e| e.to_string())?;
         }
         Err(_) => return Ok(HashMap::new()),
@@ -220,8 +224,9 @@ pub(crate) fn parse_cell_ref(r: &str) -> Option<(u32, u32)> {
         return None;
     }
     let col = col_str_to_index(&col_str);
-    let row: u32 = row_str.parse::<u32>().ok()? - 1;
-    Some((row, col))
+    // row は 1-based。0 は無効 → filter で弾いて underflow を防ぐ
+    let row_num: u32 = row_str.parse::<u32>().ok().filter(|&r| r >= 1)?;
+    Some((row_num - 1, col))
 }
 
 /// xl/worksheets/sheetN.xml 文字列を解析し、
@@ -318,6 +323,13 @@ fn load_sheet_xml(
     let mut content = String::new();
     match archive.by_name(sheet_file_name) {
         Ok(mut f) => {
+            const MAX_SHEET_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
+            if f.size() > MAX_SHEET_SIZE {
+                return Err(format!(
+                    "{} exceeds size limit (100 MB)",
+                    sheet_file_name
+                ));
+            }
             f.read_to_string(&mut content).map_err(|e| e.to_string())?;
         }
         Err(_) => return Ok((HashMap::new(), FreezePane::default())),
@@ -780,6 +792,17 @@ mod tests {
         assert_eq!(parse_cell_ref("A1"), Some((0, 0)));
         assert_eq!(parse_cell_ref("B2"), Some((1, 1)));
         assert_eq!(parse_cell_ref("AA10"), Some((9, 26)));
+    }
+
+    #[test]
+    fn parse_cell_ref_rejects_row_zero() {
+        assert_eq!(parse_cell_ref("A0"), None);
+    }
+
+    #[test]
+    fn parse_cell_ref_rejects_empty_col() {
+        assert_eq!(parse_cell_ref("1"), None);
+        assert_eq!(parse_cell_ref(""), None);
     }
 
     // parse_sheet_xml tests
