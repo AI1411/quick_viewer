@@ -148,7 +148,7 @@ Codex による通常レビュー + 攻撃者視点レビュー（セッショ�
   - 要求書の「全操作をキーボードで完結」(`docs/requirements.md:208`) 未達。
   - 修正: `react-aria` 導入、または自前でフォーカス初期化・Tab 循環・Esc・矢印移動を実装。
 
-- [ ] **フォント設定が UI にあるのに実際の描画に反映されない（死んだ設定）**
+- [x] **フォント設定が UI にあるのに実際の描画に反映されない（死んだ設定）**
   - `src/components/SettingsDialog.tsx:134`, `src/stores/settingsStore.ts:84`, `src/App.tsx:151`
   - 修正: `document.documentElement.style.fontFamily` か CSS 変数へ反映、Markdown/表/エディタ全てで効くように。
 

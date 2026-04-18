@@ -61,6 +61,7 @@ function App() {
   const bumpReload = useTabStore((s) => s.bumpReload);
   const theme = useSettingsStore((state) => state.theme);
   const zoomLevel = useSettingsStore((state) => state.zoomLevel);
+  const fontFamily = useSettingsStore((state) => state.fontFamily);
 
   const handleFileChanged = useCallback(
     (tabId: string, filePath: string) => {
@@ -152,6 +153,11 @@ function App() {
   useEffect(() => {
     document.documentElement.style.fontSize = `${zoomLevel}px`;
   }, [zoomLevel]);
+
+  // フォントファミリーをCSS変数に反映
+  useEffect(() => {
+    document.documentElement.style.setProperty("--app-font-family", fontFamily);
+  }, [fontFamily]);
 
   // キーボードショートカット
   useShortcuts({
