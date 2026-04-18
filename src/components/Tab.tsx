@@ -61,7 +61,7 @@ export function Tab({
         maxWidth: "200px",
         minWidth: "80px",
         backgroundColor: isActive
-          ? "var(--editor-bg, #1e1e1e)"
+          ? "var(--viewer-bg)"
           : "var(--tabbar-bg)",
         borderColor: "var(--border-color)",
         borderTop: isActive ? "1px solid var(--accent, #007acc)" : "none",
