@@ -215,7 +215,7 @@ Codex による通常レビュー + 攻撃者視点レビュー（セッショ�
   - changelog 確認のあと即 bump/commit/tag。ワークツリーの汚れ確認もない。
   - 修正: `git diff --quiet`, `npm run lint`, `npm run test -- --run`, `cargo test`, `npm run tauri build` を通してから tag。
 
-- [ ] **CI 向け実行単位が不足、テストが smoke のみ**
+- [x] **CI 向け実行単位が不足、テストが smoke のみ**
   - `package.json:6`, `src/components/pdf/__tests__/PdfViewer.test.tsx:19`
   - `typecheck` / `test:run` / `ci` スクリプトなし。PdfViewer テストは loading/error しか見ていない。
   - 修正: 上記スクリプト追加、Markdown ライブプレビュー / 未保存クローズ / 外部変更リロード / IPC バリデーションの回帰テスト追加。

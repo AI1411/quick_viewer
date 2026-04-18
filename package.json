@@ -11,7 +11,10 @@
     "lint": "eslint src --ext .ts,.tsx",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "test": "vitest",
+    "test:run": "vitest --run",
     "test:ui": "vitest --ui",
+    "typecheck": "tsc --noEmit",
+    "ci": "npm run lint && npm run typecheck && npm run test:run",
     "version:bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
