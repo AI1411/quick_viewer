@@ -37,6 +37,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   return (
     <div
       ref={menuRef}
+      role="menu"
       className="fixed z-50 py-1 rounded shadow-lg text-xs"
       style={{
         left: x,
@@ -51,17 +52,30 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
         item.separator ? (
           <div
             key={i}
+            role="separator"
             className="my-1 border-t"
             style={{ borderColor: "var(--border-color)" }}
           />
         ) : (
           <button
             key={i}
+            role="menuitem"
+            tabIndex={0}
             className="w-full text-left px-3 py-1.5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
             disabled={item.disabled}
+            aria-disabled={item.disabled}
             onClick={() => {
-              item.onClick();
-              onClose();
+              if (!item.disabled) {
+                item.onClick();
+                onClose();
+              }
+            }}
+            onKeyDown={(e) => {
+              if ((e.key === "Enter" || e.key === " ") && !item.disabled) {
+                e.preventDefault();
+                item.onClick();
+                onClose();
+              }
             }}
           >
             {item.label}

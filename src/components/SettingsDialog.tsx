@@ -36,6 +36,7 @@ function SettingRow({ label, children }: { label: string; children: React.ReactN
 export function SettingsDialog({ onClose }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("general");
   const overlayRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const {
     theme, setTheme,
     fontFamily, setFontFamily,
@@ -44,6 +45,17 @@ export function SettingsDialog({ onClose }: Props) {
     markdownSettings, setMarkdownSettings,
   } = useSettingsStore();
 
+  // フォーカス初期化
+  useEffect(() => {
+    if (dialogRef.current) {
+      const firstFocusable = dialogRef.current.querySelector<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      firstFocusable?.focus();
+    }
+  }, []);
+
+  // Esc キーで閉じる
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -73,6 +85,10 @@ export function SettingsDialog({ onClose }: Props) {
       onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="設定"
         className="rounded-xl shadow-2xl flex overflow-hidden"
         style={{
           width: "560px",

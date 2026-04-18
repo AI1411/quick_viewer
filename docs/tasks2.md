@@ -143,7 +143,7 @@ Codex による通常レビュー + 攻撃者視点レビュー（セッショ�
   - `README.md:65`, `docs/requirements.md:222`, `src/App.tsx:175`, `src/hooks/useShortcuts.ts:50`
   - 修正: `Ctrl+Tab` / `Cmd+Option+Arrow` に変更、ドキュメント文言も合わせる。
 
-- [ ] **モーダル / メニューが `role="dialog"` / `aria-modal` / フォーカストラップなし**
+- [x] **モーダル / メニューが `role="dialog"` / `aria-modal` / フォーカストラップなし**
   - `src/components/SettingsDialog.tsx:68`, `src/components/FileChangedDialog.tsx:10`, `src/components/ContextMenu.tsx:17`
   - 要求書の「全操作をキーボードで完結」(`docs/requirements.md:208`) 未達。
   - 修正: `react-aria` 導入、または自前でフォーカス初期化・Tab 循環・Esc・矢印移動を実装。
