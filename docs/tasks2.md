@@ -220,7 +220,7 @@ Codex による通常レビュー + 攻撃者視点レビュー（セッショ�
   - `typecheck` / `test:run` / `ci` スクリプトなし。PdfViewer テストは loading/error しか見ていない。
   - 修正: 上記スクリプト追加、Markdown ライブプレビュー / 未保存クローズ / 外部変更リロード / IPC バリデーションの回帰テスト追加。
 
-- [ ] **自動更新が未実装（updater plugin / 設定なし）**
+- [x] **自動更新が未実装（updater plugin / 設定なし）**
   - `package.json:17`, `src-tauri/Cargo.toml:20`, `src-tauri/tauri.conf.json:1`
   - 修正: Tauri updater 導入、署名済み feed 配布。最低でも「新バージョンあり」通知。
 

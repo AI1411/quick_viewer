@@ -3,6 +3,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize, LogicalPosition } from "@tauri-apps/api/dpi";
 import { invoke } from "@tauri-apps/api/core";
+import { check } from "@tauri-apps/plugin-updater";
 import { EmptyState } from "./components/EmptyState";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
@@ -76,6 +77,19 @@ function App() {
   useEffect(() => {
     useSettingsStore.getState().loadFromDisk();
     useRecentFilesStore.getState().loadFromDisk();
+  }, []);
+
+  // 起動時に更新チェック
+  useEffect(() => {
+    check()
+      .then((update) => {
+        if (update?.available) {
+          showError(`新しいバージョン ${update.version} が利用可能です。`);
+        }
+      })
+      .catch(() => {
+        // 更新チェック失敗は無視（オフライン等）
+      });
   }, []);
 
   // ウィンドウ状態の復元
