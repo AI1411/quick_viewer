@@ -76,6 +76,18 @@ task push            # commit と tag を origin に push（ここで CI 起動�
 
 scope は `**scope:**` の形で先頭に表示されます（例: `**csv:** Support flexible column counts to avoid parse errors`）。
 
+## エンドユーザ向けの既知の問題
+
+### 「QuickView が壊れているため開けません」
+
+macOS Gatekeeper が未署名アプリ + quarantine 属性を組み合わせて「damaged」判定するため。Apple Developer Program での正式署名／公証を行なっていないので回避策の案内が必要。
+
+```bash
+xattr -cr /Applications/QuickView.app
+```
+
+Release body と README に同じ案内を記載済み。将来 $99/年の Developer ID を取得して `.github/workflows/release.yml` の `env:` に Apple 関連 secret を戻せば根本解決できる（`3e33cc0` のコミットコメント参照）。
+
 ## トラブルシュート
 
 ### タグを間違えて作った

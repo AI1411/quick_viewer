@@ -62,7 +62,11 @@ jobs:
             ### インストール方法
             1. `QuickView_*_aarch64.dmg` をダウンロード
             2. DMG を開いてアプリを `/Applications` にドラッグ
-            3. 初回起動時に Gatekeeper の確認が出る場合は「開く」を選択
+            3. 初回起動時に「壊れているため開けません」と出る場合は、未署名アプリのためターミナルで以下を実行:
+               ```
+               xattr -cr /Applications/QuickView.app
+               ```
+               これで quarantine フラグが外れて起動できます。
           releaseDraft: false
           prerelease: false
           args: --target aarch64-apple-darwin
