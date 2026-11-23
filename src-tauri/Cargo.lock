@@ -4464,15 +4464,12 @@ name = "tauri-app"
 version = "2.0.0"
 dependencies = [
  "ammonia",
- "base64 0.22.1",
  "calamine",
  "chardetng",
  "chrono",
  "csv",
  "encoding_rs",
- "image",
  "notify",
- "pdfium-render",
  "pulldown-cmark",
  "quick-xml 0.37.5",
  "regex",

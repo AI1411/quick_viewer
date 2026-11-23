@@ -72,14 +72,6 @@ export interface OutlineItem {
   children: OutlineItem[];
 }
 
-// Rust の PdfPageData に対応
-export interface PdfPageData {
-  page_index: number;
-  width: number;
-  height: number;
-  image_base64: string; // PNG as base64
-}
-
 export type PdfDisplayMode = "single" | "continuous";
 
 // ─── Annotation Types ────────────────────────────────────────────────────────
