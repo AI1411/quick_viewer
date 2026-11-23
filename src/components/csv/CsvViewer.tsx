@@ -34,10 +34,12 @@ export function CsvViewer({ tabId, filePath, isActive = true }: CsvViewerProps) 
   const [filterColIndex, setFilterColIndex] = useState<number | null>(null);
   const [filterAnchorRect, setFilterAnchorRect] = useState<DOMRect | null>(null);
 
-  // 初期化 & データ読み込み
+  // 初期化 & 索引付き読み込み（Rust 側で CsvIndex を構築・キャッシュ）
   useEffect(() => {
-    const { initTab, setLoading, setData, setError } = useCsvStore.getState();
+    const { initTab, setFilePath, setLoading, setData, setError } =
+      useCsvStore.getState();
     initTab(tabId);
+    setFilePath(tabId, filePath);
     let cancelled = false;
     setLoading(tabId, true);
     const t0 = performance.now();
@@ -45,14 +47,14 @@ export function CsvViewer({ tabId, filePath, isActive = true }: CsvViewerProps) 
     invoke<CsvData>("read_csv", { path: filePath, delimiter, limit: INITIAL_LIMIT })
       .then((data) => {
         if (cancelled) return;
-        console.info(`[perf] read_csv: ${(performance.now() - t0).toFixed(1)}ms`);
+        console.info(`[perf] read_csv (indexed): ${(performance.now() - t0).toFixed(1)}ms`);
         setData(tabId, data);
       })
       .catch((err) => { if (!cancelled) setError(tabId, String(err)); });
     return () => { cancelled = true; };
   }, [tabId, filePath]);
 
-  // チャンク追加読み込み（フィルタ / ソート中は全行取得済みなので無効）
+  // チャンク追加読み込み（索引シーク。フィルタ / ソート中は全行取得済みなので無効）
   const handleScrollEnd = useCallback(() => {
     const tab = useCsvStore.getState().tabs[tabId];
     if (!tab || tab.isLoadingChunk || !tab.data) return;
@@ -61,13 +63,19 @@ export function CsvViewer({ tabId, filePath, isActive = true }: CsvViewerProps) 
 
     const { setLoadingChunk, appendRows } = useCsvStore.getState();
     setLoadingChunk(tabId, true);
+    const t0 = performance.now();
     invoke<CsvChunk>("read_csv_chunk", {
       path: filePath,
       delimiter: csvDelimiterFromSettings(),
       offset: tab.loadedRows,
       limit: CHUNK_SIZE,
     })
-      .then((chunk) => appendRows(tabId, chunk.rows, chunk.total_rows))
+      .then((chunk) => {
+        console.info(
+          `[perf] read_csv_chunk offset=${chunk.offset}: ${(performance.now() - t0).toFixed(1)}ms`
+        );
+        appendRows(tabId, chunk.rows, chunk.total_rows);
+      })
       .catch(() => setLoadingChunk(tabId, false));
   }, [tabId, filePath]);
 
@@ -189,17 +197,29 @@ export function CsvViewer({ tabId, filePath, isActive = true }: CsvViewerProps) 
     [tabId, filePath]
   );
 
-  // フィルタ適用（Rust filter_csv / sort_csv を呼び出して結果を store に保存）
+  // フィルタ適用（列番号付き。Rust filter_csv / sort_csv を呼び出して結果を store に保存）
   const handleFilterApply = useCallback(
     async (cond: FilterCondition) => {
       const tab = useCsvStore.getState().tabs[tabId];
       if (!tab?.data) return;
+      const colIdx =
+        cond.column_index ??
+        filterColIndex ??
+        tab.data.headers.indexOf(cond.column);
+      const withIndex: FilterCondition = {
+        ...cond,
+        column_index: colIdx >= 0 ? colIdx : undefined,
+      };
       const newFilters = tab.filters
-        .filter((f) => f.column !== cond.column)
-        .concat(cond);
+        .filter((f) =>
+          withIndex.column_index != null
+            ? f.column_index !== withIndex.column_index
+            : f.column !== withIndex.column
+        )
+        .concat(withIndex);
       await applyFiltersWithOptionalSort(newFilters);
     },
-    [tabId, applyFiltersWithOptionalSort]
+    [tabId, filterColIndex, applyFiltersWithOptionalSort]
   );
 
   // 単一列フィルタのクリア

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import type { CsvData, FilterCondition } from "../types";
 
 export type SortDirection = "asc" | "desc" | null;
@@ -14,6 +15,7 @@ export interface SelectedCell {
 }
 
 interface CsvTabState {
+  filePath: string | null;
   data: CsvData | null;
   isLoading: boolean;
   error: string | null;
@@ -41,6 +43,7 @@ interface CsvTabState {
 interface CsvStore {
   tabs: Record<string, CsvTabState>;
   initTab: (tabId: string) => void;
+  setFilePath: (tabId: string, filePath: string) => void;
   setData: (tabId: string, data: CsvData) => void;
   setLoading: (tabId: string, isLoading: boolean) => void;
   setError: (tabId: string, error: string | null) => void;
@@ -66,6 +69,7 @@ interface CsvStore {
 }
 
 const defaultTabState = (): CsvTabState => ({
+  filePath: null,
   data: null,
   isLoading: true,
   error: null,
@@ -89,6 +93,14 @@ export const useCsvStore = create<CsvStore>((set) => ({
   initTab: (tabId) =>
     set((state) => ({
       tabs: { ...state.tabs, [tabId]: defaultTabState() },
+    })),
+
+  setFilePath: (tabId, filePath) =>
+    set((state) => ({
+      tabs: {
+        ...state.tabs,
+        [tabId]: { ...state.tabs[tabId], filePath },
+      },
     })),
 
   setData: (tabId, data) =>
@@ -193,12 +205,20 @@ export const useCsvStore = create<CsvStore>((set) => ({
       },
     })),
 
-  removeTab: (tabId) =>
+  removeTab: (tabId) => {
+    const tab = useCsvStore.getState().tabs[tabId];
+    const path = tab?.filePath;
+    if (path) {
+      void invoke("close_csv", { path }).catch(() => {
+        /* cache drop is best-effort */
+      });
+    }
     set((state) => {
       const next = { ...state.tabs };
       delete next[tabId];
       return { tabs: next };
-    }),
+    });
+  },
 
   setFilters: (tabId, filters, filteredRows) =>
     set((state) => ({

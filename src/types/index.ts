@@ -33,6 +33,8 @@ export interface CsvChunk {
 
 export interface FilterCondition {
   column: string;
+  /** Prefer over `column` name when set (duplicate headers). */
+  column_index?: number;
   filter_type:
     | "exact"
     | "contains"

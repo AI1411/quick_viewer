@@ -132,11 +132,13 @@ pub fn run() {
         .manage(file_watcher_commands::WatcherState(std::sync::Mutex::new(
             std::collections::HashMap::new(),
         )))
+        .manage(csv_commands::CsvCache::default())
         .invoke_handler(tauri::generate_handler![
             open_file,
             csv_commands::detect_encoding,
             csv_commands::read_csv,
             csv_commands::read_csv_chunk,
+            csv_commands::close_csv,
             csv_commands::filter_csv,
             csv_commands::sort_csv,
             csv_commands::search_csv,

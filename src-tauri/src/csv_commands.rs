@@ -2,7 +2,10 @@ use chardetng::EncodingDetector;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fs;
+use std::io::BufWriter;
+use std::sync::{Arc, Mutex};
 
 // ─── Data Types ───────────────────────────────────────────────────────────────
 
@@ -30,9 +33,12 @@ pub struct CsvChunk {
     pub total_rows: usize,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct FilterCondition {
     pub column: String,
+    /// Prefer this over `column` name lookup when set (handles duplicate headers).
+    #[serde(default)]
+    pub column_index: Option<usize>,
     /// "exact" | "contains" | "starts_with" | "regex" | "gt" | "lt" | "gte" | "lte" | "eq_num"
     pub filter_type: String,
     pub value: String,
@@ -42,6 +48,41 @@ pub struct FilterCondition {
 pub struct CellMatch {
     pub row: usize,
     pub col: usize,
+}
+
+// ─── Index cache ──────────────────────────────────────────────────────────────
+
+/// Row-start byte offsets into decoded UTF-8 content, plus open-file metadata.
+#[derive(Debug)]
+pub struct CsvIndex {
+    pub path: String,
+    /// Decoded file text (BOM stripped). Chunk seeks slice this by `row_offsets`.
+    pub content: String,
+    pub encoding: String,
+    pub delimiter: u8,
+    pub headers: Vec<String>,
+    /// Byte offset in `content` where each data row starts, plus a sentinel at `content.len()`.
+    /// Length is always `row_count + 1`.
+    pub row_offsets: Vec<usize>,
+}
+
+impl CsvIndex {
+    pub fn row_count(&self) -> usize {
+        self.row_offsets.len().saturating_sub(1)
+    }
+
+    pub fn delim_str(&self) -> String {
+        (self.delimiter as char).to_string()
+    }
+}
+
+/// In-memory index cache keyed by absolute/normalized path.
+pub struct CsvCache(pub Mutex<HashMap<String, Arc<CsvIndex>>>);
+
+impl Default for CsvCache {
+    fn default() -> Self {
+        Self(Mutex::new(HashMap::new()))
+    }
 }
 
 // ─── Helper Functions ─────────────────────────────────────────────────────────
@@ -97,17 +138,6 @@ pub(crate) fn parse_delimiter(d: Option<String>, content: &str) -> u8 {
     }
 }
 
-/// CSV 文字列のデータ行数（ヘッダ除く）を数える。
-fn count_rows(content: &str, delimiter: u8) -> usize {
-    csv::ReaderBuilder::new()
-        .delimiter(delimiter)
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(content.as_bytes())
-        .records()
-        .count()
-}
-
 /// ヘッダと行を最大列数に合わせて padding する（flexible モードで列数が不揃いな場合に使用）。
 fn normalize_columns(headers: &mut Vec<String>, rows: &mut [Vec<String>]) {
     let max_cols = rows
@@ -126,36 +156,250 @@ fn normalize_columns(headers: &mut Vec<String>, rows: &mut [Vec<String>]) {
     }
 }
 
-/// 1 つのフィルタ条件に対してセル値が合致するか判定する。
-fn row_matches(value: &str, condition: &FilterCondition) -> bool {
-    match condition.filter_type.as_str() {
-        "exact" => value == condition.value,
-        "contains" => value.contains(&condition.value),
-        "starts_with" => value.starts_with(&condition.value),
-        "regex" => Regex::new(&condition.value)
+fn pad_row(mut row: Vec<String>, cols: usize) -> Vec<String> {
+    while row.len() < cols {
+        row.push(String::new());
+    }
+    row
+}
+
+/// Build a row-offset index over decoded CSV text.
+pub(crate) fn build_index_from_content(
+    path: &str,
+    content: String,
+    encoding: String,
+    delimiter: u8,
+) -> Result<CsvIndex, String> {
+    let mut rdr = csv::ReaderBuilder::new()
+        .delimiter(delimiter)
+        .has_headers(true)
+        .flexible(true)
+        .from_reader(content.as_bytes());
+
+    let mut headers: Vec<String> = rdr
+        .headers()
+        .map_err(|e| e.to_string())?
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    let mut row_offsets: Vec<usize> = Vec::new();
+    let mut record = csv::StringRecord::new();
+    let mut sample_rows: Vec<Vec<String>> = Vec::new();
+    const SAMPLE_FOR_NORMALIZE: usize = 32;
+
+    loop {
+        let pos = rdr.position().byte() as usize;
+        match rdr.read_record(&mut record) {
+            Ok(true) => {
+                row_offsets.push(pos);
+                if sample_rows.len() < SAMPLE_FOR_NORMALIZE {
+                    sample_rows.push(record.iter().map(|s| s.to_string()).collect());
+                }
+            }
+            Ok(false) => break,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    row_offsets.push(content.len());
+
+    normalize_columns(&mut headers, &mut sample_rows);
+
+    Ok(CsvIndex {
+        path: path.to_string(),
+        content,
+        encoding,
+        delimiter,
+        headers,
+        row_offsets,
+    })
+}
+
+/// Read + decode a CSV file and build its row-offset index.
+pub(crate) fn build_csv_index(
+    path: &str,
+    delimiter: Option<String>,
+) -> Result<CsvIndex, String> {
+    check_csv_file(path)?;
+    let raw = fs::read(path).map_err(|e| e.to_string())?;
+    let (content, encoding_name) = decode_file(&raw);
+    let delim = parse_delimiter(delimiter, &content);
+    build_index_from_content(path, content, encoding_name, delim)
+}
+
+fn cache_key(path: &str, delimiter: Option<&str>) -> String {
+    match delimiter {
+        Some(d) => format!("{path}\0{d}"),
+        None => format!("{path}\0auto"),
+    }
+}
+
+fn get_or_build_index(
+    cache: &CsvCache,
+    path: &str,
+    delimiter: Option<String>,
+) -> Result<Arc<CsvIndex>, String> {
+    let key = cache_key(path, delimiter.as_deref());
+    {
+        let guard = cache.0.lock().map_err(|e| e.to_string())?;
+        if let Some(existing) = guard.get(&key) {
+            return Ok(Arc::clone(existing));
+        }
+    }
+    let index = Arc::new(build_csv_index(path, delimiter)?);
+    let mut guard = cache.0.lock().map_err(|e| e.to_string())?;
+    guard.insert(key, Arc::clone(&index));
+    Ok(index)
+}
+
+/// Parse data rows in `[offset, offset+limit)` using the byte-offset index (no full reparse).
+pub(crate) fn read_rows_from_index(
+    index: &CsvIndex,
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<Vec<String>>, String> {
+    let total = index.row_count();
+    if offset >= total || limit == 0 {
+        return Ok(Vec::new());
+    }
+    let end = (offset + limit).min(total);
+    let start_byte = index.row_offsets[offset];
+    let end_byte = index.row_offsets[end];
+    let slice = &index.content[start_byte..end_byte];
+
+    let mut rdr = csv::ReaderBuilder::new()
+        .delimiter(index.delimiter)
+        .has_headers(false)
+        .flexible(true)
+        .from_reader(slice.as_bytes());
+
+    let cols = index.headers.len();
+    let mut rows = Vec::with_capacity(end - offset);
+    for result in rdr.records() {
+        let record = result.map_err(|e| e.to_string())?;
+        rows.push(pad_row(
+            record.iter().map(|s| s.to_string()).collect(),
+            cols,
+        ));
+    }
+    Ok(rows)
+}
+
+fn read_row_at(index: &CsvIndex, row_idx: usize) -> Result<Vec<String>, String> {
+    let mut rows = read_rows_from_index(index, row_idx, 1)?;
+    Ok(rows.pop().unwrap_or_else(|| vec![String::new(); index.headers.len()]))
+}
+
+fn meta_from_index(index: &CsvIndex) -> CsvMeta {
+    CsvMeta {
+        total_rows: index.row_count(),
+        columns: index.headers.len(),
+        encoding: index.encoding.clone(),
+        delimiter: index.delim_str(),
+        headers: index.headers.clone(),
+    }
+}
+
+/// Compiled filter matcher (regex compiled once per condition).
+struct CompiledFilter {
+    col_idx: usize,
+    filter_type: String,
+    value: String,
+    regex: Option<Regex>,
+}
+
+fn resolve_column_index(headers: &[String], cond: &FilterCondition) -> Result<usize, String> {
+    if let Some(idx) = cond.column_index {
+        if idx >= headers.len() {
+            return Err(format!(
+                "column_index {} out of range ({} columns)",
+                idx,
+                headers.len()
+            ));
+        }
+        return Ok(idx);
+    }
+    headers
+        .iter()
+        .position(|h| h == &cond.column)
+        .ok_or_else(|| format!("column not found: {}", cond.column))
+}
+
+fn compile_filters(
+    headers: &[String],
+    conditions: &[FilterCondition],
+) -> Result<Vec<CompiledFilter>, String> {
+    let mut out = Vec::with_capacity(conditions.len());
+    for cond in conditions {
+        let col_idx = resolve_column_index(headers, cond)?;
+        let regex = if cond.filter_type == "regex" {
+            Some(
+                Regex::new(&cond.value)
+                    .map_err(|e| format!("invalid regex: {e}"))?,
+            )
+        } else {
+            None
+        };
+        out.push(CompiledFilter {
+            col_idx,
+            filter_type: cond.filter_type.clone(),
+            value: cond.value.clone(),
+            regex,
+        });
+    }
+    Ok(out)
+}
+
+fn compiled_row_matches(value: &str, filter: &CompiledFilter) -> bool {
+    match filter.filter_type.as_str() {
+        "exact" => value == filter.value,
+        "contains" => value.contains(&filter.value),
+        "starts_with" => value.starts_with(&filter.value),
+        "regex" => filter
+            .regex
+            .as_ref()
             .map(|re| re.is_match(value))
             .unwrap_or(false),
         "gt" => parse_f64(value)
-            .zip(parse_f64(&condition.value))
+            .zip(parse_f64(&filter.value))
             .map(|(a, b)| a > b)
             .unwrap_or(false),
         "lt" => parse_f64(value)
-            .zip(parse_f64(&condition.value))
+            .zip(parse_f64(&filter.value))
             .map(|(a, b)| a < b)
             .unwrap_or(false),
         "gte" => parse_f64(value)
-            .zip(parse_f64(&condition.value))
+            .zip(parse_f64(&filter.value))
             .map(|(a, b)| a >= b)
             .unwrap_or(false),
         "lte" => parse_f64(value)
-            .zip(parse_f64(&condition.value))
+            .zip(parse_f64(&filter.value))
             .map(|(a, b)| a <= b)
             .unwrap_or(false),
         "eq_num" => parse_f64(value)
-            .zip(parse_f64(&condition.value))
+            .zip(parse_f64(&filter.value))
             .map(|(a, b)| (a - b).abs() < f64::EPSILON)
             .unwrap_or(false),
         _ => false,
+    }
+}
+
+/// 1 つのフィルタ条件に対してセル値が合致するか判定する（テスト用・非コンパイル版）。
+fn row_matches(value: &str, condition: &FilterCondition) -> bool {
+    match compile_filters(
+        &[condition.column.clone()],
+        &[FilterCondition {
+            column: condition.column.clone(),
+            column_index: Some(0),
+            filter_type: condition.filter_type.clone(),
+            value: condition.value.clone(),
+        }],
+    ) {
+        Ok(compiled) => compiled
+            .first()
+            .map(|f| compiled_row_matches(value, f))
+            .unwrap_or(false),
+        Err(_) => false,
     }
 }
 
@@ -197,9 +441,9 @@ pub(crate) fn sort_rows(
 }
 
 /// Build a search regex mirroring frontend `buildRegex`.
-fn build_search_regex(query: &str, use_regex: bool, case_sensitive: bool) -> Option<Regex> {
+fn build_search_regex(query: &str, use_regex: bool, case_sensitive: bool) -> Result<Option<Regex>, String> {
     if query.is_empty() {
-        return None;
+        return Ok(None);
     }
     let pattern = if use_regex {
         query.to_string()
@@ -209,7 +453,8 @@ fn build_search_regex(query: &str, use_regex: bool, case_sensitive: bool) -> Opt
     regex::RegexBuilder::new(&pattern)
         .case_insensitive(!case_sensitive)
         .build()
-        .ok()
+        .map(Some)
+        .map_err(|e| format!("invalid regex: {e}"))
 }
 
 /// Search all cells; returns (row, col) matches in display order.
@@ -219,9 +464,9 @@ pub(crate) fn search_rows(
     query: &str,
     use_regex: bool,
     case_sensitive: bool,
-) -> Vec<CellMatch> {
-    let Some(re) = build_search_regex(query, use_regex, case_sensitive) else {
-        return Vec::new();
+) -> Result<Vec<CellMatch>, String> {
+    let Some(re) = build_search_regex(query, use_regex, case_sensitive)? else {
+        return Ok(Vec::new());
     };
     let mut matches = Vec::new();
     for (r, row) in rows.iter().enumerate() {
@@ -232,7 +477,49 @@ pub(crate) fn search_rows(
             }
         }
     }
-    matches
+    Ok(matches)
+}
+
+/// Collect matching source row indices (AND of conditions) without materializing all rows twice.
+fn filter_row_indices(
+    index: &CsvIndex,
+    conditions: &[FilterCondition],
+) -> Result<Vec<usize>, String> {
+    if conditions.is_empty() {
+        return Ok((0..index.row_count()).collect());
+    }
+    let compiled = compile_filters(&index.headers, conditions)?;
+    let mut indices = Vec::new();
+    // Stream in chunks to avoid holding every row as Vec simultaneously for huge files
+    // while still using the index seeks.
+    const SCAN_CHUNK: usize = 2048;
+    let total = index.row_count();
+    let mut offset = 0;
+    while offset < total {
+        let rows = read_rows_from_index(index, offset, SCAN_CHUNK)?;
+        for (i, row) in rows.iter().enumerate() {
+            let ok = compiled.iter().all(|f| {
+                let value = row.get(f.col_idx).map(|s| s.as_str()).unwrap_or("");
+                compiled_row_matches(value, f)
+            });
+            if ok {
+                indices.push(offset + i);
+            }
+        }
+        offset += rows.len().max(1);
+        if rows.is_empty() {
+            break;
+        }
+    }
+    Ok(indices)
+}
+
+fn materialize_indices(index: &CsvIndex, indices: &[usize]) -> Result<Vec<Vec<String>>, String> {
+    let mut rows = Vec::with_capacity(indices.len());
+    for &i in indices {
+        rows.push(read_row_at(index, i)?);
+    }
+    Ok(rows)
 }
 
 /// 複数フィルタ条件（AND）を全行に適用して合致行を返す。
@@ -240,57 +527,21 @@ pub(crate) fn apply_filters(
     headers: &[String],
     rows: &[Vec<String>],
     conditions: &[FilterCondition],
-) -> Vec<Vec<String>> {
-    rows.iter()
+) -> Result<Vec<Vec<String>>, String> {
+    if conditions.is_empty() {
+        return Ok(rows.to_vec());
+    }
+    let compiled = compile_filters(headers, conditions)?;
+    Ok(rows
+        .iter()
         .filter(|row| {
-            conditions.iter().all(|cond| {
-                match headers.iter().position(|h| h == &cond.column) {
-                    Some(idx) => {
-                        row_matches(row.get(idx).map(|s| s.as_str()).unwrap_or(""), cond)
-                    }
-                    None => false,
-                }
+            compiled.iter().all(|f| {
+                let value = row.get(f.col_idx).map(|s| s.as_str()).unwrap_or("");
+                compiled_row_matches(value, f)
             })
         })
         .cloned()
-        .collect()
-}
-
-/// Load and normalize the full CSV.
-/// Returns (headers, rows, encoding_name, delimiter_string, delimiter_byte).
-fn load_full_csv(
-    path: &str,
-    delimiter: Option<String>,
-) -> Result<(Vec<String>, Vec<Vec<String>>, String, String, u8), String> {
-    check_csv_file(path)?;
-    let raw = fs::read(path).map_err(|e| e.to_string())?;
-    let (content, encoding_name) = decode_file(&raw);
-    let delim = parse_delimiter(delimiter, &content);
-    let delim_str = (delim as char).to_string();
-
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(delim)
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(content.as_bytes());
-
-    let mut headers: Vec<String> = rdr
-        .headers()
-        .map_err(|e| e.to_string())?
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-
-    let mut all_rows: Vec<Vec<String>> = rdr
-        .records()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|r| r.iter().map(|s| s.to_string()).collect())
-        .collect();
-
-    normalize_columns(&mut headers, &mut all_rows);
-    Ok((headers, all_rows, encoding_name, delim_str, delim))
+        .collect())
 }
 
 // ─── Tauri Commands ───────────────────────────────────────────────────────────
@@ -305,6 +556,14 @@ fn check_csv_file(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Drop a cached index for `path` (all delimiter variants).
+#[tauri::command(async)]
+pub fn close_csv(path: String, state: tauri::State<'_, CsvCache>) -> Result<(), String> {
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    guard.retain(|k, _| !k.starts_with(&path));
+    Ok(())
+}
+
 /// ファイルのテキストエンコーディングを検出して返す。
 #[tauri::command(async)]
 pub fn detect_encoding(path: String) -> Result<String, String> {
@@ -314,138 +573,72 @@ pub fn detect_encoding(path: String) -> Result<String, String> {
     Ok(encoding_name)
 }
 
-/// CSV ファイルを読み込む。先頭 limit 行（デフォルト 100）とメタデータを返す。
+/// CSV ファイルを読み込む。索引を構築・キャッシュし、先頭 limit 行とメタデータを返す。
 #[tauri::command(async)]
 pub fn read_csv(
     path: String,
     delimiter: Option<String>,
     limit: Option<usize>,
+    state: tauri::State<'_, CsvCache>,
 ) -> Result<CsvData, String> {
-    check_csv_file(&path)?;
-    let raw = fs::read(&path).map_err(|e| e.to_string())?;
-    let (content, encoding_name) = decode_file(&raw);
-    let delim = parse_delimiter(delimiter, &content);
-    let delim_str = (delim as char).to_string();
-
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(delim)
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(content.as_bytes());
-
-    let mut headers: Vec<String> = rdr
-        .headers()
-        .map_err(|e| e.to_string())?
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-
+    let index = get_or_build_index(&state, &path, delimiter)?;
     let max_rows = limit.unwrap_or(100);
-    let mut rows: Vec<Vec<String>> = rdr
-        .records()
-        .take(max_rows)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|r| r.iter().map(|s| s.to_string()).collect())
-        .collect();
-
-    normalize_columns(&mut headers, &mut rows);
-
-    let total_rows = count_rows(&content, delim);
+    let rows = read_rows_from_index(&index, 0, max_rows)?;
 
     Ok(CsvData {
-        headers: headers.clone(),
+        headers: index.headers.clone(),
         rows,
-        meta: CsvMeta {
-            total_rows,
-            columns: headers.len(),
-            encoding: encoding_name,
-            delimiter: delim_str,
-            headers,
-        },
+        meta: meta_from_index(&index),
     })
 }
 
-/// CSV ファイルのチャンク（offset 行目から limit 行）を返す。
+/// CSV ファイルのチャンク（offset 行目から limit 行）を索引シークで返す。
 #[tauri::command(async)]
 pub fn read_csv_chunk(
     path: String,
     delimiter: Option<String>,
     offset: usize,
     limit: usize,
+    state: tauri::State<'_, CsvCache>,
 ) -> Result<CsvChunk, String> {
-    check_csv_file(&path)?;
-    let raw = fs::read(&path).map_err(|e| e.to_string())?;
-    let (content, _) = decode_file(&raw);
-    let delim = parse_delimiter(delimiter, &content);
-
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(delim)
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(content.as_bytes());
-
-    let mut headers: Vec<String> = rdr
-        .headers()
-        .map_err(|e| e.to_string())?
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-
-    let mut rows: Vec<Vec<String>> = rdr
-        .records()
-        .skip(offset)
-        .take(limit)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|r| r.iter().map(|s| s.to_string()).collect())
-        .collect();
-
-    normalize_columns(&mut headers, &mut rows);
-
-    let total_rows = count_rows(&content, delim);
+    let index = get_or_build_index(&state, &path, delimiter)?;
+    let rows = read_rows_from_index(&index, offset, limit)?;
 
     Ok(CsvChunk {
-        headers,
+        headers: index.headers.clone(),
         rows,
         offset,
-        total_rows,
+        total_rows: index.row_count(),
     })
 }
 
-/// フィルタ条件（AND 複合）で絞り込んだ全行を返す。
+/// フィルタ条件（AND 複合）で絞り込んだ全行を返す（索引キャッシュを利用）。
 #[tauri::command(async)]
 pub fn filter_csv(
     path: String,
     delimiter: Option<String>,
     conditions: Vec<FilterCondition>,
+    state: tauri::State<'_, CsvCache>,
 ) -> Result<CsvData, String> {
-    let (headers, all_rows, encoding_name, delim_str, _) = load_full_csv(&path, delimiter)?;
-
-    let filtered = if conditions.is_empty() {
-        all_rows
-    } else {
-        apply_filters(&headers, &all_rows, &conditions)
-    };
-
+    let index = get_or_build_index(&state, &path, delimiter)?;
+    let indices = filter_row_indices(&index, &conditions)?;
+    let filtered = materialize_indices(&index, &indices)?;
     let total_rows = filtered.len();
 
     Ok(CsvData {
-        headers: headers.clone(),
+        headers: index.headers.clone(),
         rows: filtered,
         meta: CsvMeta {
             total_rows,
-            columns: headers.len(),
-            encoding: encoding_name,
-            delimiter: delim_str,
-            headers,
+            columns: index.headers.len(),
+            encoding: index.encoding.clone(),
+            delimiter: index.delim_str(),
+            headers: index.headers.clone(),
         },
     })
 }
 
-/// Sort all CSV rows by column index (full file). `ascending` true = asc.
+/// Sort all CSV rows by column index (full file via index). `ascending` true = asc.
 #[tauri::command(async)]
 pub fn sort_csv(
     path: String,
@@ -453,35 +646,35 @@ pub fn sort_csv(
     column_index: usize,
     ascending: bool,
     conditions: Option<Vec<FilterCondition>>,
+    state: tauri::State<'_, CsvCache>,
 ) -> Result<CsvData, String> {
-    let (headers, mut all_rows, encoding_name, delim_str, _) = load_full_csv(&path, delimiter)?;
+    let index = get_or_build_index(&state, &path, delimiter)?;
 
-    if column_index >= headers.len() {
+    if column_index >= index.headers.len() {
         return Err(format!(
             "column_index {} out of range ({} columns)",
             column_index,
-            headers.len()
+            index.headers.len()
         ));
     }
 
-    let mut rows = match conditions {
-        Some(conds) if !conds.is_empty() => apply_filters(&headers, &all_rows, &conds),
-        _ => std::mem::take(&mut all_rows),
-    };
+    let conds = conditions.unwrap_or_default();
+    let indices = filter_row_indices(&index, &conds)?;
+    let mut rows = materialize_indices(&index, &indices)?;
 
     let direction = if ascending { "asc" } else { "desc" };
     sort_rows(&mut rows, column_index, direction);
 
     let total_rows = rows.len();
     Ok(CsvData {
-        headers: headers.clone(),
+        headers: index.headers.clone(),
         rows,
         meta: CsvMeta {
             total_rows,
-            columns: headers.len(),
-            encoding: encoding_name,
-            delimiter: delim_str,
-            headers,
+            columns: index.headers.len(),
+            encoding: index.encoding.clone(),
+            delimiter: index.delim_str(),
+            headers: index.headers.clone(),
         },
     })
 }
@@ -497,20 +690,20 @@ pub fn search_csv(
     conditions: Option<Vec<FilterCondition>>,
     sort_column_index: Option<usize>,
     sort_ascending: Option<bool>,
+    state: tauri::State<'_, CsvCache>,
 ) -> Result<Vec<CellMatch>, String> {
-    let (headers, mut all_rows, _, _, _) = load_full_csv(&path, delimiter)?;
+    let index = get_or_build_index(&state, &path, delimiter)?;
 
-    let mut rows = match conditions {
-        Some(conds) if !conds.is_empty() => apply_filters(&headers, &all_rows, &conds),
-        _ => std::mem::take(&mut all_rows),
-    };
+    let conds = conditions.unwrap_or_default();
+    let indices = filter_row_indices(&index, &conds)?;
+    let mut rows = materialize_indices(&index, &indices)?;
 
     if let Some(col) = sort_column_index {
-        if col >= headers.len() {
+        if col >= index.headers.len() {
             return Err(format!(
                 "sort_column_index {} out of range ({} columns)",
                 col,
-                headers.len()
+                index.headers.len()
             ));
         }
         let ascending = sort_ascending.unwrap_or(true);
@@ -518,42 +711,61 @@ pub fn search_csv(
         sort_rows(&mut rows, col, direction);
     }
 
-    Ok(search_rows(
+    search_rows(
         &rows,
-        headers.len(),
+        index.headers.len(),
         &query,
         use_regex.unwrap_or(false),
         case_sensitive.unwrap_or(false),
-    ))
+    )
 }
 
-/// フィルタ結果を CSV ファイルとして output_path に保存する。
+/// フィルタ結果を CSV ファイルとして output_path にストリーミング保存する。
 #[tauri::command(async)]
 pub fn export_csv(
     path: String,
     delimiter: Option<String>,
     output_path: String,
     conditions: Vec<FilterCondition>,
+    state: tauri::State<'_, CsvCache>,
 ) -> Result<(), String> {
-    let (headers, all_rows, _, _, delim) = load_full_csv(&path, delimiter)?;
-
-    let filtered = if conditions.is_empty() {
-        all_rows
+    let index = get_or_build_index(&state, &path, delimiter)?;
+    let compiled = if conditions.is_empty() {
+        None
     } else {
-        apply_filters(&headers, &all_rows, &conditions)
+        Some(compile_filters(&index.headers, &conditions)?)
     };
 
     let out_file = fs::File::create(&output_path).map_err(|e| e.to_string())?;
     let mut wtr = csv::WriterBuilder::new()
-        .delimiter(delim)
-        .from_writer(out_file);
+        .delimiter(index.delimiter)
+        .from_writer(BufWriter::new(out_file));
 
-    wtr.write_record(&headers).map_err(|e| e.to_string())?;
-    for row in &filtered {
-        wtr.write_record(row).map_err(|e| e.to_string())?;
+    wtr.write_record(&index.headers).map_err(|e| e.to_string())?;
+
+    const SCAN_CHUNK: usize = 2048;
+    let total = index.row_count();
+    let mut offset = 0;
+    while offset < total {
+        let rows = read_rows_from_index(&index, offset, SCAN_CHUNK)?;
+        if rows.is_empty() {
+            break;
+        }
+        for row in &rows {
+            let keep = match &compiled {
+                None => true,
+                Some(filters) => filters.iter().all(|f| {
+                    let value = row.get(f.col_idx).map(|s| s.as_str()).unwrap_or("");
+                    compiled_row_matches(value, f)
+                }),
+            };
+            if keep {
+                wtr.write_record(row).map_err(|e| e.to_string())?;
+            }
+        }
+        offset += rows.len();
     }
     wtr.flush().map_err(|e| e.to_string())?;
-
     Ok(())
 }
 
@@ -562,6 +774,7 @@ pub fn export_csv(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use encoding_rs::SHIFT_JIS;
 
     const SAMPLE_CSV: &str = "name,age,city\nAlice,30,Tokyo\nBob,25,Osaka\nCarol,35,Tokyo";
     const SAMPLE_TSV: &str = "name\tage\tcity\nAlice\t30\tTokyo\nBob\t25\tOsaka";
@@ -603,6 +816,7 @@ mod tests {
     fn row_matches_exact() {
         let cond = FilterCondition {
             column: "c".into(),
+            column_index: None,
             filter_type: "exact".into(),
             value: "Tokyo".into(),
         };
@@ -614,6 +828,7 @@ mod tests {
     fn row_matches_contains() {
         let cond = FilterCondition {
             column: "c".into(),
+            column_index: None,
             filter_type: "contains".into(),
             value: "ky".into(),
         };
@@ -625,6 +840,7 @@ mod tests {
     fn row_matches_starts_with() {
         let cond = FilterCondition {
             column: "c".into(),
+            column_index: None,
             filter_type: "starts_with".into(),
             value: "To".into(),
         };
@@ -636,6 +852,7 @@ mod tests {
     fn row_matches_regex() {
         let cond = FilterCondition {
             column: "c".into(),
+            column_index: None,
             filter_type: "regex".into(),
             value: "^T.*o$".into(),
         };
@@ -644,9 +861,42 @@ mod tests {
     }
 
     #[test]
+    fn invalid_regex_returns_error() {
+        let headers = vec!["c".to_string()];
+        let cond = FilterCondition {
+            column: "c".into(),
+            column_index: Some(0),
+            filter_type: "regex".into(),
+            value: "(".into(),
+        };
+        let err = apply_filters(&headers, &[vec!["x".into()]], &[cond]).unwrap_err();
+        assert!(err.contains("invalid regex"));
+    }
+
+    #[test]
+    fn filter_by_column_index_not_name() {
+        // Duplicate header names: column_index picks the second "city"
+        let headers = vec!["city".into(), "city".into()];
+        let rows = vec![
+            vec!["Tokyo".into(), "Osaka".into()],
+            vec!["Kyoto".into(), "Nagoya".into()],
+        ];
+        let cond = FilterCondition {
+            column: "city".into(),
+            column_index: Some(1),
+            filter_type: "exact".into(),
+            value: "Osaka".into(),
+        };
+        let result = apply_filters(&headers, &rows, &[cond]).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0][1], "Osaka");
+    }
+
+    #[test]
     fn row_matches_gt() {
         let cond = FilterCondition {
             column: "a".into(),
+            column_index: None,
             filter_type: "gt".into(),
             value: "28".into(),
         };
@@ -658,6 +908,7 @@ mod tests {
     fn row_matches_lt() {
         let cond = FilterCondition {
             column: "a".into(),
+            column_index: None,
             filter_type: "lt".into(),
             value: "30".into(),
         };
@@ -669,6 +920,7 @@ mod tests {
     fn row_matches_gte() {
         let cond = FilterCondition {
             column: "a".into(),
+            column_index: None,
             filter_type: "gte".into(),
             value: "30".into(),
         };
@@ -681,6 +933,7 @@ mod tests {
     fn row_matches_lte() {
         let cond = FilterCondition {
             column: "a".into(),
+            column_index: None,
             filter_type: "lte".into(),
             value: "30".into(),
         };
@@ -700,16 +953,18 @@ mod tests {
         let conditions = vec![
             FilterCondition {
                 column: "city".into(),
+                column_index: None,
                 filter_type: "exact".into(),
                 value: "Tokyo".into(),
             },
             FilterCondition {
                 column: "age".into(),
+                column_index: None,
                 filter_type: "gt".into(),
                 value: "28".into(),
             },
         ];
-        let result = apply_filters(&headers, &rows, &conditions);
+        let result = apply_filters(&headers, &rows, &conditions).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0][0], "Alice");
         assert_eq!(result[1][0], "Carol");
@@ -722,7 +977,7 @@ mod tests {
             vec!["Alice".to_string()],
             vec!["Bob".to_string()],
         ];
-        let result = apply_filters(&headers, &rows, &[]);
+        let result = apply_filters(&headers, &rows, &[]).unwrap();
         assert_eq!(result.len(), 2);
     }
 
@@ -739,7 +994,6 @@ mod tests {
         assert_eq!(compare_cell_values("1.25", "1.5"), Ordering::Less);
         assert_eq!(compare_cell_values("-10", "-5"), Ordering::Less);
         assert_eq!(compare_cell_values("apple", "banana"), Ordering::Less);
-        // ISO dates: whole-string not numeric → lexicographic (= date order)
         assert_eq!(
             compare_cell_values("2024-01-05", "2024-03-01"),
             Ordering::Less
@@ -779,7 +1033,7 @@ mod tests {
             vec!["Bob".into(), "Osaka".into()],
             vec!["Carol".into(), "tokyo".into()],
         ];
-        let matches = search_rows(&rows, 2, "tokyo", false, false);
+        let matches = search_rows(&rows, 2, "tokyo", false, false).unwrap();
         assert_eq!(
             matches,
             vec![
@@ -796,7 +1050,76 @@ mod tests {
             vec!["alice".into()],
             vec!["ALICE".into()],
         ];
-        let matches = search_rows(&rows, 1, "^Alice$", true, true);
+        let matches = search_rows(&rows, 1, "^Alice$", true, true).unwrap();
         assert_eq!(matches, vec![CellMatch { row: 0, col: 0 }]);
+    }
+
+    #[test]
+    fn index_and_chunk_basic() {
+        let index = build_index_from_content(
+            "mem.csv",
+            SAMPLE_CSV.to_string(),
+            "UTF-8".into(),
+            b',',
+        )
+        .unwrap();
+        assert_eq!(index.row_count(), 3);
+        assert_eq!(index.headers, vec!["name", "age", "city"]);
+
+        let chunk0 = read_rows_from_index(&index, 0, 2).unwrap();
+        assert_eq!(chunk0.len(), 2);
+        assert_eq!(chunk0[0][0], "Alice");
+        assert_eq!(chunk0[1][0], "Bob");
+
+        let chunk1 = read_rows_from_index(&index, 2, 10).unwrap();
+        assert_eq!(chunk1.len(), 1);
+        assert_eq!(chunk1[0][0], "Carol");
+
+        // Jump to last row without reading earlier rows via skip
+        let last = read_rows_from_index(&index, 2, 1).unwrap();
+        assert_eq!(last[0], vec!["Carol", "35", "Tokyo"]);
+    }
+
+    #[test]
+    fn index_handles_utf8_bom() {
+        let mut raw = vec![0xef, 0xbb, 0xbf];
+        raw.extend_from_slice(SAMPLE_CSV.as_bytes());
+        let (content, enc) = decode_file(&raw);
+        let index = build_index_from_content("bom.csv", content, enc, b',').unwrap();
+        assert_eq!(index.row_count(), 3);
+        assert_eq!(index.headers[0], "name");
+        let rows = read_rows_from_index(&index, 0, 1).unwrap();
+        assert_eq!(rows[0][0], "Alice");
+    }
+
+    #[test]
+    fn index_handles_quoted_newlines() {
+        let csv = "id,note\n1,\"hello\nworld\"\n2,plain\n";
+        let index =
+            build_index_from_content("q.csv", csv.to_string(), "UTF-8".into(), b',').unwrap();
+        assert_eq!(index.row_count(), 2);
+        let row0 = read_rows_from_index(&index, 0, 1).unwrap();
+        assert_eq!(row0[0][1], "hello\nworld");
+        let row1 = read_rows_from_index(&index, 1, 1).unwrap();
+        assert_eq!(row1[0][0], "2");
+        assert_eq!(row1[0][1], "plain");
+    }
+
+    #[test]
+    fn index_handles_shift_jis() {
+        let unicode = "名前,値\n太郎,1\n次郎,2\n";
+        let (encoded, _, _) = SHIFT_JIS.encode(unicode);
+        let (content, enc) = decode_file(&encoded);
+        assert!(
+            enc.eq_ignore_ascii_case("Shift_JIS")
+                || enc.to_ascii_lowercase().contains("windows-31j")
+                || content.contains("太郎"),
+            "expected Shift_JIS-ish decode, got encoding={enc} content={content:?}"
+        );
+        let index = build_index_from_content("sjis.csv", content, enc, b',').unwrap();
+        assert_eq!(index.row_count(), 2);
+        let rows = read_rows_from_index(&index, 1, 1).unwrap();
+        assert_eq!(rows[0][0], "次郎");
+        assert_eq!(rows[0][1], "2");
     }
 }
