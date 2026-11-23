@@ -3,12 +3,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { usePdfStore } from "../../stores/pdfStore";
 import { useSearchStore } from "../../stores/searchStore";
 import { showError } from "../../stores/toastStore";
-import { loadPdfDocument } from "../../lib/pdfLib";
+import { extractPdfInfo, loadPdfDocument } from "../../lib/pdfLib";
 import { findPdfMatches, clearPdfTextCache } from "../../lib/pdfTextIndex";
 import { PdfCanvas } from "./PdfCanvas";
 import { ThumbnailSidebar } from "./ThumbnailSidebar";
 import { OutlineSidebar } from "./OutlineSidebar";
-import type { Annotation, PdfInfo } from "../../types";
+import type { Annotation } from "../../types";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 
 const MIN_ZOOM = 0.25;
@@ -99,11 +99,13 @@ export function PdfViewer({ tabId, filePath, isActive = true }: PdfViewerProps) 
     store.setLoading(tabId, true);
 
     Promise.all([
-      invoke<PdfInfo>("read_pdf_info", { path: filePath }),
-      loadPdfDocument(filePath),
-      invoke<string>("load_annotations", { pdfPath: filePath }),
+      loadPdfDocument(filePath).then(async (doc) => {
+        const info = await extractPdfInfo(doc);
+        return { doc, info };
+      }),
+      invoke<string>("load_annotations", { pdfPath: filePath }).catch(() => "[]"),
     ])
-      .then(([info, doc, annsJson]) => {
+      .then(([{ doc, info }, annsJson]) => {
         if (cancelled) { doc.destroy(); return; }
         localDoc = doc;
         store.setPdfInfo(tabId, info);

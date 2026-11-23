@@ -50,7 +50,7 @@ export interface FilterCondition {
 
 // ─── PDF Types ──────────────────────────────────────────────────────────────
 
-// Rust の PdfInfo に対応
+// pdf.js 由来の PDF メタデータ / 目次（FE で構築）
 export interface PdfInfo {
   page_count: number;
   title: string | null;
@@ -64,7 +64,7 @@ export interface PdfInfo {
   outlines: OutlineItem[];
 }
 
-// Rust の OutlineItem に対応（再帰構造）
+// pdf.js outline を正規化した再帰構造
 export interface OutlineItem {
   title: string;
   page: number | null; // 0-based page index

@@ -3,12 +3,13 @@ import { render, screen } from "@testing-library/react";
 import { PdfViewer } from "../PdfViewer";
 import { usePdfStore } from "../../../stores/pdfStore";
 
-// Mock Tauri invoke and pdfLib
+// Mock Tauri invoke and pdfLib (info comes from pdf.js, not read_pdf_info)
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockRejectedValue(new Error("mock error")),
 }));
 vi.mock("../../../lib/pdfLib", () => ({
   loadPdfDocument: vi.fn().mockRejectedValue(new Error("mock error")),
+  extractPdfInfo: vi.fn().mockRejectedValue(new Error("mock error")),
 }));
 
 beforeEach(() => {
