@@ -17,6 +17,7 @@
     "dialog:allow-ask",
     "dialog:allow-save",
     "updater:default",
+    "process:default",
     "window-state:default"
   ]
 }

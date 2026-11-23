@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { EmptyState } from "./components/EmptyState";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
@@ -12,7 +13,14 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { RecentFilesMenu } from "./components/RecentFilesMenu";
 import { openFile, showOpenDialog } from "./lib/fileCommands";
 import { confirmUnsaved } from "./lib/confirmUnsaved";
-import { useTabStore, useSettingsStore, useSearchStore, useRecentFilesStore, showError } from "./stores";
+import {
+  useTabStore,
+  useSettingsStore,
+  useSearchStore,
+  useRecentFilesStore,
+  showError,
+  showInfo,
+} from "./stores";
 import type { RecentFile } from "./stores";
 import { Toast } from "./components/Toast";
 import { errorMessage } from "./lib/errorUtils";
@@ -75,9 +83,21 @@ function App() {
   useEffect(() => {
     check()
       .then((update) => {
-        if (update?.available) {
-          showError(`新しいバージョン ${update.version} が利用可能です。`);
-        }
+        if (!update) return;
+        showInfo(`新しいバージョン ${update.version} が利用可能です。`, {
+          durationMs: 0,
+          action: {
+            label: "更新して再起動",
+            onClick: async () => {
+              try {
+                await update.downloadAndInstall();
+                await relaunch();
+              } catch (err) {
+                showError(`更新に失敗しました: ${errorMessage(err)}`);
+              }
+            },
+          },
+        });
       })
       .catch(() => {
         // 更新チェック失敗は無視（オフライン等）

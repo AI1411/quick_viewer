@@ -24,15 +24,18 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost https:",
       "assetProtocol": {
         "enable": true,
-        "scope": ["$HOME/**", "**"]
+        "scope": [
+          "$HOME/**",
+          "**"
+        ]
       }
     }
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJCMUY3RDQ3QjRDODM2OEQKUldTTk5zaTBSMzBmSy9nVm9tVFNSNzZxdHJscUdQNlMrNW4rakUxQW82RjN6OWxBUkxaYWFDcnEK",
       "endpoints": [
-        "https://github.com/YOUR_USERNAME/quick_viewer/releases/latest/download/latest.json"
+        "https://github.com/AI1411/quick_viewer/releases/latest/download/latest.json"
       ]
     }
   },
@@ -44,27 +47,38 @@
     ],
     "fileAssociations": [
       {
-        "ext": ["csv"],
+        "ext": [
+          "csv"
+        ],
         "mimeType": "text/csv",
         "role": "Viewer"
       },
       {
-        "ext": ["tsv"],
+        "ext": [
+          "tsv"
+        ],
         "mimeType": "text/tab-separated-values",
         "role": "Viewer"
       },
       {
-        "ext": ["pdf"],
+        "ext": [
+          "pdf"
+        ],
         "mimeType": "application/pdf",
         "role": "Viewer"
       },
       {
-        "ext": ["md", "markdown"],
+        "ext": [
+          "md",
+          "markdown"
+        ],
         "mimeType": "text/markdown",
         "role": "Viewer"
       },
       {
-        "ext": ["xlsx"],
+        "ext": [
+          "xlsx"
+        ],
         "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "role": "Viewer"
       }
@@ -87,6 +101,7 @@
           "y": 170
         }
       }
-    }
+    },
+    "createUpdaterArtifacts": true
   }
 }
