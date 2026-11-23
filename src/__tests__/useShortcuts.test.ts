@@ -102,4 +102,20 @@ describe("useShortcuts", () => {
     window.dispatchEvent(event);
     expect(handler).toHaveBeenCalledTimes(1);
   });
+
+  it("enabled=false のときはリスナーを登録しない", () => {
+    const handler = vi.fn();
+    renderHook(() => useShortcuts({ "cmd+o": handler }, false));
+    expect(addEventListenerSpy).not.toHaveBeenCalledWith(
+      "keydown",
+      expect.any(Function)
+    );
+    const event = new KeyboardEvent("keydown", {
+      key: "o",
+      metaKey: true,
+      bubbles: true,
+    });
+    window.dispatchEvent(event);
+    expect(handler).not.toHaveBeenCalled();
+  });
 });
