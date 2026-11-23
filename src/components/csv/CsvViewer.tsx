@@ -4,6 +4,7 @@ import { useCsvStore } from "../../stores/csvStore";
 import { useSearchStore } from "../../stores/searchStore";
 import { showError } from "../../stores/toastStore";
 import { buildRegex } from "../../lib/searchHighlight";
+import { compareCellValues } from "../../lib/compareCellValues";
 import type { CellMatch } from "../../stores/searchStore";
 import { VirtualTable } from "./VirtualTable";
 import { FilterPopover } from "./FilterPopover";
@@ -191,12 +192,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     if (!sort) return rows;
     const { columnIndex, direction } = sort;
     return [...rows].sort((a, b) => {
-      const va = a[columnIndex] ?? "";
-      const vb = b[columnIndex] ?? "";
-      const numA = parseFloat(va);
-      const numB = parseFloat(vb);
-      const isNumeric = !isNaN(numA) && !isNaN(numB);
-      const cmp = isNumeric ? numA - numB : va.localeCompare(vb);
+      const cmp = compareCellValues(a[columnIndex] ?? "", b[columnIndex] ?? "");
       return direction === "asc" ? cmp : -cmp;
     });
   }, [tabState?.data, tabState?.filteredRows, tabState?.sort]);
