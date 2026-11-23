@@ -211,7 +211,7 @@ fn get_pdfium() -> Result<Pdfium, String> {
 const MAX_PDF_SIZE: u64 = 512 * 1024 * 1024; // 512 MB
 
 /// Returns PDF metadata, page count, and outline (bookmarks).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_pdf_info(path: String) -> Result<PdfInfo, String> {
     crate::utils::assert_regular_file(std::path::Path::new(&path))
         .map_err(|e| format!("Failed to load PDF: {}", e))?;
@@ -269,7 +269,7 @@ pub fn read_pdf_info(path: String) -> Result<PdfInfo, String> {
 
 /// Renders a single PDF page to a base64-encoded PNG image.
 /// `page_index` is 0-based. `scale` controls render resolution (default 1.5).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_pdf_page(path: String, page_index: u32, scale: Option<f32>) -> Result<PdfPageData, String> {
     crate::utils::assert_regular_file(std::path::Path::new(&path))
         .map_err(|e| format!("Failed to load PDF: {}", e))?;
@@ -324,7 +324,7 @@ pub fn read_pdf_page(path: String, page_index: u32, scale: Option<f32>) -> Resul
 
 /// Reads a file as raw bytes and returns it base64-encoded.
 /// Used by the frontend to load PDFs into PDF.js without asset protocol.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_pdf_bytes(path: String) -> Result<String, String> {
     let size = crate::utils::assert_regular_file(std::path::Path::new(&path))
         .map_err(|e| format!("Failed to read file: {}", e))?;
@@ -345,7 +345,7 @@ fn annotation_key(pdf_path: &str) -> String {
         .collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_annotations(
     app: tauri::AppHandle,
     pdf_path: String,
@@ -363,7 +363,7 @@ pub fn save_annotations(
     crate::utils::atomic_write(&file, annotations_json.as_bytes()).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn load_annotations(app: tauri::AppHandle, pdf_path: String) -> Result<String, String> {
     use tauri::Manager;
     let dir = app

@@ -306,7 +306,7 @@ fn check_csv_file(path: &str) -> Result<(), String> {
 }
 
 /// ファイルのテキストエンコーディングを検出して返す。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detect_encoding(path: String) -> Result<String, String> {
     check_csv_file(&path)?;
     let raw = fs::read(&path).map_err(|e| e.to_string())?;
@@ -315,7 +315,7 @@ pub fn detect_encoding(path: String) -> Result<String, String> {
 }
 
 /// CSV ファイルを読み込む。先頭 limit 行（デフォルト 100）とメタデータを返す。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_csv(
     path: String,
     delimiter: Option<String>,
@@ -368,7 +368,7 @@ pub fn read_csv(
 }
 
 /// CSV ファイルのチャンク（offset 行目から limit 行）を返す。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_csv_chunk(
     path: String,
     delimiter: Option<String>,
@@ -416,7 +416,7 @@ pub fn read_csv_chunk(
 }
 
 /// フィルタ条件（AND 複合）で絞り込んだ全行を返す。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn filter_csv(
     path: String,
     delimiter: Option<String>,
@@ -446,7 +446,7 @@ pub fn filter_csv(
 }
 
 /// Sort all CSV rows by column index (full file). `ascending` true = asc.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sort_csv(
     path: String,
     delimiter: Option<String>,
@@ -487,7 +487,7 @@ pub fn sort_csv(
 }
 
 /// Search the whole CSV file; returns cell match indices into the (optionally filtered/sorted) row set.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_csv(
     path: String,
     delimiter: Option<String>,
@@ -528,7 +528,7 @@ pub fn search_csv(
 }
 
 /// フィルタ結果を CSV ファイルとして output_path に保存する。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_csv(
     path: String,
     delimiter: Option<String>,
