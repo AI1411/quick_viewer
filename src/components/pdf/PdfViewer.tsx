@@ -1,8 +1,10 @@
 import { useEffect, useCallback, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { usePdfStore } from "../../stores/pdfStore";
+import { useSearchStore } from "../../stores/searchStore";
 import { showError } from "../../stores/toastStore";
 import { loadPdfDocument } from "../../lib/pdfLib";
+import { findPdfMatches, clearPdfTextCache } from "../../lib/pdfTextIndex";
 import { PdfCanvas } from "./PdfCanvas";
 import { ThumbnailSidebar } from "./ThumbnailSidebar";
 import { OutlineSidebar } from "./OutlineSidebar";
@@ -122,10 +124,65 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
 
     return () => {
       cancelled = true;
+      if (localDoc) clearPdfTextCache(localDoc);
       localDoc?.destroy();
       usePdfStore.getState().removeTab(tabId);
     };
   }, [tabId, filePath]);
+
+  // ── PDF 全文検索（全ページを getTextContent で索引、キャッシュ付き）────────
+  const searchIsOpen = useSearchStore((s) => s.isOpen);
+  const searchQuery = useSearchStore((s) => s.query);
+  const searchUseRegex = useSearchStore((s) => s.options.useRegex);
+  const searchCaseSensitive = useSearchStore((s) => s.options.caseSensitive);
+  const currentMatchIndex = useSearchStore((s) => s.currentMatchIndex);
+  const pdfMatches = useSearchStore((s) => s.pdfMatches);
+
+  useEffect(() => {
+    const doc = usePdfStore.getState().tabs[tabId]?.pdfDocument;
+    if (!searchIsOpen || !searchQuery || !doc) {
+      useSearchStore.getState().setPdfMatches([]);
+      return;
+    }
+
+    const signal = { cancelled: false };
+    findPdfMatches(
+      doc,
+      searchQuery,
+      { useRegex: searchUseRegex, caseSensitive: searchCaseSensitive },
+      signal
+    ).then((matches) => {
+      if (!signal.cancelled) {
+        useSearchStore.getState().setPdfMatches(matches);
+      }
+    });
+
+    return () => {
+      signal.cancelled = true;
+    };
+  }, [
+    tabId,
+    searchIsOpen,
+    searchQuery,
+    searchUseRegex,
+    searchCaseSensitive,
+    tabState?.pdfDocument,
+  ]);
+
+  // 次へ／前へ → 該当ページへ移動（連続モードではスクロール）
+  useEffect(() => {
+    if (pdfMatches.length === 0) return;
+    const match = pdfMatches[currentMatchIndex];
+    if (!match) return;
+
+    const pageNumber = match.pageIndex + 1; // 1-based
+    usePdfStore.getState().setCurrentPage(tabId, pageNumber);
+
+    const el = containerRef.current?.querySelector(
+      `[data-pdf-page="${match.pageIndex}"]`
+    );
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [tabId, currentMatchIndex, pdfMatches]);
 
   // ── 注釈の自動保存（デバウンス 500ms）────────────────────────────────────
   useEffect(() => {
@@ -525,35 +582,38 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
           style={{ backgroundColor: "var(--viewer-bg, #525659)", padding: 24 }}
         >
           {displayMode === "single" ? (
-            <PdfCanvas
-              pdfDocument={pdfDocument}
-              pageIndex={currentPage - 1}
-              scale={zoom * 1.5}
-              rotation={rotation}
-              annotations={annotations[currentPage - 1] ?? []}
-              annotationMode={annotationMode}
-              highlightColor={highlightColor}
-              selectedAnnotationId={selectedAnnotationId}
-              onAnnotationCreate={handleAnnotationCreate}
-              onAnnotationDelete={handleAnnotationDelete}
-              onAnnotationSelect={handleAnnotationSelect}
-            />
+            <div data-pdf-page={currentPage - 1}>
+              <PdfCanvas
+                pdfDocument={pdfDocument}
+                pageIndex={currentPage - 1}
+                scale={zoom * 1.5}
+                rotation={rotation}
+                annotations={annotations[currentPage - 1] ?? []}
+                annotationMode={annotationMode}
+                highlightColor={highlightColor}
+                selectedAnnotationId={selectedAnnotationId}
+                onAnnotationCreate={handleAnnotationCreate}
+                onAnnotationDelete={handleAnnotationDelete}
+                onAnnotationSelect={handleAnnotationSelect}
+              />
+            </div>
           ) : (
             <div className="flex flex-col items-center gap-6">
               {Array.from({ length: pageCount }, (_, i) => (
-                <LazyPdfCanvas
-                  key={i}
-                  pdfDocument={pdfDocument}
-                  pageIndex={i}
-                  scale={zoom * 1.5}
-                  rotation={rotation}
-                  annotations={annotations[i] ?? []}
-                  annotationMode={annotationMode}
-                  selectedAnnotationId={selectedAnnotationId}
-                  onAnnotationCreate={handleAnnotationCreate}
-                  onAnnotationDelete={handleAnnotationDelete}
-                  onAnnotationSelect={handleAnnotationSelect}
-                />
+                <div key={i} data-pdf-page={i}>
+                  <LazyPdfCanvas
+                    pdfDocument={pdfDocument}
+                    pageIndex={i}
+                    scale={zoom * 1.5}
+                    rotation={rotation}
+                    annotations={annotations[i] ?? []}
+                    annotationMode={annotationMode}
+                    selectedAnnotationId={selectedAnnotationId}
+                    onAnnotationCreate={handleAnnotationCreate}
+                    onAnnotationDelete={handleAnnotationDelete}
+                    onAnnotationSelect={handleAnnotationSelect}
+                  />
+                </div>
               ))}
             </div>
           )}
