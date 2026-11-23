@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { LogicalSize, LogicalPosition } from "@tauri-apps/api/dpi";
-import { invoke } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
 import { EmptyState } from "./components/EmptyState";
 import { Sidebar } from "./components/Sidebar";
@@ -21,14 +18,6 @@ import { useShortcuts } from "./hooks/useShortcuts";
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { FileChangedDialog } from "./components/FileChangedDialog";
 import "./App.css";
-
-interface WindowState {
-  width: number;
-  height: number;
-  x: number;
-  y: number;
-  isMaximized: boolean;
-}
 
 async function handleOpenPath(
   path: string,
@@ -93,70 +82,7 @@ function App() {
       });
   }, []);
 
-  // ウィンドウ状態の復元
-  useEffect(() => {
-    (async () => {
-      try {
-        const raw = await invoke<string | null>("load_app_data", { key: "window_state" });
-        if (raw) {
-          const state = JSON.parse(raw) as WindowState;
-          const win = getCurrentWindow();
-          if (state.isMaximized) {
-            await win.maximize();
-          } else {
-            const safeWidth = Math.max(400, Math.min(state.width, 7680));
-            const safeHeight = Math.max(300, Math.min(state.height, 4320));
-            const safeX = Math.max(-200, state.x);
-            const safeY = Math.max(0, state.y);
-            await win.setSize(new LogicalSize(safeWidth, safeHeight));
-            await win.setPosition(new LogicalPosition(safeX, safeY));
-          }
-        }
-      } catch {
-        // 初回起動 or エラー時はデフォルト
-      }
-    })();
-  }, []);
-
-  // ウィンドウ状態の保存（リサイズ / 移動）
-  useEffect(() => {
-    const win = getCurrentWindow();
-    let saveTimer: ReturnType<typeof setTimeout>;
-    const save = async () => {
-      try {
-        const size = await win.innerSize();
-        const pos = await win.outerPosition();
-        const isMaximized = await win.isMaximized();
-        await invoke("save_app_data", {
-          key: "window_state",
-          value: JSON.stringify({ width: size.width, height: size.height, x: pos.x, y: pos.y, isMaximized }),
-        });
-      } catch {
-        // サイレント
-      }
-    };
-    const debouncedSave = () => {
-      clearTimeout(saveTimer);
-      saveTimer = setTimeout(save, 500);
-    };
-    let unlisten1: (() => void) | undefined;
-    let unlisten2: (() => void) | undefined;
-    let cancelled = false;
-    win.onResized(debouncedSave).then((fn) => {
-      if (cancelled) fn();
-      else unlisten1 = fn;
-    });
-    win.onMoved(debouncedSave).then((fn) => {
-      if (cancelled) fn();
-      else unlisten2 = fn;
-    });
-    return () => {
-      cancelled = true;
-      clearTimeout(saveTimer);
-      unlisten1?.();
-      unlisten2?.();
-    };
-  }, []);
+  // ウィンドウ状態の保存/復元は tauri-plugin-window-state が担当
 
   // テーマを data-theme 属性に反映
   useEffect(() => {
