@@ -89,11 +89,19 @@ export function PdfCanvas({
       const textDiv = textLayerRef.current;
       if (!canvas || !textDiv) return;
 
-      const ctx = canvas.getContext("2d")!;
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
+      const dpr = window.devicePixelRatio || 1;
+      const cssWidth = viewport.width;
+      const cssHeight = viewport.height;
 
-      // Render the page to canvas
+      canvas.width = Math.floor(cssWidth * dpr);
+      canvas.height = Math.floor(cssHeight * dpr);
+      canvas.style.width = `${cssWidth}px`;
+      canvas.style.height = `${cssHeight}px`;
+
+      const ctx = canvas.getContext("2d")!;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      // Render the page to canvas at device-pixel resolution; CSS size stays unchanged
       renderTask = page.render({ canvasContext: ctx, viewport });
       await renderTask.promise;
       if (cancelled) return;
@@ -186,8 +194,9 @@ export function PdfCanvas({
 
     const lastRect = clientRects[clientRects.length - 1];
     const rawX = lastRect.right - containerBounds.left;
+    const cssWidth = canvasRef.current?.clientWidth ?? 400;
     setColorPickerPos({
-      x: Math.min(rawX, (canvasRef.current?.width ?? 400) - 180),
+      x: Math.min(rawX, cssWidth - 180),
       y: lastRect.bottom - containerBounds.top,
     });
   }, [annotationMode]);

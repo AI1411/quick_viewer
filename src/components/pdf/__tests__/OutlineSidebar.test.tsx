@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { OutlineSidebar } from "../OutlineSidebar";
 import type { OutlineItem } from "../../../types";
 
+// OutlineItem is the normalized shape produced from pdf.js getOutline()
 const flatOutline: OutlineItem[] = [
   { title: "第1章", page: 0, level: 0, children: [] },
   { title: "第2章", page: 4, level: 0, children: [] },
