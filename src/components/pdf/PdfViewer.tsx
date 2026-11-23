@@ -576,7 +576,7 @@ export function PdfViewer({ tabId, filePath, isActive = true }: PdfViewerProps) 
             />
           ) : (
             <ThumbnailSidebar
-              filePath={filePath}
+              pdfDocument={pdfDocument}
               pageCount={pageCount}
               currentPage={currentPage}
               onPageSelect={(p) => usePdfStore.getState().setCurrentPage(tabId, p)}

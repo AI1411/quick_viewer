@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { invoke } from "@tauri-apps/api/core";
-import type { PdfPageData } from "../../types";
+import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 
+const THUMB_WIDTH = 88;
 const MAX_CONCURRENT = 4;
 let activeRenders = 0;
 const renderQueue: Array<() => void> = [];
@@ -13,7 +13,10 @@ function acquireSemaphore(): Promise<void> {
       activeRenders++;
       resolve();
     } else {
-      renderQueue.push(() => { activeRenders++; resolve(); });
+      renderQueue.push(() => {
+        activeRenders++;
+        resolve();
+      });
     }
   });
 }
@@ -24,20 +27,30 @@ function releaseSemaphore() {
   if (next) next();
 }
 
+function isRenderCancelled(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "name" in err &&
+    (err as { name: string }).name === "RenderingCancelledException"
+  );
+}
+
 interface ThumbnailItemProps {
-  filePath: string;
+  pdfDocument: PDFDocumentProxy;
   pageIndex: number;
   isActive: boolean;
   onClick: () => void;
 }
 
 function ThumbnailItem({
-  filePath,
+  pdfDocument,
   pageIndex,
   isActive,
   onClick,
 }: ThumbnailItemProps) {
-  const [imageData, setImageData] = useState<PdfPageData | null>(null);
+  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [isVisible, setIsVisible] = useState(false);
   const ref = useRef<HTMLButtonElement>(null);
 
@@ -55,19 +68,48 @@ function ThumbnailItem({
   useEffect(() => {
     if (!isVisible) return;
     let cancelled = false;
-    acquireSemaphore().then(() => {
-      if (cancelled) { releaseSemaphore(); return; }
-      invoke<PdfPageData>("read_pdf_page", {
-        path: filePath,
-        pageIndex,
-        scale: 0.2,
-      })
-        .then((data) => { if (!cancelled) setImageData(data); })
-        .catch(() => {})
-        .finally(() => releaseSemaphore());
+    let renderTask: RenderTask | null = null;
+
+    acquireSemaphore().then(async () => {
+      if (cancelled) {
+        releaseSemaphore();
+        return;
+      }
+      try {
+        const page = await pdfDocument.getPage(pageIndex + 1);
+        if (cancelled) return;
+
+        const baseViewport = page.getViewport({ scale: 1 });
+        const scale = THUMB_WIDTH / baseViewport.width;
+        const viewport = page.getViewport({ scale });
+
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("Failed to get canvas 2D context");
+
+        renderTask = page.render({ canvasContext: ctx, viewport });
+        await renderTask.promise;
+        if (cancelled) return;
+
+        setThumbUrl(canvas.toDataURL("image/png"));
+        setError(null);
+      } catch (err) {
+        if (cancelled || isRenderCancelled(err)) return;
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`Thumbnail render failed (page ${pageIndex + 1}):`, err);
+        setError(message);
+      } finally {
+        releaseSemaphore();
+      }
     });
-    return () => { cancelled = true; };
-  }, [isVisible, filePath, pageIndex]);
+
+    return () => {
+      cancelled = true;
+      renderTask?.cancel();
+    };
+  }, [isVisible, pdfDocument, pageIndex]);
 
   return (
     <button
@@ -75,9 +117,7 @@ function ThumbnailItem({
       onClick={onClick}
       className="flex flex-col items-center gap-1 p-1 w-full rounded"
       style={{
-        backgroundColor: isActive
-          ? "var(--tab-active-bg)"
-          : "transparent",
+        backgroundColor: isActive ? "var(--tab-active-bg)" : "transparent",
         outline: isActive ? "2px solid var(--accent, #3b82f6)" : "none",
         outlineOffset: 1,
         cursor: "pointer",
@@ -87,18 +127,26 @@ function ThumbnailItem({
       <div
         className="rounded overflow-hidden flex items-center justify-center"
         style={{
-          width: 88,
+          width: THUMB_WIDTH,
           minHeight: 120,
-          backgroundColor: imageData ? "transparent" : "#e5e7eb",
+          backgroundColor: thumbUrl ? "transparent" : "#e5e7eb",
         }}
       >
-        {imageData ? (
+        {thumbUrl ? (
           <img
-            src={`data:image/png;base64,${imageData.image_base64}`}
+            src={thumbUrl}
             alt={`Page ${pageIndex + 1}`}
             style={{ width: "100%", display: "block" }}
             draggable={false}
           />
+        ) : error ? (
+          <span
+            className="text-xs px-1 text-center"
+            style={{ color: "#f87171" }}
+            title={error}
+          >
+            失敗
+          </span>
         ) : (
           <span
             className="text-xs"
@@ -110,7 +158,9 @@ function ThumbnailItem({
       </div>
       <span
         className="text-xs select-none"
-        style={{ color: isActive ? "var(--text-primary)" : "var(--text-secondary)" }}
+        style={{
+          color: isActive ? "var(--text-primary)" : "var(--text-secondary)",
+        }}
       >
         {pageIndex + 1}
       </span>
@@ -119,14 +169,14 @@ function ThumbnailItem({
 }
 
 interface ThumbnailSidebarProps {
-  filePath: string;
+  pdfDocument: PDFDocumentProxy;
   pageCount: number;
   currentPage: number; // 1-based
   onPageSelect: (page: number) => void;
 }
 
 export function ThumbnailSidebar({
-  filePath,
+  pdfDocument,
   pageCount,
   currentPage,
   onPageSelect,
@@ -142,7 +192,7 @@ export function ThumbnailSidebar({
 
   useEffect(() => {
     virtualizer.scrollToIndex(currentPage - 1, { align: "auto" });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage]);
 
   return (
@@ -181,7 +231,7 @@ export function ThumbnailSidebar({
               }}
             >
               <ThumbnailItem
-                filePath={filePath}
+                pdfDocument={pdfDocument}
                 pageIndex={virtualItem.index}
                 isActive={virtualItem.index + 1 === currentPage}
                 onClick={() => onPageSelect(virtualItem.index + 1)}
