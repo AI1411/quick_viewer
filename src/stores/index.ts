@@ -7,4 +7,4 @@ export type { SearchOptions, CellMatch, PdfMatch } from "./searchStore";
 export { useRecentFilesStore } from "./recentFilesStore";
 export type { RecentFile } from "./recentFilesStore";
 export { useToastStore, showError, showWarning, showInfo } from "./toastStore";
-export type { ToastItem } from "./toastStore";
+export type { ToastItem, ToastAction } from "./toastStore";

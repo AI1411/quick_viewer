@@ -10,10 +10,14 @@ function ToastIcon({ type }: { type: ToastItem["type"] }) {
 
 function colorClass(type: ToastItem["type"]): string {
   switch (type) {
-    case "error":   return "bg-red-600 text-white";
-    case "warning": return "bg-yellow-500 text-white";
-    case "success": return "bg-green-600 text-white";
-    default:        return "bg-blue-600 text-white";
+    case "error":
+      return "bg-red-600 text-white";
+    case "warning":
+      return "bg-yellow-500 text-white";
+    case "success":
+      return "bg-green-600 text-white";
+    default:
+      return "bg-blue-600 text-white";
   }
 }
 
@@ -37,7 +41,20 @@ export function Toast() {
           style={{ animation: "slideInRight 0.2s ease-out" }}
         >
           <ToastIcon type={t.type} />
-          <span className="flex-1 break-words">{t.message}</span>
+          <div className="flex-1 flex flex-col gap-2 min-w-0">
+            <span className="break-words">{t.message}</span>
+            {t.action && (
+              <button
+                type="button"
+                onClick={() => {
+                  void t.action?.onClick();
+                }}
+                className="self-start underline underline-offset-2 font-medium opacity-95 hover:opacity-100"
+              >
+                {t.action.label}
+              </button>
+            )}
+          </div>
           <button
             onClick={() => removeToast(t.id)}
             className="ml-2 opacity-70 hover:opacity-100 leading-none"
