@@ -10,8 +10,17 @@ import { useXlsxStore } from "../../stores/xlsxStore";
 import { useSearchStore } from "../../stores/searchStore";
 import { showError } from "../../stores/toastStore";
 import { buildRegex } from "../../lib/searchHighlight";
+import { compareCellValues } from "../../lib/compareCellValues";
 import type { CellMatch } from "../../stores/searchStore";
 import type { XlsxInfo, XlsxSheetData, XlsxCell, FilterCondition } from "../../types";
+
+function xlsxSortKey(cell: XlsxCell | undefined): string {
+  if (!cell) return "";
+  if (cell.cell_type === "number" || cell.cell_type === "integer") {
+    return cell.raw;
+  }
+  return cell.value;
+}
 
 interface XlsxViewerProps {
   tabId: string;
@@ -128,9 +137,10 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
     if (!tab.sort) return rows;
     const { columnIndex, direction } = tab.sort;
     return [...rows].sort((a, b) => {
-      const av = a[columnIndex]?.value ?? "";
-      const bv = b[columnIndex]?.value ?? "";
-      const cmp = av.localeCompare(bv, undefined, { numeric: true });
+      const cmp = compareCellValues(
+        xlsxSortKey(a[columnIndex]),
+        xlsxSortKey(b[columnIndex])
+      );
       return direction === "asc" ? cmp : -cmp;
     });
   }, [tab?.sheetData, tab?.sort, filters, headers]);
