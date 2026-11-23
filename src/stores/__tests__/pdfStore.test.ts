@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { usePdfStore } from "../pdfStore";
+import { useSettingsStore } from "../settingsStore";
 
 beforeEach(() => {
   usePdfStore.setState({ tabs: {} });
+  useSettingsStore.setState({
+    pdfSettings: { defaultViewMode: "continuous" },
+  });
 });
 
 describe("pdfStore", () => {
@@ -13,12 +17,18 @@ describe("pdfStore", () => {
     expect(state.currentPage).toBe(1);
     expect(state.zoom).toBe(1.0);
     expect(state.rotation).toBe(0);
-    expect(state.displayMode).toBe("single");
+    expect(state.displayMode).toBe("continuous");
     expect(state.isSidebarOpen).toBe(true);
     expect(state.isLoading).toBe(false);
     expect(state.error).toBeNull();
     expect(state.pdfInfo).toBeNull();
     expect(state.pdfDocument).toBeNull();
+  });
+
+  it("initTab uses pdfSettings.defaultViewMode", () => {
+    useSettingsStore.setState({ pdfSettings: { defaultViewMode: "single" } });
+    usePdfStore.getState().initTab("tab1");
+    expect(usePdfStore.getState().tabs["tab1"].displayMode).toBe("single");
   });
 
   it("setCurrentPage updates page", () => {
