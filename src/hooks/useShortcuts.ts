@@ -37,14 +37,17 @@ function matchesEvent(combo: ParsedCombo, e: KeyboardEvent): boolean {
  * キーボードショートカットを登録する汎用フック。
  *
  * @param shortcuts キーコンボ文字列 → ハンドラ関数のマップ
+ * @param enabled false のときはリスナーを登録しない（非アクティブタブ用）
  */
-export function useShortcuts(shortcuts: ShortcutMap): void {
+export function useShortcuts(shortcuts: ShortcutMap, enabled = true): void {
   const shortcutsRef = useRef(shortcuts);
   useLayoutEffect(() => {
     shortcutsRef.current = shortcuts;
   });
 
   useEffect(() => {
+    if (!enabled) return;
+
     const parsedCombos = Object.entries(shortcutsRef.current).map(
       ([combo, handler]) => ({ parsed: parseCombo(combo), handler })
     );
@@ -61,5 +64,5 @@ export function useShortcuts(shortcuts: ShortcutMap): void {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [enabled]);
 }

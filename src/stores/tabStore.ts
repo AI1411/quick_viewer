@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { FileFormat } from "../types";
+import { cleanupTabStores } from "../lib/cleanupTabStores";
 
 export interface Tab {
   id: string;
@@ -23,13 +24,14 @@ interface TabState {
   bumpReload: (id: string) => void;
 }
 
-export const useTabStore = create<TabState>((set) => ({
+export const useTabStore = create<TabState>((set, get) => ({
   tabs: [],
   activeTabId: null,
 
   addTab: (tab) => set((state) => ({ tabs: [...state.tabs, tab] })),
 
-  removeTab: (id) =>
+  removeTab: (id) => {
+    cleanupTabStores(id);
     set((state) => {
       const idx = state.tabs.findIndex((t) => t.id === id);
       const newTabs = state.tabs.filter((t) => t.id !== id);
@@ -43,7 +45,8 @@ export const useTabStore = create<TabState>((set) => ({
         }
       }
       return { tabs: newTabs, activeTabId: newActiveId };
-    }),
+    });
+  },
 
   setActiveTab: (id) => set({ activeTabId: id }),
 
@@ -57,24 +60,31 @@ export const useTabStore = create<TabState>((set) => ({
       return { tabs: newTabs };
     }),
 
-  closeOtherTabs: (id) =>
-    set((state) => ({
-      tabs: state.tabs.filter((t) => t.id === id),
+  closeOtherTabs: (id) => {
+    const { tabs } = get();
+    for (const tab of tabs) {
+      if (tab.id !== id) cleanupTabStores(tab.id);
+    }
+    set({
+      tabs: tabs.filter((t) => t.id === id),
       activeTabId: id,
-    })),
+    });
+  },
 
-  closeTabsToRight: (id) =>
-    set((state) => {
-      const idx = state.tabs.findIndex((t) => t.id === id);
-      const newTabs = state.tabs.slice(0, idx + 1);
-      const stillActive =
-        state.activeTabId != null &&
-        newTabs.some((t) => t.id === state.activeTabId);
-      return {
-        tabs: newTabs,
-        activeTabId: stillActive ? state.activeTabId : id,
-      };
-    }),
+  closeTabsToRight: (id) => {
+    const { tabs, activeTabId } = get();
+    const idx = tabs.findIndex((t) => t.id === id);
+    if (idx === -1) return;
+    const toClose = tabs.slice(idx + 1);
+    for (const tab of toClose) cleanupTabStores(tab.id);
+    const newTabs = tabs.slice(0, idx + 1);
+    const stillActive =
+      activeTabId != null && newTabs.some((t) => t.id === activeTabId);
+    set({
+      tabs: newTabs,
+      activeTabId: stillActive ? activeTabId : id,
+    });
+  },
 
   setDirty: (id, isDirty) =>
     set((state) => ({

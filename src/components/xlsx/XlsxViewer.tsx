@@ -25,6 +25,7 @@ function xlsxSortKey(cell: XlsxCell | undefined): string {
 interface XlsxViewerProps {
   tabId: string;
   filePath: string;
+  isActive?: boolean;
 }
 
 function colLetter(index: number): string {
@@ -53,7 +54,7 @@ function matchesFilter(value: string, cond: FilterCondition): boolean {
   }
 }
 
-export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
+export function XlsxViewer({ tabId, filePath, isActive = true }: XlsxViewerProps) {
   const tab = useXlsxStore((s) => s.tabs[tabId]);
   const [filterPopover, setFilterPopover] = useState<{
     column: string;
@@ -83,13 +84,6 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
       .catch((e) => { if (!cancelled) setError(tabId, String(e)); });
     return () => { cancelled = true; };
   }, [tabId, filePath]);
-
-  // アンマウント時にストア状態をクリーンアップ
-  useEffect(() => {
-    return () => {
-      useXlsxStore.getState().removeTab(tabId);
-    };
-  }, [tabId]);
 
   const sheetRequestSeqRef = useRef(0);
 
@@ -175,6 +169,7 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   const scrollToRowRef = useRef<((index: number) => void) | null>(null);
 
   useEffect(() => {
+    if (!isActive) return;
     if (!searchIsOpen || !searchQuery) {
       useSearchStore.getState().setCellMatches([]);
       return;
@@ -192,14 +187,15 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
       }
     }
     useSearchStore.getState().setCellMatches(matches);
-  }, [searchIsOpen, searchQuery, searchUseRegex, searchCaseSensitive, displayRows, headers]);
+  }, [isActive, searchIsOpen, searchQuery, searchUseRegex, searchCaseSensitive, displayRows, headers]);
 
   useEffect(() => {
+    if (!isActive) return;
     const matches = useSearchStore.getState().cellMatches;
     if (matches.length === 0 || !scrollToRowRef.current) return;
     const match = matches[currentMatchIndex];
     if (match) scrollToRowRef.current(match.row);
-  }, [currentMatchIndex]);
+  }, [isActive, currentMatchIndex]);
 
   const searchMatchSet = useMemo(() => {
     const set = new Set<string>();

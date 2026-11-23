@@ -24,9 +24,10 @@ function csvDelimiterFromSettings(): string | null {
 interface CsvViewerProps {
   tabId: string;
   filePath: string;
+  isActive?: boolean;
 }
 
-export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
+export function CsvViewer({ tabId, filePath, isActive = true }: CsvViewerProps) {
   const tabState = useCsvStore((s) => s.tabs[tabId]);
 
   // フィルタポップオーバーの表示状態
@@ -50,13 +51,6 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       .catch((err) => { if (!cancelled) setError(tabId, String(err)); });
     return () => { cancelled = true; };
   }, [tabId, filePath]);
-
-  // アンマウント時にストア状態をクリーンアップ
-  useEffect(() => {
-    return () => {
-      useCsvStore.getState().removeTab(tabId);
-    };
-  }, [tabId]);
 
   // チャンク追加読み込み（フィルタ / ソート中は全行取得済みなので無効）
   const handleScrollEnd = useCallback(() => {
@@ -285,6 +279,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
 
   // ソート中に全行が揃っていない場合、検索のために全行をロードして sortedRows 相当を確保
   useEffect(() => {
+    if (!isActive) return;
     if (!searchIsOpen || !searchQuery) {
       useSearchStore.getState().setCellMatches([]);
       return;
@@ -360,6 +355,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       cancelled = true;
     };
   }, [
+    isActive,
     searchIsOpen,
     searchQuery,
     searchUseRegex,
@@ -375,11 +371,12 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
   ]);
 
   useEffect(() => {
+    if (!isActive) return;
     const matches = useSearchStore.getState().cellMatches;
     if (matches.length === 0 || !scrollToRowRef.current) return;
     const match = matches[currentMatchIndex];
     if (match) scrollToRowRef.current(match.row);
-  }, [currentMatchIndex]);
+  }, [isActive, currentMatchIndex]);
 
   const cellMatchSet = useMemo(() => {
     const set = new Set<string>();

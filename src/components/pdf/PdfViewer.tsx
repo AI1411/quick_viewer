@@ -18,6 +18,7 @@ const ZOOM_STEP = 0.25;
 interface PdfViewerProps {
   tabId: string;
   filePath: string;
+  isActive?: boolean;
 }
 
 // LazyPdfCanvas: only renders when scrolled into view (for continuous mode)
@@ -83,7 +84,7 @@ function LazyPdfCanvas({
   );
 }
 
-export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
+export function PdfViewer({ tabId, filePath, isActive = true }: PdfViewerProps) {
   const tabState = usePdfStore((s) => s.tabs[tabId]);
   const containerRef = useRef<HTMLDivElement>(null);
   const pageInputRef = useRef<HTMLInputElement>(null);
@@ -126,7 +127,6 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
       cancelled = true;
       if (localDoc) clearPdfTextCache(localDoc);
       localDoc?.destroy();
-      usePdfStore.getState().removeTab(tabId);
     };
   }, [tabId, filePath]);
 
@@ -139,6 +139,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
   const pdfMatches = useSearchStore((s) => s.pdfMatches);
 
   useEffect(() => {
+    if (!isActive) return;
     const doc = usePdfStore.getState().tabs[tabId]?.pdfDocument;
     if (!searchIsOpen || !searchQuery || !doc) {
       useSearchStore.getState().setPdfMatches([]);
@@ -161,6 +162,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
       signal.cancelled = true;
     };
   }, [
+    isActive,
     tabId,
     searchIsOpen,
     searchQuery,
@@ -171,6 +173,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
 
   // 次へ／前へ → 該当ページへ移動（連続モードではスクロール）
   useEffect(() => {
+    if (!isActive) return;
     if (pdfMatches.length === 0) return;
     const match = pdfMatches[currentMatchIndex];
     if (!match) return;
@@ -182,7 +185,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
       `[data-pdf-page="${match.pageIndex}"]`
     );
     el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [tabId, currentMatchIndex, pdfMatches]);
+  }, [isActive, tabId, currentMatchIndex, pdfMatches]);
 
   // ── 注釈の自動保存（デバウンス 500ms）────────────────────────────────────
   useEffect(() => {
@@ -202,8 +205,10 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
     };
   }, [tabState?.annotations, filePath]);
 
-  // ── キーボードナビゲーション ───────────────────────────────────────────────
+  // ── キーボードナビゲーション（アクティブタブのみ）─────────────────────────
   useEffect(() => {
+    if (!isActive) return;
+
     function handleKey(e: KeyboardEvent) {
       const store = usePdfStore.getState();
       const tab = store.tabs[tabId];
@@ -227,7 +232,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [tabId]);
+  }, [isActive, tabId]);
 
   // ── ズームヘルパー ─────────────────────────────────────────────────────────
   const handleZoomIn = useCallback(() => {

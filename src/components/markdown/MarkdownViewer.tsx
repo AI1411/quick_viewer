@@ -12,9 +12,10 @@ import type { ViewMode } from "../../types";
 interface MarkdownViewerProps {
   tabId: string;
   filePath: string;
+  isActive?: boolean;
 }
 
-export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
+export function MarkdownViewer({ tabId, filePath, isActive = true }: MarkdownViewerProps) {
   const { initTab, setData, setLoading, setError, setViewMode, setEditContent, setDirty } =
     useMarkdownStore.getState();
   const { setDirty: setTabDirty } = useTabStore.getState();
@@ -95,26 +96,29 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
     setTabDirty(tabId, dirty);
   }
 
-  useShortcuts({
-    "cmd+s": () => {
-      const state = useMarkdownStore.getState().tabs[tabId];
-      if (!state?.isDirty || state.editContent === null) return;
-      setLoading(tabId, true);
-      saveMarkdown(filePath, state.editContent)
-        .then(() => readMarkdown(filePath))
-        .then((result) => {
-          setData(tabId, result);
-          setDirty(tabId, false);
-          setTabDirty(tabId, false);
-        })
-        .catch((err: unknown) => {
-          setError(tabId, String(err));
-        })
-        .finally(() => {
-          setLoading(tabId, false);
-        });
+  useShortcuts(
+    {
+      "cmd+s": () => {
+        const state = useMarkdownStore.getState().tabs[tabId];
+        if (!state?.isDirty || state.editContent === null) return;
+        setLoading(tabId, true);
+        saveMarkdown(filePath, state.editContent)
+          .then(() => readMarkdown(filePath))
+          .then((result) => {
+            setData(tabId, result);
+            setDirty(tabId, false);
+            setTabDirty(tabId, false);
+          })
+          .catch((err: unknown) => {
+            setError(tabId, String(err));
+          })
+          .finally(() => {
+            setLoading(tabId, false);
+          });
+      },
     },
-  });
+    isActive
+  );
 
   if (!tab || tab.isLoading) {
     return (
