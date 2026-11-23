@@ -2,6 +2,7 @@ import { useEffect, useCallback, useMemo, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useCsvStore } from "../../stores/csvStore";
 import { useSearchStore } from "../../stores/searchStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { showError } from "../../stores/toastStore";
 import type { CellMatch } from "../../stores/searchStore";
 import { VirtualTable } from "./VirtualTable";
@@ -13,6 +14,12 @@ import type React from "react";
 
 const CHUNK_SIZE = 200;
 const INITIAL_LIMIT = 100;
+
+/** Settings "auto" → null so Rust auto-detects; otherwise the chosen delimiter char. */
+function csvDelimiterFromSettings(): string | null {
+  const d = useSettingsStore.getState().csvSettings.defaultDelimiter;
+  return d === "auto" ? null : d;
+}
 
 interface CsvViewerProps {
   tabId: string;
@@ -33,7 +40,8 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     let cancelled = false;
     setLoading(tabId, true);
     const t0 = performance.now();
-    invoke<CsvData>("read_csv", { path: filePath, limit: INITIAL_LIMIT })
+    const delimiter = csvDelimiterFromSettings();
+    invoke<CsvData>("read_csv", { path: filePath, delimiter, limit: INITIAL_LIMIT })
       .then((data) => {
         if (cancelled) return;
         console.info(`[perf] read_csv: ${(performance.now() - t0).toFixed(1)}ms`);
@@ -61,6 +69,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     setLoadingChunk(tabId, true);
     invoke<CsvChunk>("read_csv_chunk", {
       path: filePath,
+      delimiter: csvDelimiterFromSettings(),
       offset: tab.loadedRows,
       limit: CHUNK_SIZE,
     })
@@ -95,6 +104,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       try {
         const data = await invoke<CsvData>("sort_csv", {
           path: filePath,
+          delimiter: csvDelimiterFromSettings(),
           column_index: next.columnIndex,
           ascending: next.direction === "asc",
           conditions: tab.filters.length > 0 ? tab.filters : null,
@@ -156,10 +166,12 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
 
       setFiltering(tabId, true);
       try {
+        const delimiter = csvDelimiterFromSettings();
         if (tab.sort) {
           setSorting(tabId, true);
           const data = await invoke<CsvData>("sort_csv", {
             path: filePath,
+            delimiter,
             column_index: tab.sort.columnIndex,
             ascending: tab.sort.direction === "asc",
             conditions: newFilters.length > 0 ? newFilters : null,
@@ -169,6 +181,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
         } else {
           const data = await invoke<CsvData>("filter_csv", {
             path: filePath,
+            delimiter,
             conditions: newFilters,
           });
           setFilters(tabId, newFilters, data.rows);
@@ -212,6 +225,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
           try {
             const data = await invoke<CsvData>("sort_csv", {
               path: filePath,
+              delimiter: csvDelimiterFromSettings(),
               column_index: tab.sort.columnIndex,
               ascending: tab.sort.direction === "asc",
               conditions: null,
@@ -241,6 +255,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     try {
       const data = await invoke<CsvData>("sort_csv", {
         path: filePath,
+        delimiter: csvDelimiterFromSettings(),
         column_index: tab.sort.columnIndex,
         ascending: tab.sort.direction === "asc",
         conditions: null,
@@ -290,15 +305,18 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
         if (needsFullLoad) {
           // sort_csv with current no-op isn't available; load via filter_csv empty → all rows
           // Prefer sort if active, else filter_csv with empty conditions returns all rows.
+          const delimiter = csvDelimiterFromSettings();
           const data = tab.sort
             ? await invoke<CsvData>("sort_csv", {
                 path: filePath,
+                delimiter,
                 column_index: tab.sort.columnIndex,
                 ascending: tab.sort.direction === "asc",
                 conditions: null,
               })
             : await invoke<CsvData>("filter_csv", {
                 path: filePath,
+                delimiter,
                 conditions: [],
               });
           if (cancelled) return;
@@ -317,6 +335,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
         const latest = useCsvStore.getState().tabs[tabId];
         const matches = await invoke<CellMatch[]>("search_csv", {
           path: filePath,
+          delimiter: csvDelimiterFromSettings(),
           query: searchQuery,
           use_regex: searchUseRegex,
           case_sensitive: searchCaseSensitive,
@@ -424,6 +443,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       <ActiveFiltersBar
         filters={tabState.filters}
         filePath={filePath}
+        delimiter={csvDelimiterFromSettings()}
         onClearFilter={handleFilterClearColumn}
         onClearAll={handleClearAllFilters}
       />

@@ -18,6 +18,8 @@ const FILTER_TYPE_LABELS: Record<FilterCondition["filter_type"], string> = {
 interface ActiveFiltersBarProps {
   filters: FilterCondition[];
   filePath: string;
+  /** Settings default delimiter; null means auto-detect. */
+  delimiter?: string | null;
   onClearFilter: (column: string) => void;
   onClearAll: () => void;
   onExport?: () => Promise<void>;
@@ -26,6 +28,7 @@ interface ActiveFiltersBarProps {
 export function ActiveFiltersBar({
   filters,
   filePath,
+  delimiter = null,
   onClearFilter,
   onClearAll,
   onExport,
@@ -45,6 +48,7 @@ export function ActiveFiltersBar({
       if (!outputPath) return;
       await invoke("export_csv", {
         path: filePath,
+        delimiter,
         outputPath,
         conditions: filters,
       });

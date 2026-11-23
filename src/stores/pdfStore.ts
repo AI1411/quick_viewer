@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { PdfInfo, PdfDisplayMode, Annotation, AnnotationColor } from "../types";
+import { useSettingsStore } from "./settingsStore";
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4.0;
@@ -50,7 +51,7 @@ const defaultTabState = (): PdfTabState => ({
   currentPage: 1,
   zoom: 1.0,
   rotation: 0,
-  displayMode: "single",
+  displayMode: useSettingsStore.getState().pdfSettings.defaultViewMode,
   isSidebarOpen: true,
   sidebarMode: "thumbnail",
   isLoading: false,

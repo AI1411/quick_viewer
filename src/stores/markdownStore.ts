@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { MarkdownResult, ViewMode } from "../types";
+import { useSettingsStore } from "./settingsStore";
 
 interface MarkdownTabState {
   data: MarkdownResult | null;
@@ -22,6 +23,17 @@ interface MarkdownStore {
   setDirty: (tabId: string, isDirty: boolean) => void;
 }
 
+function defaultTabState(): MarkdownTabState {
+  return {
+    data: null,
+    isLoading: false,
+    error: null,
+    viewMode: useSettingsStore.getState().markdownSettings.defaultView,
+    editContent: null,
+    isDirty: false,
+  };
+}
+
 export const useMarkdownStore = create<MarkdownStore>((set) => ({
   tabs: {},
 
@@ -29,16 +41,7 @@ export const useMarkdownStore = create<MarkdownStore>((set) => ({
     set((s) => ({
       tabs: {
         ...s.tabs,
-        [tabId]:
-          s.tabs[tabId] ??
-          {
-            data: null,
-            isLoading: false,
-            error: null,
-            viewMode: "preview",
-            editContent: null,
-            isDirty: false,
-          },
+        [tabId]: s.tabs[tabId] ?? defaultTabState(),
       },
     })),
 
