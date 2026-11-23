@@ -138,6 +138,8 @@ pub fn run() {
             csv_commands::read_csv,
             csv_commands::read_csv_chunk,
             csv_commands::filter_csv,
+            csv_commands::sort_csv,
+            csv_commands::search_csv,
             csv_commands::export_csv,
             pdf_commands::read_pdf_info,
             pdf_commands::read_pdf_page,

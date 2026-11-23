@@ -40,4 +40,23 @@ describe("csvStore filter actions", () => {
     useCsvStore.getState().setFiltering("t3", false);
     expect(useCsvStore.getState().tabs["t3"].isFiltering).toBe(false);
   });
+
+  it("setSortedRows / clearSortedRows: ソート結果を保持・クリアする", () => {
+    useCsvStore.getState().initTab("t4");
+    useCsvStore.getState().setSortedRows("t4", [["z"], ["a"]]);
+    expect(useCsvStore.getState().tabs["t4"].sortedRows).toEqual([["z"], ["a"]]);
+    expect(useCsvStore.getState().tabs["t4"].isSorting).toBe(false);
+    useCsvStore.getState().clearSortedRows("t4");
+    expect(useCsvStore.getState().tabs["t4"].sortedRows).toBeNull();
+  });
+
+  it("setSort(null): sortedRows もクリアする", () => {
+    useCsvStore.getState().initTab("t5");
+    useCsvStore.getState().setSort("t5", { columnIndex: 0, direction: "asc" });
+    useCsvStore.getState().setSortedRows("t5", [["a"]]);
+    useCsvStore.getState().setSort("t5", null);
+    const tab = useCsvStore.getState().tabs["t5"];
+    expect(tab.sort).toBeNull();
+    expect(tab.sortedRows).toBeNull();
+  });
 });

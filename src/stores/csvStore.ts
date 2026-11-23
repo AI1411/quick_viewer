@@ -33,6 +33,9 @@ interface CsvTabState {
   filters: FilterCondition[];
   filteredRows: string[][] | null;
   isFiltering: boolean;
+  // ソート結果（Rust が全行ソートした行。null = 未ソート / チャンク表示）
+  sortedRows: string[][] | null;
+  isSorting: boolean;
 }
 
 interface CsvStore {
@@ -56,6 +59,10 @@ interface CsvStore {
   setFilters: (tabId: string, filters: FilterCondition[], filteredRows: string[][] | null) => void;
   setFiltering: (tabId: string, v: boolean) => void;
   clearFilters: (tabId: string) => void;
+  // ソート結果
+  setSortedRows: (tabId: string, sortedRows: string[][] | null) => void;
+  setSorting: (tabId: string, v: boolean) => void;
+  clearSortedRows: (tabId: string) => void;
 }
 
 const defaultTabState = (): CsvTabState => ({
@@ -72,6 +79,8 @@ const defaultTabState = (): CsvTabState => ({
   filters: [],
   filteredRows: null,
   isFiltering: false,
+  sortedRows: null,
+  isSorting: false,
 });
 
 export const useCsvStore = create<CsvStore>((set) => ({
@@ -124,7 +133,15 @@ export const useCsvStore = create<CsvStore>((set) => ({
 
   setSort: (tabId, sort) =>
     set((state) => ({
-      tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], sort } },
+      tabs: {
+        ...state.tabs,
+        [tabId]: {
+          ...state.tabs[tabId],
+          sort,
+          // clearing sort also drops cached sorted rows
+          ...(sort === null ? { sortedRows: null, isSorting: false } : {}),
+        },
+      },
     })),
 
   setPinnedCount: (tabId, count) =>
@@ -213,6 +230,38 @@ export const useCsvStore = create<CsvStore>((set) => ({
           filters: [],
           filteredRows: null,
           isFiltering: false,
+        },
+      },
+    })),
+
+  setSortedRows: (tabId, sortedRows) =>
+    set((state) => ({
+      tabs: {
+        ...state.tabs,
+        [tabId]: {
+          ...state.tabs[tabId],
+          sortedRows,
+          isSorting: false,
+        },
+      },
+    })),
+
+  setSorting: (tabId, v) =>
+    set((state) => ({
+      tabs: {
+        ...state.tabs,
+        [tabId]: { ...state.tabs[tabId], isSorting: v },
+      },
+    })),
+
+  clearSortedRows: (tabId) =>
+    set((state) => ({
+      tabs: {
+        ...state.tabs,
+        [tabId]: {
+          ...state.tabs[tabId],
+          sortedRows: null,
+          isSorting: false,
         },
       },
     })),

@@ -3,8 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCsvStore } from "../../stores/csvStore";
 import { useSearchStore } from "../../stores/searchStore";
 import { showError } from "../../stores/toastStore";
-import { buildRegex } from "../../lib/searchHighlight";
-import { compareCellValues } from "../../lib/compareCellValues";
 import type { CellMatch } from "../../stores/searchStore";
 import { VirtualTable } from "./VirtualTable";
 import { FilterPopover } from "./FilterPopover";
@@ -52,11 +50,11 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     };
   }, [tabId]);
 
-  // チャンク追加読み込み（フィルタ中は無効）
+  // チャンク追加読み込み（フィルタ / ソート中は全行取得済みなので無効）
   const handleScrollEnd = useCallback(() => {
     const tab = useCsvStore.getState().tabs[tabId];
     if (!tab || tab.isLoadingChunk || !tab.data) return;
-    if (tab.filters.length > 0) return; // フィルタ中はチャンク不要
+    if (tab.filters.length > 0 || tab.sort || tab.sortedRows) return;
     if (tab.loadedRows >= tab.data.meta.total_rows) return;
 
     const { setLoadingChunk, appendRows } = useCsvStore.getState();
@@ -70,22 +68,45 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       .catch(() => setLoadingChunk(tabId, false));
   }, [tabId, filePath]);
 
-  // ソート切り替え
+  // ソート切り替え（Rust sort_csv で全行ソート）
   const handleSort = useCallback(
-    (colIndex: number) => {
-      const { setSort } = useCsvStore.getState();
-      const tab = useCsvStore.getState().tabs[tabId];
+    async (colIndex: number) => {
+      const store = useCsvStore.getState();
+      const tab = store.tabs[tabId];
       if (!tab) return;
+
       const current = tab.sort;
+      let next: { columnIndex: number; direction: "asc" | "desc" } | null;
       if (!current || current.columnIndex !== colIndex) {
-        setSort(tabId, { columnIndex: colIndex, direction: "asc" });
+        next = { columnIndex: colIndex, direction: "asc" };
       } else if (current.direction === "asc") {
-        setSort(tabId, { columnIndex: colIndex, direction: "desc" });
+        next = { columnIndex: colIndex, direction: "desc" };
       } else {
-        setSort(tabId, null);
+        next = null;
+      }
+
+      if (!next) {
+        store.setSort(tabId, null);
+        return;
+      }
+
+      store.setSorting(tabId, true);
+      store.setSort(tabId, next);
+      try {
+        const data = await invoke<CsvData>("sort_csv", {
+          path: filePath,
+          column_index: next.columnIndex,
+          ascending: next.direction === "asc",
+          conditions: tab.filters.length > 0 ? tab.filters : null,
+        });
+        useCsvStore.getState().setSortedRows(tabId, data.rows);
+      } catch (err) {
+        useCsvStore.getState().setSorting(tabId, false);
+        useCsvStore.getState().setSort(tabId, null);
+        showError(`ソートに失敗しました: ${String(err)}`);
       }
     },
-    [tabId]
+    [tabId, filePath]
   );
 
   // セル選択（shift クリックで範囲選択）
@@ -125,30 +146,53 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     []
   );
 
-  // フィルタ適用（Rust filter_csv を呼び出してフィルタ結果を store に保存）
-  const handleFilterApply = useCallback(
-    async (cond: FilterCondition) => {
+  // フィルタ適用後にソートが有効なら sort_csv、なければ filter_csv
+  const applyFiltersWithOptionalSort = useCallback(
+    async (newFilters: FilterCondition[]) => {
       const tab = useCsvStore.getState().tabs[tabId];
       if (!tab?.data) return;
-      const { setFiltering, setFilters } = useCsvStore.getState();
-
-      const newFilters = tab.filters
-        .filter((f) => f.column !== cond.column)
-        .concat(cond);
+      const { setFiltering, setFilters, setSorting, setSortedRows } =
+        useCsvStore.getState();
 
       setFiltering(tabId, true);
       try {
-        const data = await invoke<CsvData>("filter_csv", {
-          path: filePath,
-          conditions: newFilters,
-        });
-        setFilters(tabId, newFilters, data.rows);
+        if (tab.sort) {
+          setSorting(tabId, true);
+          const data = await invoke<CsvData>("sort_csv", {
+            path: filePath,
+            column_index: tab.sort.columnIndex,
+            ascending: tab.sort.direction === "asc",
+            conditions: newFilters.length > 0 ? newFilters : null,
+          });
+          setFilters(tabId, newFilters, newFilters.length > 0 ? data.rows : null);
+          setSortedRows(tabId, data.rows);
+        } else {
+          const data = await invoke<CsvData>("filter_csv", {
+            path: filePath,
+            conditions: newFilters,
+          });
+          setFilters(tabId, newFilters, data.rows);
+        }
       } catch (err) {
         setFiltering(tabId, false);
+        setSorting(tabId, false);
         showError(`フィルタの適用に失敗しました: ${String(err)}`);
       }
     },
     [tabId, filePath]
+  );
+
+  // フィルタ適用（Rust filter_csv / sort_csv を呼び出して結果を store に保存）
+  const handleFilterApply = useCallback(
+    async (cond: FilterCondition) => {
+      const tab = useCsvStore.getState().tabs[tabId];
+      if (!tab?.data) return;
+      const newFilters = tab.filters
+        .filter((f) => f.column !== cond.column)
+        .concat(cond);
+      await applyFiltersWithOptionalSort(newFilters);
+    },
+    [tabId, applyFiltersWithOptionalSort]
   );
 
   // 単一列フィルタのクリア
@@ -156,48 +200,66 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     async (column: string) => {
       const tab = useCsvStore.getState().tabs[tabId];
       if (!tab) return;
-      const { setFiltering, setFilters, clearFilters } = useCsvStore.getState();
+      const { clearFilters, setSort, setSortedRows, setSorting } =
+        useCsvStore.getState();
 
       const newFilters = tab.filters.filter((f) => f.column !== column);
       if (newFilters.length === 0) {
         clearFilters(tabId);
+        // ソートが残っていれば全行で再ソート
+        if (tab.sort) {
+          setSorting(tabId, true);
+          try {
+            const data = await invoke<CsvData>("sort_csv", {
+              path: filePath,
+              column_index: tab.sort.columnIndex,
+              ascending: tab.sort.direction === "asc",
+              conditions: null,
+            });
+            setSortedRows(tabId, data.rows);
+          } catch (err) {
+            setSorting(tabId, false);
+            setSort(tabId, null);
+            showError(`ソートの再適用に失敗しました: ${String(err)}`);
+          }
+        }
         return;
       }
 
-      setFiltering(tabId, true);
-      try {
-        const data = await invoke<CsvData>("filter_csv", {
-          path: filePath,
-          conditions: newFilters,
-        });
-        setFilters(tabId, newFilters, data.rows);
-      } catch (err) {
-        setFiltering(tabId, false);
-        showError(`フィルタのクリアに失敗しました: ${String(err)}`);
-      }
+      await applyFiltersWithOptionalSort(newFilters);
     },
-    [tabId, filePath]
+    [tabId, filePath, applyFiltersWithOptionalSort]
   );
 
   // 全フィルタのクリア
-  const handleClearAllFilters = useCallback(() => {
+  const handleClearAllFilters = useCallback(async () => {
+    const tab = useCsvStore.getState().tabs[tabId];
     useCsvStore.getState().clearFilters(tabId);
-  }, [tabId]);
+    if (!tab?.sort) return;
+    const { setSorting, setSortedRows, setSort } = useCsvStore.getState();
+    setSorting(tabId, true);
+    try {
+      const data = await invoke<CsvData>("sort_csv", {
+        path: filePath,
+        column_index: tab.sort.columnIndex,
+        ascending: tab.sort.direction === "asc",
+        conditions: null,
+      });
+      setSortedRows(tabId, data.rows);
+    } catch (err) {
+      setSorting(tabId, false);
+      setSort(tabId, null);
+      showError(`ソートの再適用に失敗しました: ${String(err)}`);
+    }
+  }, [tabId, filePath]);
 
-  // 表示行（フィルタ結果優先 → クライアントサイドソート）
+  // 表示行（ソート結果 → フィルタ結果 → チャンク読み込み行）
   const displayRows = useMemo(() => {
     if (!tabState?.data) return [];
-    const rows = tabState.filteredRows ?? tabState.data.rows;
-    const sort = tabState.sort;
-    if (!sort) return rows;
-    const { columnIndex, direction } = sort;
-    return [...rows].sort((a, b) => {
-      const cmp = compareCellValues(a[columnIndex] ?? "", b[columnIndex] ?? "");
-      return direction === "asc" ? cmp : -cmp;
-    });
-  }, [tabState?.data, tabState?.filteredRows, tabState?.sort]);
+    return tabState.sortedRows ?? tabState.filteredRows ?? tabState.data.rows;
+  }, [tabState?.data, tabState?.filteredRows, tabState?.sortedRows]);
 
-  // 検索ハイライト
+  // 検索ハイライト（Rust search_csv で全行検索）
   const searchIsOpen = useSearchStore((s) => s.isOpen);
   const searchQuery = useSearchStore((s) => s.query);
   const searchUseRegex = useSearchStore((s) => s.options.useRegex);
@@ -206,30 +268,92 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
   const currentMatchIndex = useSearchStore((s) => s.currentMatchIndex);
   const scrollToRowRef = useRef<((index: number) => void) | null>(null);
 
-  const csvHeaders = useMemo(
-    () => tabState?.data?.headers ?? [],
-    [tabState?.data]
-  );
-
+  // ソート中に全行が揃っていない場合、検索のために全行をロードして sortedRows 相当を確保
   useEffect(() => {
     if (!searchIsOpen || !searchQuery) {
       useSearchStore.getState().setCellMatches([]);
       return;
     }
-    const regex = buildRegex(searchQuery, { useRegex: searchUseRegex, caseSensitive: searchCaseSensitive });
-    if (!regex) {
-      useSearchStore.getState().setCellMatches([]);
-      return;
-    }
-    const matches: CellMatch[] = [];
-    for (let r = 0; r < displayRows.length; r++) {
-      for (let c = 0; c < csvHeaders.length; c++) {
-        regex.lastIndex = 0;
-        if (regex.test(displayRows[r][c] ?? "")) matches.push({ row: r, col: c });
+
+    let cancelled = false;
+    const tab = useCsvStore.getState().tabs[tabId];
+    if (!tab?.data) return;
+
+    const run = async () => {
+      // チャンク表示のみ（全行未取得）のときは search と同時に全行を取得して表示に使う
+      const needsFullLoad =
+        !tab.sortedRows &&
+        !tab.filteredRows &&
+        tab.loadedRows < tab.data!.meta.total_rows;
+
+      try {
+        if (needsFullLoad) {
+          // sort_csv with current no-op isn't available; load via filter_csv empty → all rows
+          // Prefer sort if active, else filter_csv with empty conditions returns all rows.
+          const data = tab.sort
+            ? await invoke<CsvData>("sort_csv", {
+                path: filePath,
+                column_index: tab.sort.columnIndex,
+                ascending: tab.sort.direction === "asc",
+                conditions: null,
+              })
+            : await invoke<CsvData>("filter_csv", {
+                path: filePath,
+                conditions: [],
+              });
+          if (cancelled) return;
+          if (tab.sort) {
+            useCsvStore.getState().setSortedRows(tabId, data.rows);
+          } else {
+            // stash full rows into data so displayRows covers the file
+            useCsvStore.getState().setData(tabId, {
+              ...tab.data!,
+              rows: data.rows,
+              meta: { ...tab.data!.meta, total_rows: data.meta.total_rows },
+            });
+          }
+        }
+
+        const latest = useCsvStore.getState().tabs[tabId];
+        const matches = await invoke<CellMatch[]>("search_csv", {
+          path: filePath,
+          query: searchQuery,
+          use_regex: searchUseRegex,
+          case_sensitive: searchCaseSensitive,
+          conditions: latest?.filters.length ? latest.filters : null,
+          sort_column_index: latest?.sort?.columnIndex ?? null,
+          sort_ascending:
+            latest?.sort != null ? latest.sort.direction === "asc" : null,
+        });
+        if (!cancelled) {
+          useSearchStore.getState().setCellMatches(matches);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          useSearchStore.getState().setCellMatches([]);
+          showError(`検索に失敗しました: ${String(err)}`);
+        }
       }
-    }
-    useSearchStore.getState().setCellMatches(matches);
-  }, [searchIsOpen, searchQuery, searchUseRegex, searchCaseSensitive, displayRows, csvHeaders]);
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    searchIsOpen,
+    searchQuery,
+    searchUseRegex,
+    searchCaseSensitive,
+    tabId,
+    filePath,
+    tabState?.sort,
+    tabState?.filters,
+    tabState?.sortedRows,
+    tabState?.filteredRows,
+    tabState?.loadedRows,
+    tabState?.data?.meta.total_rows,
+  ]);
 
   useEffect(() => {
     const matches = useSearchStore.getState().cellMatches;
@@ -288,6 +412,12 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       ? (tabState.filters.find((f) => f.column === headers[filterColIndex]) ?? null)
       : null;
 
+  const viewRowCount = displayRows.length;
+  const totalRowsForTable =
+    tabState.sortedRows || tabState.filteredRows
+      ? viewRowCount
+      : meta.total_rows;
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* アクティブフィルタバー */}
@@ -298,20 +428,20 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
         onClearAll={handleClearAllFilters}
       />
 
-      {/* フィルタ中インジケータ */}
-      {tabState.isFiltering && (
+      {/* フィルタ / ソート中インジケータ */}
+      {(tabState.isFiltering || tabState.isSorting) && (
         <div
           className="flex items-center justify-center text-xs py-1 flex-shrink-0"
           style={{ color: "var(--text-secondary)", backgroundColor: "var(--tabbar-bg)" }}
         >
-          フィルタ適用中...
+          {tabState.isSorting ? "ソート適用中..." : "フィルタ適用中..."}
         </div>
       )}
 
       <VirtualTable
         headers={headers}
         rows={displayRows}
-        totalRows={meta.total_rows}
+        totalRows={totalRowsForTable}
         columnWidths={tabState.columnWidths}
         sort={tabState.sort}
         pinnedCount={tabState.pinnedCount}
@@ -337,7 +467,13 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
         columns={headers.length}
         encoding={meta.encoding}
         delimiter={meta.delimiter}
-        loadedRows={tabState.loadedRows}
+        loadedRows={
+          tabState.sortedRows
+            ? tabState.sortedRows.length
+            : tabState.filteredRows
+              ? tabState.filteredRows.length
+              : tabState.loadedRows
+        }
         selectedAnchor={tabState.selectedAnchor}
         selectedFocus={tabState.selectedFocus}
         displayRows={displayRows}
