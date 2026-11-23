@@ -1,4 +1,3 @@
-use chardetng::EncodingDetector;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -6,6 +5,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::BufWriter;
 use std::sync::{Arc, Mutex};
+
+use crate::utils::decode_file;
 
 // ─── Data Types ───────────────────────────────────────────────────────────────
 
@@ -86,18 +87,6 @@ impl Default for CsvCache {
 }
 
 // ─── Helper Functions ─────────────────────────────────────────────────────────
-
-/// ファイルバイト列をエンコーディング自動検出してデコードし、(テキスト, エンコーディング名) を返す。
-pub(crate) fn decode_file(raw: &[u8]) -> (String, String) {
-    // UTF-8 BOM を除去してからデコード
-    let raw = raw.strip_prefix(b"\xef\xbb\xbf").unwrap_or(raw);
-
-    let mut detector = EncodingDetector::new();
-    detector.feed(raw, true);
-    let encoding = detector.guess(None, true);
-    let (cow, _, _) = encoding.decode(raw);
-    (cow.into_owned(), encoding.name().to_string())
-}
 
 /// 先頭 5 行のサンプルから最も多く現れる区切り文字を返す（クォート内は除外）。
 pub(crate) fn detect_delimiter_auto(sample: &str) -> u8 {

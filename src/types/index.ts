@@ -123,6 +123,8 @@ export interface MarkdownResult {
   toc: TocItem[];
   frontmatter: Record<string, unknown> | null;
   raw: string;
+  /** Detected text encoding (e.g. "UTF-8", "Shift_JIS"). */
+  encoding: string;
 }
 
 // ─── XLSX Types ───────────────────────────────────────────────────────────────
