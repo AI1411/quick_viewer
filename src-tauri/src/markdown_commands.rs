@@ -447,10 +447,7 @@ mod tests {
         assert!(result.html.contains("見出し"));
         assert!(
             result.encoding.eq_ignore_ascii_case("Shift_JIS")
-                || result
-                    .encoding
-                    .to_ascii_lowercase()
-                    .contains("windows-31j")
+                || result.encoding.to_ascii_lowercase().contains("windows-31j")
                 || result.raw.contains("見出し"),
             "unexpected encoding={}",
             result.encoding

@@ -16,8 +16,8 @@ pub fn decode_file(raw: &[u8]) -> (String, String) {
 
 /// テキストを指定エンコーディングでエンコードする。不明なラベルは UTF-8 にフォールバック。
 pub fn encode_file(content: &str, encoding_name: &str) -> Vec<u8> {
-    let encoding = encoding_rs::Encoding::for_label(encoding_name.as_bytes())
-        .unwrap_or(encoding_rs::UTF_8);
+    let encoding =
+        encoding_rs::Encoding::for_label(encoding_name.as_bytes()).unwrap_or(encoding_rs::UTF_8);
     let (bytes, _, _) = encoding.encode(content);
     bytes.into_owned()
 }
