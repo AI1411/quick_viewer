@@ -37,11 +37,24 @@ vi.mock("../../lib/markdownCommands", () => ({
     encoding: "UTF-8",
   }),
   saveMarkdown: vi.fn(),
+  renderMarkdownString: vi.fn().mockResolvedValue({
+    html: "",
+    toc: [],
+    frontmatter: null,
+    raw: "",
+    encoding: "UTF-8",
+  }),
 }));
+
+vi.mock("../../stores/toastStore", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../stores/toastStore")>();
+  return { ...actual, showError: vi.fn() };
+});
 
 describe("MarkdownViewer", () => {
   beforeEach(() => {
     useMarkdownStore.setState({ tabs: {} });
+    vi.clearAllMocks();
   });
 
   it("shows loading state when isLoading=true", () => {
@@ -91,5 +104,95 @@ describe("MarkdownViewer", () => {
       expect(screen.queryByTestId("rendered-view")).toBeTruthy();
     });
     expect(screen.queryByTestId("toc-sidebar")).toBeNull();
+  });
+
+  it("Cmd+S saves without toggling isLoading and keeps the editor mounted", async () => {
+    const { readMarkdown, saveMarkdown, renderMarkdownString } = await import(
+      "../../lib/markdownCommands"
+    );
+    vi.mocked(readMarkdown).mockResolvedValue({
+      html: "<p>old</p>",
+      toc: [],
+      frontmatter: null,
+      raw: "old",
+      encoding: "Shift_JIS",
+    });
+    vi.mocked(saveMarkdown).mockResolvedValue(undefined);
+    vi.mocked(renderMarkdownString).mockResolvedValue({
+      html: "<p>new</p>",
+      toc: [],
+      frontmatter: null,
+      raw: "new",
+      encoding: "UTF-8",
+    });
+
+    render(<MarkdownViewer tabId="t1" filePath="/test.md" />);
+    await waitFor(() => {
+      expect(useMarkdownStore.getState().tabs.t1?.data?.raw).toBe("old");
+    });
+
+    useMarkdownStore.getState().setViewMode("t1", "source");
+    useMarkdownStore.getState().setEditContent("t1", "new");
+    useMarkdownStore.getState().setDirty("t1", true);
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox")).toBeTruthy();
+    });
+    const textarea = screen.getByRole("textbox");
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "s", metaKey: true, bubbles: true })
+    );
+
+    await waitFor(() => {
+      expect(saveMarkdown).toHaveBeenCalledWith("/test.md", "new", "Shift_JIS");
+    });
+    expect(readMarkdown).toHaveBeenCalledTimes(1);
+    expect(renderMarkdownString).toHaveBeenCalledWith("new");
+    expect(useMarkdownStore.getState().tabs.t1?.isLoading).toBe(false);
+    expect(screen.getByRole("textbox")).toBe(textarea);
+
+    await waitFor(() => {
+      expect(useMarkdownStore.getState().tabs.t1?.isDirty).toBe(false);
+      expect(useMarkdownStore.getState().tabs.t1?.data?.html).toBe("<p>new</p>");
+      expect(useMarkdownStore.getState().tabs.t1?.data?.encoding).toBe("Shift_JIS");
+    });
+  });
+
+  it("Cmd+S failure shows a toast and keeps the editor visible", async () => {
+    const { readMarkdown, saveMarkdown } = await import("../../lib/markdownCommands");
+    const { showError } = await import("../../stores/toastStore");
+    vi.mocked(readMarkdown).mockResolvedValue({
+      html: "<p>old</p>",
+      toc: [],
+      frontmatter: null,
+      raw: "old",
+      encoding: "UTF-8",
+    });
+    vi.mocked(saveMarkdown).mockRejectedValue("disk full");
+
+    render(<MarkdownViewer tabId="t1" filePath="/test.md" />);
+    await waitFor(() => {
+      expect(useMarkdownStore.getState().tabs.t1?.data?.raw).toBe("old");
+    });
+
+    useMarkdownStore.getState().setViewMode("t1", "source");
+    useMarkdownStore.getState().setEditContent("t1", "new");
+    useMarkdownStore.getState().setDirty("t1", true);
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox")).toBeTruthy();
+    });
+
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "s", metaKey: true, bubbles: true })
+    );
+
+    await waitFor(() => {
+      expect(showError).toHaveBeenCalledWith("保存に失敗しました: disk full");
+    });
+    expect(useMarkdownStore.getState().tabs.t1?.error).toBeNull();
+    expect(screen.getByRole("textbox")).toBeTruthy();
+    expect(screen.queryByText(/エラー:/)).toBeNull();
   });
 });
