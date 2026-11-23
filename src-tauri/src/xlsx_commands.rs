@@ -125,47 +125,44 @@ pub(crate) fn parse_styles_xml(xml: &str) -> Result<HashMap<u32, String>, String
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                match e.name().as_ref() {
-                    b"numFmts" => in_num_fmts = true,
-                    b"cellXfs" => in_cell_xfs = true,
-                    b"numFmt" if in_num_fmts => {
-                        let mut fmt_id: Option<u32> = None;
-                        let mut fmt_code: Option<String> = None;
-                        for attr in e.attributes().flatten() {
-                            match attr.key.as_ref() {
-                                b"numFmtId" => {
-                                    fmt_id = std::str::from_utf8(&attr.value)
-                                        .ok()
-                                        .and_then(|s| s.parse().ok());
-                                }
-                                b"formatCode" => {
-                                    fmt_code = std::str::from_utf8(&attr.value)
-                                        .ok()
-                                        .map(|s| s.to_string());
-                                }
-                                _ => {}
-                            }
-                        }
-                        if let (Some(id), Some(code)) = (fmt_id, fmt_code) {
-                            custom_fmts.insert(id, code);
-                        }
-                    }
-                    b"xf" if in_cell_xfs => {
-                        let mut num_fmt_id: u32 = 0;
-                        for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"numFmtId" {
-                                num_fmt_id = std::str::from_utf8(&attr.value)
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => match e.name().as_ref() {
+                b"numFmts" => in_num_fmts = true,
+                b"cellXfs" => in_cell_xfs = true,
+                b"numFmt" if in_num_fmts => {
+                    let mut fmt_id: Option<u32> = None;
+                    let mut fmt_code: Option<String> = None;
+                    for attr in e.attributes().flatten() {
+                        match attr.key.as_ref() {
+                            b"numFmtId" => {
+                                fmt_id = std::str::from_utf8(&attr.value)
                                     .ok()
-                                    .and_then(|s| s.parse().ok())
-                                    .unwrap_or(0);
+                                    .and_then(|s| s.parse().ok());
                             }
+                            b"formatCode" => {
+                                fmt_code =
+                                    std::str::from_utf8(&attr.value).ok().map(|s| s.to_string());
+                            }
+                            _ => {}
                         }
-                        xf_num_fmt_ids.push(num_fmt_id);
                     }
-                    _ => {}
+                    if let (Some(id), Some(code)) = (fmt_id, fmt_code) {
+                        custom_fmts.insert(id, code);
+                    }
                 }
-            }
+                b"xf" if in_cell_xfs => {
+                    let mut num_fmt_id: u32 = 0;
+                    for attr in e.attributes().flatten() {
+                        if attr.key.as_ref() == b"numFmtId" {
+                            num_fmt_id = std::str::from_utf8(&attr.value)
+                                .ok()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(0);
+                        }
+                    }
+                    xf_num_fmt_ids.push(num_fmt_id);
+                }
+                _ => {}
+            },
             Ok(Event::End(ref e)) => match e.name().as_ref() {
                 b"numFmts" => in_num_fmts = false,
                 b"cellXfs" => in_cell_xfs = false,
@@ -231,9 +228,7 @@ pub(crate) fn parse_cell_ref(r: &str) -> Option<(u32, u32)> {
 
 /// xl/worksheets/sheetN.xml 文字列を解析し、
 /// ((row, col) → xf_index) マップとフリーズペイン情報を返す
-pub(crate) fn parse_sheet_xml(
-    xml: &str,
-) -> Result<(HashMap<(u32, u32), u32>, FreezePane), String> {
+pub(crate) fn parse_sheet_xml(xml: &str) -> Result<(HashMap<(u32, u32), u32>, FreezePane), String> {
     let mut cell_xf_map: HashMap<(u32, u32), u32> = HashMap::new();
     let mut freeze = FreezePane { rows: 0, cols: 0 };
 
@@ -242,67 +237,62 @@ pub(crate) fn parse_sheet_xml(
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                match e.name().as_ref() {
-                    b"pane" => {
-                        let mut state = String::new();
-                        let mut y_split: u32 = 0;
-                        let mut x_split: u32 = 0;
-                        for attr in e.attributes().flatten() {
-                            match attr.key.as_ref() {
-                                b"state" => {
-                                    state = std::str::from_utf8(&attr.value)
-                                        .unwrap_or("")
-                                        .to_string();
-                                }
-                                b"ySplit" => {
-                                    y_split = std::str::from_utf8(&attr.value)
-                                        .ok()
-                                        .and_then(|s| s.parse().ok())
-                                        .unwrap_or(0);
-                                }
-                                b"xSplit" => {
-                                    x_split = std::str::from_utf8(&attr.value)
-                                        .ok()
-                                        .and_then(|s| s.parse().ok())
-                                        .unwrap_or(0);
-                                }
-                                _ => {}
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => match e.name().as_ref() {
+                b"pane" => {
+                    let mut state = String::new();
+                    let mut y_split: u32 = 0;
+                    let mut x_split: u32 = 0;
+                    for attr in e.attributes().flatten() {
+                        match attr.key.as_ref() {
+                            b"state" => {
+                                state = std::str::from_utf8(&attr.value).unwrap_or("").to_string();
                             }
-                        }
-                        if state == "frozen" || state == "frozenSplit" {
-                            freeze.rows = y_split;
-                            freeze.cols = x_split;
+                            b"ySplit" => {
+                                y_split = std::str::from_utf8(&attr.value)
+                                    .ok()
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0);
+                            }
+                            b"xSplit" => {
+                                x_split = std::str::from_utf8(&attr.value)
+                                    .ok()
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0);
+                            }
+                            _ => {}
                         }
                     }
-                    b"c" => {
-                        let mut cell_ref: Option<String> = None;
-                        let mut xf_idx: u32 = 0;
-                        for attr in e.attributes().flatten() {
-                            match attr.key.as_ref() {
-                                b"r" => {
-                                    cell_ref = std::str::from_utf8(&attr.value)
-                                        .ok()
-                                        .map(|s| s.to_string());
-                                }
-                                b"s" => {
-                                    xf_idx = std::str::from_utf8(&attr.value)
-                                        .ok()
-                                        .and_then(|s| s.parse().ok())
-                                        .unwrap_or(0);
-                                }
-                                _ => {}
-                            }
-                        }
-                        if let Some(r) = cell_ref {
-                            if let Some(pos) = parse_cell_ref(&r) {
-                                cell_xf_map.insert(pos, xf_idx);
-                            }
-                        }
+                    if state == "frozen" || state == "frozenSplit" {
+                        freeze.rows = y_split;
+                        freeze.cols = x_split;
                     }
-                    _ => {}
                 }
-            }
+                b"c" => {
+                    let mut cell_ref: Option<String> = None;
+                    let mut xf_idx: u32 = 0;
+                    for attr in e.attributes().flatten() {
+                        match attr.key.as_ref() {
+                            b"r" => {
+                                cell_ref =
+                                    std::str::from_utf8(&attr.value).ok().map(|s| s.to_string());
+                            }
+                            b"s" => {
+                                xf_idx = std::str::from_utf8(&attr.value)
+                                    .ok()
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0);
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(r) = cell_ref {
+                        if let Some(pos) = parse_cell_ref(&r) {
+                            cell_xf_map.insert(pos, xf_idx);
+                        }
+                    }
+                }
+                _ => {}
+            },
             Ok(Event::Eof) => break,
             Err(e) => return Err(e.to_string()),
             _ => {}
@@ -325,10 +315,7 @@ fn load_sheet_xml(
         Ok(mut f) => {
             const MAX_SHEET_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
             if f.size() > MAX_SHEET_SIZE {
-                return Err(format!(
-                    "{} exceeds size limit (100 MB)",
-                    sheet_file_name
-                ));
+                return Err(format!("{} exceeds size limit (100 MB)", sheet_file_name));
             }
             f.read_to_string(&mut content).map_err(|e| e.to_string())?;
         }
@@ -468,22 +455,16 @@ fn parse_workbook_xml(xml: &str) -> HashMap<String, String> {
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e))
-                if e.name().as_ref() == b"sheet" =>
-            {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) if e.name().as_ref() == b"sheet" => {
                 let mut name = String::new();
                 let mut rid = String::new();
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
                         b"name" => {
-                            name = std::str::from_utf8(&attr.value)
-                                .unwrap_or("")
-                                .to_string();
+                            name = std::str::from_utf8(&attr.value).unwrap_or("").to_string();
                         }
                         b"r:id" => {
-                            rid = std::str::from_utf8(&attr.value)
-                                .unwrap_or("")
-                                .to_string();
+                            rid = std::str::from_utf8(&attr.value).unwrap_or("").to_string();
                         }
                         _ => {}
                     }
@@ -518,14 +499,10 @@ fn parse_workbook_rels_xml(xml: &str) -> HashMap<String, String> {
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
                         b"Id" => {
-                            id = std::str::from_utf8(&attr.value)
-                                .unwrap_or("")
-                                .to_string();
+                            id = std::str::from_utf8(&attr.value).unwrap_or("").to_string();
                         }
                         b"Target" => {
-                            target = std::str::from_utf8(&attr.value)
-                                .unwrap_or("")
-                                .to_string();
+                            target = std::str::from_utf8(&attr.value).unwrap_or("").to_string();
                         }
                         _ => {}
                     }
@@ -628,8 +605,7 @@ pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData
         .get(&sheet_name)
         .cloned()
         .unwrap_or_else(|| "xl/worksheets/sheet1.xml".to_string());
-    let (cell_xf_map, freeze_pane) =
-        load_sheet_xml(&path, &sheet_file).unwrap_or_default();
+    let (cell_xf_map, freeze_pane) = load_sheet_xml(&path, &sheet_file).unwrap_or_default();
 
     let (start_row, start_col) = range.start().unwrap_or((0, 0));
 
@@ -703,7 +679,13 @@ pub fn export_xlsx_sheet_as_csv(
                     Data::String(s) => s.clone(),
                     Data::Float(f) => f.to_string(),
                     Data::Int(i) => i.to_string(),
-                    Data::Bool(b) => if *b { "TRUE".to_string() } else { "FALSE".to_string() },
+                    Data::Bool(b) => {
+                        if *b {
+                            "TRUE".to_string()
+                        } else {
+                            "FALSE".to_string()
+                        }
+                    }
                     Data::DateTime(dt) => serial_to_date_string(dt.as_f64()),
                     Data::DateTimeIso(s) => s.clone(),
                     Data::DurationIso(s) => s.clone(),

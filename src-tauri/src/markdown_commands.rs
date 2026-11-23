@@ -79,7 +79,8 @@ pub(crate) fn render_markdown(content: &str) -> (String, Vec<TocItem>) {
     let mut toc: Vec<TocItem> = Vec::new();
     let mut in_heading: Option<u32> = None;
     let mut heading_text = String::new();
-    let mut anchor_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut anchor_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
 
     for event in &raw_events {
         match event {
@@ -103,7 +104,11 @@ pub(crate) fn render_markdown(content: &str) -> (String, Vec<TocItem>) {
                         format!("{}-{}", base, entry)
                     };
                     *entry += 1;
-                    toc.push(TocItem { level, text: heading_text.clone(), anchor });
+                    toc.push(TocItem {
+                        level,
+                        text: heading_text.clone(),
+                        anchor,
+                    });
                     heading_text.clear();
                 }
             }
@@ -116,12 +121,22 @@ pub(crate) fn render_markdown(content: &str) -> (String, Vec<TocItem>) {
     let events_with_ids: Vec<Event> = raw_events
         .into_iter()
         .map(|event| match event {
-            Event::Start(Tag::Heading { level, id: _, classes, attrs }) => {
+            Event::Start(Tag::Heading {
+                level,
+                id: _,
+                classes,
+                attrs,
+            }) => {
                 let anchor = toc.get(toc_idx).map(|t| {
                     toc_idx += 1;
                     CowStr::Boxed(t.anchor.clone().into_boxed_str())
                 });
-                Event::Start(Tag::Heading { level, id: anchor, classes, attrs })
+                Event::Start(Tag::Heading {
+                    level,
+                    id: anchor,
+                    classes,
+                    attrs,
+                })
             }
             other => other,
         })
@@ -157,7 +172,12 @@ pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
     let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let (frontmatter, content) = parse_frontmatter(&raw);
     let (html, toc) = render_markdown(content);
-    Ok(MarkdownResult { html, toc, frontmatter, raw })
+    Ok(MarkdownResult {
+        html,
+        toc,
+        frontmatter,
+        raw,
+    })
 }
 
 #[tauri::command(async)]
@@ -170,7 +190,12 @@ pub fn save_markdown(path: String, content: String) -> Result<(), String> {
 pub fn render_markdown_string(content: String) -> Result<MarkdownResult, String> {
     let (frontmatter, body) = parse_frontmatter(&content);
     let (html, toc) = render_markdown(body);
-    Ok(MarkdownResult { html, toc, frontmatter, raw: content })
+    Ok(MarkdownResult {
+        html,
+        toc,
+        frontmatter,
+        raw: content,
+    })
 }
 
 #[cfg(test)]
@@ -326,14 +351,20 @@ mod tests {
     fn sanitize_preserves_heading_id() {
         let html = "<h1 id=\"introduction\">Introduction</h1>";
         let out = sanitize_markdown_html(html);
-        assert!(out.contains("id=\"introduction\""), "heading id should be preserved");
+        assert!(
+            out.contains("id=\"introduction\""),
+            "heading id should be preserved"
+        );
     }
 
     #[test]
     fn sanitize_preserves_code_class() {
         let html = "<pre><code class=\"language-rust\">fn main() {}</code></pre>";
         let out = sanitize_markdown_html(html);
-        assert!(out.contains("class=\"language-rust\""), "code class should be preserved");
+        assert!(
+            out.contains("class=\"language-rust\""),
+            "code class should be preserved"
+        );
     }
 
     #[test]

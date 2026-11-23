@@ -5,9 +5,7 @@ fn validate_key(key: &str) -> Result<(), String> {
         return Err("key must not be empty".to_string());
     }
     if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(format!(
-            "invalid key: {key}. Only [a-zA-Z0-9_] allowed"
-        ));
+        return Err(format!("invalid key: {key}. Only [a-zA-Z0-9_] allowed"));
     }
     Ok(())
 }
@@ -29,7 +27,9 @@ pub fn load_app_data(app: tauri::AppHandle, key: String) -> Result<Option<String
     if !file.exists() {
         return Ok(None);
     }
-    std::fs::read_to_string(file).map(Some).map_err(|e| e.to_string())
+    std::fs::read_to_string(file)
+        .map(Some)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

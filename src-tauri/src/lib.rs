@@ -1,9 +1,9 @@
 pub mod csv_commands;
-pub mod utils;
 pub mod file_watcher_commands;
 pub mod markdown_commands;
 pub mod pdf_commands;
 pub mod persistence_commands;
+pub mod utils;
 pub mod xlsx_commands;
 
 use serde::Serialize;
@@ -57,8 +57,7 @@ fn frontend_ready(app: AppHandle) -> Result<(), String> {
         std::mem::take(&mut state.paths)
     };
     if !paths.is_empty() {
-        app.emit("open-paths", paths)
-            .map_err(|e| e.to_string())?;
+        app.emit("open-paths", paths).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -123,7 +122,12 @@ fn open_file(path: String) -> Result<FileInfo, String> {
         f.read_exact(&mut buf[..]).map_err(|e| e.to_string())?;
     }
     let format = detect_format(p, &buf)?;
-    Ok(FileInfo { path, name, format, size })
+    Ok(FileInfo {
+        path,
+        name,
+        format,
+        size,
+    })
 }
 
 #[cfg(test)]
@@ -166,12 +170,6 @@ mod tests {
     fn unsupported_format_returns_err() {
         let p = Path::new("photo.jpg");
         assert!(detect_format(p, b"\xFF\xD8\xFF").is_err());
-    }
-
-    #[test]
-    fn greet_returns_greeting() {
-        let result = format!("Hello, {}! You've been greeted from Rust!", "QuickView");
-        assert!(result.contains("QuickView"));
     }
 
     #[test]

@@ -111,7 +111,7 @@ export function XlsxViewer({ tabId, filePath, isActive = true }: XlsxViewerProps
     return Array.from({ length: cols }, (_, i) => colLetter(i));
   }, [tab?.sheetData?.total_cols]);
 
-  const filters = tab?.filters ?? [];
+  const filters = useMemo(() => tab?.filters ?? [], [tab?.filters]);
 
   const filteredSortedRows = useMemo((): XlsxCell[][] => {
     if (!tab?.sheetData) return [];

@@ -206,11 +206,13 @@ export function RenderedView({ html, filePath, containerRef, onScroll }: Rendere
     }
 
     setPostProcessKey((k) => k + 1);
-  }, [html, filePath]);
+  }, [filePath]);
 
   useEffect(() => {
+    // Re-run when html content changes (DOM is updated via dangerouslySetInnerHTML).
+    void html;
     postProcess();
-  }, [postProcess]);
+  }, [html, postProcess]);
 
   const handleClick = useCallback(
     async (e: React.MouseEvent<HTMLDivElement>) => {
