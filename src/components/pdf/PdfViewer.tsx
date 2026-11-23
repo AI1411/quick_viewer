@@ -49,6 +49,23 @@ function LazyPdfCanvas({
 }: LazyPdfCanvasProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(false);
+  const [placeholderSize, setPlaceholderSize] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
+
+  // Reserve real page viewport size so lazy mount/unmount does not jump scroll
+  useEffect(() => {
+    let cancelled = false;
+    pdfDocument.getPage(pageIndex + 1).then((page) => {
+      if (cancelled) return;
+      const viewport = page.getViewport({ scale, rotation });
+      setPlaceholderSize({ width: viewport.width, height: viewport.height });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfDocument, pageIndex, scale, rotation]);
 
   useEffect(() => {
     const el = ref.current;
@@ -64,7 +81,13 @@ function LazyPdfCanvas({
   }, []);
 
   return (
-    <div ref={ref} style={{ minHeight: 400 }}>
+    <div
+      ref={ref}
+      style={{
+        minWidth: placeholderSize?.width ?? 400,
+        minHeight: placeholderSize?.height ?? 400,
+      }}
+    >
       {isVisible && (
         <PdfCanvas
           pdfDocument={pdfDocument}
@@ -215,7 +238,16 @@ export function PdfViewer({ tabId, filePath, isActive = true }: PdfViewerProps) 
       const store = usePdfStore.getState();
       const tab = store.tabs[tabId];
       if (!tab?.pdfInfo) return;
-      if (document.activeElement === pageInputRef.current) return;
+
+      // 入力要素にフォーカスがあるときは矢印キーを無視
+      const active = document.activeElement;
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        (active instanceof HTMLElement && active.isContentEditable)
+      ) {
+        return;
+      }
 
       if (e.key === "ArrowRight" || e.key === "ArrowDown") {
         e.preventDefault();
@@ -235,6 +267,85 @@ export function PdfViewer({ tabId, filePath, isActive = true }: PdfViewerProps) 
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [isActive, tabId]);
+
+  // ── 連続表示: currentPage ↔ スクロール位置の同期 ─────────────────────────
+  const scrollingToPageRef = useRef(false);
+  const lastScrolledPageRef = useRef<number | null>(null);
+
+  // スクロール → 最も見えているページを currentPage に反映
+  useEffect(() => {
+    if (!isActive) return;
+    const tab = usePdfStore.getState().tabs[tabId];
+    if (!tab || tab.displayMode !== "continuous") return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const ratios = new Map<number, number>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const pageAttr = (entry.target as HTMLElement).dataset.pdfPage;
+          if (pageAttr == null) continue;
+          const pageIndex = Number(pageAttr);
+          if (entry.isIntersecting) {
+            ratios.set(pageIndex, entry.intersectionRatio);
+          } else {
+            ratios.delete(pageIndex);
+          }
+        }
+        if (ratios.size === 0) return;
+        if (scrollingToPageRef.current) return;
+
+        let bestPage = -1;
+        let bestRatio = -1;
+        for (const [pageIndex, ratio] of ratios) {
+          if (ratio > bestRatio) {
+            bestRatio = ratio;
+            bestPage = pageIndex;
+          }
+        }
+        if (bestPage < 0) return;
+        const nextPage = bestPage + 1; // 1-based
+        const current = usePdfStore.getState().tabs[tabId]?.currentPage;
+        if (current !== nextPage) {
+          // スクロール追従更新なので再スクロールしない
+          lastScrolledPageRef.current = nextPage;
+          usePdfStore.getState().setCurrentPage(tabId, nextPage);
+        }
+      },
+      { root: container, threshold: [0, 0.25, 0.5, 0.75, 1] }
+    );
+
+    const pages = container.querySelectorAll("[data-pdf-page]");
+    pages.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [
+    isActive,
+    tabId,
+    tabState?.displayMode,
+    tabState?.pdfDocument,
+    tabState?.pdfInfo?.page_count,
+  ]);
+
+  // currentPage 変更（ツールバー / サムネ / 目次 / 矢印）→ 該当ページへスクロール
+  useEffect(() => {
+    if (!isActive) return;
+    const tab = usePdfStore.getState().tabs[tabId];
+    if (!tab || tab.displayMode !== "continuous") return;
+    const page = tab.currentPage;
+    if (lastScrolledPageRef.current === page) return;
+    const el = containerRef.current?.querySelector(
+      `[data-pdf-page="${page - 1}"]`
+    );
+    if (!el) return;
+    lastScrolledPageRef.current = page;
+    scrollingToPageRef.current = true;
+    el.scrollIntoView({ block: "start", behavior: "smooth" });
+    const timer = setTimeout(() => {
+      scrollingToPageRef.current = false;
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [isActive, tabId, tabState?.currentPage, tabState?.displayMode]);
 
   // ── ズームヘルパー ─────────────────────────────────────────────────────────
   const handleZoomIn = useCallback(() => {
