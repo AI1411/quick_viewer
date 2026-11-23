@@ -1,4 +1,7 @@
+import { useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { confirmCloseDirtyTabs } from "../lib/confirmUnsaved";
+import { useTabStore } from "../stores";
 
 interface Props {
   onRecentClick?: () => void;
@@ -6,6 +9,40 @@ interface Props {
 
 export function TitleBar({ onRecentClick }: Props) {
   const appWindow = getCurrentWindow();
+  const allowCloseRef = useRef(false);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    appWindow
+      .onCloseRequested(async (event) => {
+        if (allowCloseRef.current) return;
+
+        const dirtyTitles = useTabStore
+          .getState()
+          .tabs.filter((t) => t.isDirty)
+          .map((t) => t.title);
+
+        if (dirtyTitles.length === 0) return;
+
+        event.preventDefault();
+        const ok = await confirmCloseDirtyTabs(dirtyTitles);
+        if (ok) {
+          allowCloseRef.current = true;
+          await appWindow.close();
+        }
+      })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [appWindow]);
 
   return (
     <div

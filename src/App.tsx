@@ -12,6 +12,7 @@ import { ViewerArea } from "./components/ViewerArea";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { RecentFilesMenu } from "./components/RecentFilesMenu";
 import { openFile, showOpenDialog } from "./lib/fileCommands";
+import { confirmUnsaved } from "./lib/confirmUnsaved";
 import { useTabStore, useSettingsStore, useSearchStore, useRecentFilesStore, showError } from "./stores";
 import type { RecentFile } from "./stores";
 import { Toast } from "./components/Toast";
@@ -192,12 +193,12 @@ function App() {
     // 設定
     "cmd+,": () => setSettingsOpen((prev) => !prev),
     // タブ操作
-    "cmd+w": () => {
+    "cmd+w": async () => {
       const { activeTabId: aid, removeTab, tabs } = useTabStore.getState();
       if (!aid) return;
       const tab = tabs.find((t) => t.id === aid);
       if (tab?.isDirty) {
-        const ok = window.confirm(`「${tab.title}」には未保存の変更があります。閉じますか？`);
+        const ok = await confirmUnsaved(tab.title);
         if (!ok) return;
       }
       removeTab(aid);
