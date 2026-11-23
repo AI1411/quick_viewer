@@ -1,11 +1,16 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { dirname, join } from "@tauri-apps/api/path";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { createHighlighter, type Highlighter } from "shiki";
 import mermaid from "mermaid";
 import "katex/dist/katex.min.css";
+import { openFile } from "../../lib/fileCommands";
 import { useSearchStore } from "../../stores/searchStore";
+import { useTabStore, useRecentFilesStore, showError } from "../../stores";
+import type { RecentFile } from "../../stores";
 import { highlightTextNodes, clearSearchMarks, applyMarkStyles } from "../../lib/searchHighlight";
+import { errorMessage } from "../../lib/errorUtils";
 
 let _highlighter: Highlighter | null = null;
 let _highlighterPromise: Promise<Highlighter> | null = null;
@@ -34,6 +39,54 @@ function isDarkTheme(): boolean {
   if (theme === "dark") return true;
   if (theme === "light") return false;
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+async function openMarkdownInNewTab(path: string): Promise<void> {
+  try {
+    const info = await openFile(path);
+    const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const { addTab, setActiveTab } = useTabStore.getState();
+    addTab({
+      id,
+      title: info.name,
+      filePath: info.path,
+      format: info.format,
+      isDirty: false,
+      reloadCount: 0,
+    });
+    setActiveTab(id);
+    useRecentFilesStore.getState().addRecentFile({
+      path: info.path,
+      name: info.name,
+      format: info.format as RecentFile["format"],
+      openedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    showError(`ファイルを開けませんでした: ${errorMessage(err)}`);
+  }
+}
+
+/** Exported for tests: classify markdown link hrefs. */
+export function classifyMarkdownHref(href: string): {
+  kind: "anchor" | "external" | "markdown" | "other";
+  value: string;
+} {
+  const trimmed = href.trim();
+  if (trimmed.startsWith("#")) {
+    return { kind: "anchor", value: trimmed.slice(1) };
+  }
+  if (
+    /^https?:/i.test(trimmed) ||
+    /^mailto:/i.test(trimmed)
+  ) {
+    return { kind: "external", value: trimmed };
+  }
+  // Strip hash/query for extension check
+  const pathOnly = trimmed.split(/[?#]/)[0] ?? trimmed;
+  if (/\.(md|markdown)$/i.test(pathOnly) && !/^[a-z][a-z0-9+.-]*:/i.test(pathOnly)) {
+    return { kind: "markdown", value: trimmed };
+  }
+  return { kind: "other", value: trimmed };
 }
 
 interface RenderedViewProps {
@@ -159,6 +212,53 @@ export function RenderedView({ html, filePath, containerRef, onScroll }: Rendere
     postProcess();
   }, [postProcess]);
 
+  const handleClick = useCallback(
+    async (e: React.MouseEvent<HTMLDivElement>) => {
+      const target = (e.target as HTMLElement | null)?.closest?.("a[href]");
+      if (!target) return;
+
+      const href = target.getAttribute("href");
+      if (!href) return;
+
+      // Always stop WebView navigation so custom title bar can't strand the user
+      e.preventDefault();
+      e.stopPropagation();
+
+      const classified = classifyMarkdownHref(href);
+      const container = containerRef.current;
+
+      if (classified.kind === "anchor") {
+        if (!container || !classified.value) return;
+        const el = container.querySelector<HTMLElement>(
+          `#${CSS.escape(classified.value)}`
+        );
+        el?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+
+      if (classified.kind === "external") {
+        try {
+          await openUrl(classified.value);
+        } catch (err) {
+          showError(`リンクを開けませんでした: ${errorMessage(err)}`);
+        }
+        return;
+      }
+
+      if (classified.kind === "markdown") {
+        try {
+          const pathOnly = classified.value.split(/[?#]/)[0] ?? classified.value;
+          const dir = await dirname(filePath);
+          const abs = await join(dir, pathOnly);
+          await openMarkdownInNewTab(abs);
+        } catch (err) {
+          showError(`Markdown を開けませんでした: ${errorMessage(err)}`);
+        }
+      }
+    },
+    [containerRef, filePath]
+  );
+
   // 検索ハイライト（postProcess 完了後に適用）
   const searchIsOpen = useSearchStore((s) => s.isOpen);
   const searchQuery = useSearchStore((s) => s.isOpen ? s.query : "");
@@ -197,6 +297,7 @@ export function RenderedView({ html, filePath, containerRef, onScroll }: Rendere
       className="flex-1 overflow-y-auto"
       style={{ backgroundColor: "var(--viewer-bg)" }}
       onScroll={() => onScroll?.()}
+      onClick={handleClick}
     >
       <div
         ref={innerRef}
