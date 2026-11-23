@@ -36,9 +36,23 @@ async function handleOpenPath(
 ) {
   try {
     const info = await openFile(path);
-    const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    addTab({ id, title: info.name, filePath: info.path, format: info.format, isDirty: false, reloadCount: 0 });
-    setActiveTab(id);
+    const existing = useTabStore
+      .getState()
+      .tabs.find((t) => t.filePath === info.path);
+    if (existing) {
+      setActiveTab(existing.id);
+    } else {
+      const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      addTab({
+        id,
+        title: info.name,
+        filePath: info.path,
+        format: info.format,
+        isDirty: false,
+        reloadCount: 0,
+      });
+      setActiveTab(id);
+    }
     useRecentFilesStore.getState().addRecentFile({
       path: info.path,
       name: info.name,
@@ -47,6 +61,16 @@ async function handleOpenPath(
     });
   } catch (err) {
     showError(`ファイルを開けませんでした: ${errorMessage(err)}`);
+  }
+}
+
+async function openFileWithDialog() {
+  try {
+    const { addTab, setActiveTab } = useTabStore.getState();
+    const path = await showOpenDialog();
+    if (path) await handleOpenPath(path, addTab, setActiveTab);
+  } catch (err) {
+    showError(`ファイルダイアログを開けませんでした: ${errorMessage(err)}`);
   }
 }
 
@@ -129,14 +153,8 @@ function App() {
   // キーボードショートカット
   useShortcuts({
     // ファイル
-    "cmd+o": async () => {
-      try {
-        const { addTab, setActiveTab } = useTabStore.getState();
-        const path = await showOpenDialog();
-        if (path) await handleOpenPath(path, addTab, setActiveTab);
-      } catch (err) {
-        showError(`ファイルダイアログを開けませんでした: ${errorMessage(err)}`);
-      }
+    "cmd+o": () => {
+      void openFileWithDialog();
     },
     // 設定
     "cmd+,": () => setSettingsOpen((prev) => !prev),
@@ -270,7 +288,7 @@ function App() {
       style={{ color: "var(--text-primary)" }}
     >
       <TitleBar onRecentClick={() => setRecentMenuOpen((prev) => !prev)} />
-      <TabBar />
+      <TabBar onNewTab={() => { void openFileWithDialog(); }} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar isOpen={sidebarOpen} />
         <main className="flex-1 flex overflow-hidden">

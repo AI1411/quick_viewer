@@ -48,7 +48,11 @@ interface ContextMenuState {
   tabId: string;
 }
 
-export function TabBar() {
+interface TabBarProps {
+  onNewTab?: () => void;
+}
+
+export function TabBar({ onNewTab }: TabBarProps) {
   const {
     tabs,
     activeTabId,
@@ -135,11 +139,12 @@ export function TabBar() {
         </div>
       ))}
 
-      {/* 新規タブボタン（Phase 1.4 でファイルオープンダイアログと連携） */}
       <button
+        type="button"
         className="px-2 flex items-center opacity-50 hover:opacity-100 text-lg leading-none"
         style={{ color: "var(--text-secondary, #858585)" }}
         aria-label="新しいタブ"
+        onClick={onNewTab}
         onDragOver={(e) => {
           e.preventDefault();
           setDragOverIndex(tabs.length);

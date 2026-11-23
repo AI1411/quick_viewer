@@ -28,7 +28,14 @@ export const useTabStore = create<TabState>((set, get) => ({
   tabs: [],
   activeTabId: null,
 
-  addTab: (tab) => set((state) => ({ tabs: [...state.tabs, tab] })),
+  addTab: (tab) => {
+    const existing = get().tabs.find((t) => t.filePath === tab.filePath);
+    if (existing) {
+      set({ activeTabId: existing.id });
+      return;
+    }
+    set((state) => ({ tabs: [...state.tabs, tab] }));
+  },
 
   removeTab: (id) => {
     cleanupTabStores(id);
