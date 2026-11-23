@@ -1,4 +1,4 @@
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use tauri::ipc::Response;
 
 // ─── Commands ─────────────────────────────────────────────────────────────────
@@ -76,7 +76,11 @@ mod tests {
         let result = read_pdf_bytes("/nonexistent/file.pdf".to_string());
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.contains("Failed to read file"), "Unexpected error: {}", err);
+        assert!(
+            err.contains("Failed to read file"),
+            "Unexpected error: {}",
+            err
+        );
     }
 
     #[test]

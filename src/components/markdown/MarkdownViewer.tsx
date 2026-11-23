@@ -16,15 +16,13 @@ interface MarkdownViewerProps {
 }
 
 export function MarkdownViewer({ tabId, filePath, isActive = true }: MarkdownViewerProps) {
-  const { initTab, setData, setLoading, setError, setViewMode, setEditContent, setDirty } =
-    useMarkdownStore.getState();
-  const { setDirty: setTabDirty } = useTabStore.getState();
   const tab = useMarkdownStore((s) => s.tabs[tabId]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
   const [liveHtml, setLiveHtml] = useState<string | null>(null);
 
   useEffect(() => {
+    const { initTab, setData, setLoading, setError } = useMarkdownStore.getState();
     initTab(tabId);
     setLoading(tabId, true);
     readMarkdown(filePath)
@@ -51,7 +49,7 @@ export function MarkdownViewer({ tabId, filePath, isActive = true }: MarkdownVie
         .catch(() => {}); // preview failure is non-fatal
     }, 300);
     return () => clearTimeout(timer);
-  }, [tab?.editContent, tab?.viewMode, tabId]);
+  }, [tab?.editContent, tab?.data?.raw, tab?.viewMode, tabId]);
 
   function handleScroll() {
     if (!tab?.data?.toc || !containerRef.current) return;
@@ -72,6 +70,7 @@ export function MarkdownViewer({ tabId, filePath, isActive = true }: MarkdownVie
   }
 
   function handleViewModeChange(mode: ViewMode) {
+    const { setEditContent, setViewMode } = useMarkdownStore.getState();
     const state = useMarkdownStore.getState().tabs[tabId];
     if (mode !== "preview" && state?.editContent === null && state?.data) {
       setEditContent(tabId, state.data.raw);
@@ -89,6 +88,8 @@ export function MarkdownViewer({ tabId, filePath, isActive = true }: MarkdownVie
   }
 
   function handleContentChange(content: string) {
+    const { setEditContent, setDirty } = useMarkdownStore.getState();
+    const { setDirty: setTabDirty } = useTabStore.getState();
     setEditContent(tabId, content);
     const raw = useMarkdownStore.getState().tabs[tabId]?.data?.raw ?? null;
     const dirty = raw !== null && content !== raw;
@@ -99,6 +100,13 @@ export function MarkdownViewer({ tabId, filePath, isActive = true }: MarkdownVie
   useShortcuts(
     {
       "cmd+s": () => {
+        const {
+          setData,
+          setLoading,
+          setError,
+          setDirty,
+        } = useMarkdownStore.getState();
+        const { setDirty: setTabDirty } = useTabStore.getState();
         const state = useMarkdownStore.getState().tabs[tabId];
         if (!state?.isDirty || state.editContent === null) return;
         setLoading(tabId, true);

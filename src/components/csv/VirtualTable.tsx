@@ -77,6 +77,8 @@ export function VirtualTable({
   // unloaded rows render blank until onScrollEnd appends via seek-based chunks.
   const virtualCount = Math.max(rows.length, totalRows);
 
+  // TanStack Virtual returns non-memoizable functions; React Compiler skips this component.
+  // eslint-disable-next-line react-hooks/incompatible-library -- known TanStack Virtual limitation
   const rowVirtualizer = useVirtualizer({
     count: virtualCount,
     getScrollElement: () => parentRef.current,

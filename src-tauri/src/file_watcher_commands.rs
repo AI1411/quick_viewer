@@ -17,18 +17,17 @@ pub fn watch_file(
     }
     let path_clone = path.clone();
     let app_clone = app.clone();
-    let mut watcher =
-        notify::recommended_watcher(move |res: notify::Result<Event>| {
-            if let Ok(event) = res {
-                match event.kind {
-                    EventKind::Modify(_) | EventKind::Create(_) => {
-                        let _ = app_clone.emit("file-changed", path_clone.clone());
-                    }
-                    _ => {}
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
+        if let Ok(event) = res {
+            match event.kind {
+                EventKind::Modify(_) | EventKind::Create(_) => {
+                    let _ = app_clone.emit("file-changed", path_clone.clone());
                 }
+                _ => {}
             }
-        })
-        .map_err(|e| e.to_string())?;
+        }
+    })
+    .map_err(|e| e.to_string())?;
     watcher
         .watch(std::path::Path::new(&path), RecursiveMode::NonRecursive)
         .map_err(|e| e.to_string())?;

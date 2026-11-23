@@ -120,7 +120,10 @@ pub(crate) fn detect_delimiter_auto(sample: &str) -> u8 {
     candidates
         .iter()
         .max_by_key(|(_, c)| {
-            sample_lines.iter().map(|line| count_unquoted(line, *c)).sum::<usize>()
+            sample_lines
+                .iter()
+                .map(|line| count_unquoted(line, *c))
+                .sum::<usize>()
         })
         .map(|(d, _)| *d)
         .unwrap_or(b',')
@@ -216,10 +219,7 @@ pub(crate) fn build_index_from_content(
 }
 
 /// Read + decode a CSV file and build its row-offset index.
-pub(crate) fn build_csv_index(
-    path: &str,
-    delimiter: Option<String>,
-) -> Result<CsvIndex, String> {
+pub(crate) fn build_csv_index(path: &str, delimiter: Option<String>) -> Result<CsvIndex, String> {
     check_csv_file(path)?;
     let raw = fs::read(path).map_err(|e| e.to_string())?;
     let (content, encoding_name) = decode_file(&raw);
@@ -287,7 +287,9 @@ pub(crate) fn read_rows_from_index(
 
 fn read_row_at(index: &CsvIndex, row_idx: usize) -> Result<Vec<String>, String> {
     let mut rows = read_rows_from_index(index, row_idx, 1)?;
-    Ok(rows.pop().unwrap_or_else(|| vec![String::new(); index.headers.len()]))
+    Ok(rows
+        .pop()
+        .unwrap_or_else(|| vec![String::new(); index.headers.len()]))
 }
 
 fn meta_from_index(index: &CsvIndex) -> CsvMeta {
@@ -333,10 +335,7 @@ fn compile_filters(
     for cond in conditions {
         let col_idx = resolve_column_index(headers, cond)?;
         let regex = if cond.filter_type == "regex" {
-            Some(
-                Regex::new(&cond.value)
-                    .map_err(|e| format!("invalid regex: {e}"))?,
-            )
+            Some(Regex::new(&cond.value).map_err(|e| format!("invalid regex: {e}"))?)
         } else {
             None
         };
@@ -426,22 +425,26 @@ pub(crate) fn compare_cell_values(a: &str, b: &str) -> Ordering {
 }
 
 /// Sort all rows by column index. `direction` is `"asc"` or `"desc"`.
-pub(crate) fn sort_rows(
-    rows: &mut [Vec<String>],
-    column_index: usize,
-    direction: &str,
-) {
+pub(crate) fn sort_rows(rows: &mut [Vec<String>], column_index: usize, direction: &str) {
     let desc = direction.eq_ignore_ascii_case("desc");
     rows.sort_by(|a, b| {
         let av = a.get(column_index).map(|s| s.as_str()).unwrap_or("");
         let bv = b.get(column_index).map(|s| s.as_str()).unwrap_or("");
         let cmp = compare_cell_values(av, bv);
-        if desc { cmp.reverse() } else { cmp }
+        if desc {
+            cmp.reverse()
+        } else {
+            cmp
+        }
     });
 }
 
 /// Build a search regex mirroring frontend `buildRegex`.
-fn build_search_regex(query: &str, use_regex: bool, case_sensitive: bool) -> Result<Option<Regex>, String> {
+fn build_search_regex(
+    query: &str,
+    use_regex: bool,
+    case_sensitive: bool,
+) -> Result<Option<Regex>, String> {
     if query.is_empty() {
         return Ok(None);
     }
@@ -741,7 +744,8 @@ pub fn export_csv(
         .delimiter(index.delimiter)
         .from_writer(BufWriter::new(out_file));
 
-    wtr.write_record(&index.headers).map_err(|e| e.to_string())?;
+    wtr.write_record(&index.headers)
+        .map_err(|e| e.to_string())?;
 
     const SCAN_CHUNK: usize = 2048;
     let total = index.row_count();
@@ -973,10 +977,7 @@ mod tests {
     #[test]
     fn apply_filters_empty_conditions_returns_all() {
         let headers = vec!["name".to_string()];
-        let rows = vec![
-            vec!["Alice".to_string()],
-            vec!["Bob".to_string()],
-        ];
+        let rows = vec![vec!["Alice".to_string()], vec!["Bob".to_string()]];
         let result = apply_filters(&headers, &rows, &[]).unwrap();
         assert_eq!(result.len(), 2);
     }
@@ -1036,10 +1037,7 @@ mod tests {
         let matches = search_rows(&rows, 2, "tokyo", false, false).unwrap();
         assert_eq!(
             matches,
-            vec![
-                CellMatch { row: 0, col: 1 },
-                CellMatch { row: 2, col: 1 },
-            ]
+            vec![CellMatch { row: 0, col: 1 }, CellMatch { row: 2, col: 1 },]
         );
     }
 
@@ -1056,13 +1054,9 @@ mod tests {
 
     #[test]
     fn index_and_chunk_basic() {
-        let index = build_index_from_content(
-            "mem.csv",
-            SAMPLE_CSV.to_string(),
-            "UTF-8".into(),
-            b',',
-        )
-        .unwrap();
+        let index =
+            build_index_from_content("mem.csv", SAMPLE_CSV.to_string(), "UTF-8".into(), b',')
+                .unwrap();
         assert_eq!(index.row_count(), 3);
         assert_eq!(index.headers, vec!["name", "age", "city"]);
 

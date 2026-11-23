@@ -29,8 +29,9 @@ export function useFileWatcher(
   }, [tabs]);
 
   useEffect(() => {
+    const watched = watchedRef.current;
     return () => {
-      for (const path of watchedRef.current) {
+      for (const path of watched) {
         invoke("unwatch_file", { path }).catch(console.error);
       }
     };
