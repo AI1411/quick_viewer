@@ -1,5 +1,26 @@
+use chardetng::EncodingDetector;
 use std::io::Write;
 use std::path::Path;
+
+/// ファイルバイト列をエンコーディング自動検出してデコードし、(テキスト, エンコーディング名) を返す。
+pub fn decode_file(raw: &[u8]) -> (String, String) {
+    // UTF-8 BOM を除去してからデコード
+    let raw = raw.strip_prefix(b"\xef\xbb\xbf").unwrap_or(raw);
+
+    let mut detector = EncodingDetector::new();
+    detector.feed(raw, true);
+    let encoding = detector.guess(None, true);
+    let (cow, _, _) = encoding.decode(raw);
+    (cow.into_owned(), encoding.name().to_string())
+}
+
+/// テキストを指定エンコーディングでエンコードする。不明なラベルは UTF-8 にフォールバック。
+pub fn encode_file(content: &str, encoding_name: &str) -> Vec<u8> {
+    let encoding =
+        encoding_rs::Encoding::for_label(encoding_name.as_bytes()).unwrap_or(encoding_rs::UTF_8);
+    let (bytes, _, _) = encoding.encode(content);
+    bytes.into_owned()
+}
 
 /// temp file → sync → rename パターンのアトミック書込。
 /// 中断・ディスクフルによるゼロバイト化を防ぐ。
@@ -34,7 +55,36 @@ pub fn assert_regular_file(path: &Path) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use encoding_rs::SHIFT_JIS;
     use std::fs;
+
+    #[test]
+    fn decode_file_utf8() {
+        let data = b"hello, world";
+        let (decoded, encoding) = decode_file(data);
+        assert_eq!(decoded, "hello, world");
+        assert!(!encoding.is_empty());
+    }
+
+    #[test]
+    fn decode_file_shift_jis() {
+        let unicode = "日本語テスト";
+        let (encoded, _, _) = SHIFT_JIS.encode(unicode);
+        let (decoded, enc) = decode_file(&encoded);
+        assert!(
+            decoded.contains("日本語"),
+            "expected SJIS decode, got encoding={enc} content={decoded:?}"
+        );
+    }
+
+    #[test]
+    fn encode_file_shift_jis_roundtrip() {
+        let text = "# 見出し\n本文";
+        let bytes = encode_file(text, "Shift_JIS");
+        let (decoded, _, had_errors) = SHIFT_JIS.decode(&bytes);
+        assert!(!had_errors);
+        assert_eq!(decoded, text);
+    }
 
     #[test]
     fn atomic_write_creates_file() {

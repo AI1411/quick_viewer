@@ -110,7 +110,7 @@ export function MarkdownViewer({ tabId, filePath, isActive = true }: MarkdownVie
         const state = useMarkdownStore.getState().tabs[tabId];
         if (!state?.isDirty || state.editContent === null) return;
         setLoading(tabId, true);
-        saveMarkdown(filePath, state.editContent)
+        saveMarkdown(filePath, state.editContent, state.data?.encoding)
           .then(() => readMarkdown(filePath))
           .then((result) => {
             setData(tabId, result);

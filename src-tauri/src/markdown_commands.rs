@@ -3,6 +3,10 @@ use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag, TagEnd};
 use serde::Serialize;
 use std::fs;
 
+use crate::utils::{assert_regular_file, decode_file, encode_file};
+
+const MAX_MARKDOWN_SIZE: u64 = 512 * 1024 * 1024; // 512 MB
+
 #[derive(Debug, Serialize)]
 pub struct TocItem {
     pub level: u32,
@@ -16,6 +20,8 @@ pub struct MarkdownResult {
     pub toc: Vec<TocItem>,
     pub frontmatter: Option<serde_json::Value>,
     pub raw: String,
+    /// Detected text encoding (e.g. "UTF-8", "Shift_JIS").
+    pub encoding: String,
 }
 
 pub(crate) fn slugify(text: &str) -> String {
@@ -167,9 +173,22 @@ fn sanitize_markdown_html(html: &str) -> String {
     b.clean(html).to_string()
 }
 
+fn check_markdown_file(path: &str) -> Result<(), String> {
+    let size = assert_regular_file(std::path::Path::new(path))?;
+    if size > MAX_MARKDOWN_SIZE {
+        return Err(format!(
+            "Markdown file too large: {} bytes (max 512 MB)",
+            size
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command(async)]
 pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    check_markdown_file(&path)?;
+    let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+    let (raw, encoding) = decode_file(&bytes);
     let (frontmatter, content) = parse_frontmatter(&raw);
     let (html, toc) = render_markdown(content);
     Ok(MarkdownResult {
@@ -177,13 +196,19 @@ pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
         toc,
         frontmatter,
         raw,
+        encoding,
     })
 }
 
 #[tauri::command(async)]
-pub fn save_markdown(path: String, content: String) -> Result<(), String> {
-    crate::utils::atomic_write(std::path::Path::new(&path), content.as_bytes())
-        .map_err(|e| e.to_string())
+pub fn save_markdown(
+    path: String,
+    content: String,
+    encoding: Option<String>,
+) -> Result<(), String> {
+    let encoding_name = encoding.as_deref().unwrap_or("UTF-8");
+    let bytes = encode_file(&content, encoding_name);
+    crate::utils::atomic_write(std::path::Path::new(&path), &bytes).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -195,6 +220,7 @@ pub fn render_markdown_string(content: String) -> Result<MarkdownResult, String>
         toc,
         frontmatter,
         raw: content,
+        encoding: "UTF-8".to_string(),
     })
 }
 
@@ -374,21 +400,86 @@ mod tests {
     }
 
     #[test]
+    fn test_read_markdown_rejects_directory() {
+        let dir = std::env::temp_dir();
+        let result = read_markdown(dir.to_string_lossy().to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_save_and_read_markdown_roundtrip() {
         let path = std::env::temp_dir().join("quickview_test_markdown.md");
         let path_str = path.to_string_lossy().to_string();
         let content = "---\ntitle: Test\nauthor: Alice\n---\n# Hello\n\nBody text.";
 
-        save_markdown(path_str.clone(), content.to_string()).unwrap();
+        save_markdown(path_str.clone(), content.to_string(), None).unwrap();
         let result = read_markdown(path_str).unwrap();
 
         assert_eq!(result.raw, content);
         assert!(result.html.contains("<h1"));
         assert_eq!(result.toc.len(), 1);
         assert_eq!(result.toc[0].text, "Hello");
+        assert!(!result.encoding.is_empty());
         let fm = result.frontmatter.unwrap();
         assert_eq!(fm["title"], serde_json::json!("Test"));
         assert_eq!(fm["author"], serde_json::json!("Alice"));
+
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn test_read_shift_jis_markdown() {
+        use encoding_rs::SHIFT_JIS;
+
+        let unicode = "# 見出し\n\n本文です。";
+        let (encoded, _, _) = SHIFT_JIS.encode(unicode);
+        let path = std::env::temp_dir().join("quickview_test_sjis.md");
+        fs::write(&path, &encoded).unwrap();
+        let path_str = path.to_string_lossy().to_string();
+
+        let result = read_markdown(path_str).unwrap();
+        assert!(
+            result.raw.contains("見出し") && result.raw.contains("本文"),
+            "expected Shift_JIS decode, got raw={:?} encoding={}",
+            result.raw,
+            result.encoding
+        );
+        assert!(result.html.contains("見出し"));
+        assert!(
+            result.encoding.eq_ignore_ascii_case("Shift_JIS")
+                || result.encoding.to_ascii_lowercase().contains("windows-31j")
+                || result.raw.contains("見出し"),
+            "unexpected encoding={}",
+            result.encoding
+        );
+
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn test_save_preserves_shift_jis() {
+        use encoding_rs::SHIFT_JIS;
+
+        let unicode = "# 保存テスト\n\n日本語本文。";
+        let path = std::env::temp_dir().join("quickview_test_sjis_save.md");
+        let path_str = path.to_string_lossy().to_string();
+
+        save_markdown(
+            path_str.clone(),
+            unicode.to_string(),
+            Some("Shift_JIS".to_string()),
+        )
+        .unwrap();
+
+        let bytes = fs::read(&path).unwrap();
+        let (decoded, _, had_errors) = SHIFT_JIS.decode(&bytes);
+        assert!(!had_errors, "saved bytes should decode as Shift_JIS");
+        assert!(decoded.contains("保存テスト"));
+        assert!(decoded.contains("日本語本文"));
+
+        // Round-trip via read_markdown should still work
+        let result = read_markdown(path_str).unwrap();
+        assert!(result.raw.contains("保存テスト"));
 
         fs::remove_file(path).ok();
     }

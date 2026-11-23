@@ -34,6 +34,7 @@ vi.mock("../../lib/markdownCommands", () => ({
     toc: [],
     frontmatter: null,
     raw: "",
+    encoding: "UTF-8",
   }),
   saveMarkdown: vi.fn(),
 }));
@@ -67,6 +68,7 @@ describe("MarkdownViewer", () => {
       toc: [{ level: 1, text: "Hello", anchor: "hello" }],
       frontmatter: null,
       raw: "# Hello",
+      encoding: "UTF-8",
     });
     render(<MarkdownViewer tabId="t1" filePath="/test.md" />);
     await waitFor(() => {
@@ -82,6 +84,7 @@ describe("MarkdownViewer", () => {
       toc: [],
       frontmatter: null,
       raw: "No headings",
+      encoding: "UTF-8",
     });
     render(<MarkdownViewer tabId="t1" filePath="/test.md" />);
     await waitFor(() => {
