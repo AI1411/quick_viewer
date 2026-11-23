@@ -177,6 +177,7 @@ function App() {
   useEffect(() => {
     const store = useSearchStore.getState();
     store.setCellMatches([]);
+    store.setPdfMatches([]);
     store.setMatchCount(0);
   }, [activeTabId]);
 

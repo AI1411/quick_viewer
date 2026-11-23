@@ -66,6 +66,7 @@ export function PdfCanvas({
   const searchUseRegex = useSearchStore((s) => s.options.useRegex);
   const searchCaseSensitive = useSearchStore((s) => s.options.caseSensitive);
   const currentMatchIndex = useSearchStore((s) => s.currentMatchIndex);
+  const pdfMatches = useSearchStore((s) => s.pdfMatches);
 
   const [colorPickerPos, setColorPickerPos] = useState<{
     x: number;
@@ -125,6 +126,7 @@ export function PdfCanvas({
   }, [pdfDocument, pageIndex, scale, rotation]);
 
   // テキストレイヤーへの検索ハイライト（レンダリング完了後に適用）
+  // 件数・ページ遷移は PdfViewer 側の全ページ索引が担当。ここでは表示中ページのハイライトのみ。
   useEffect(() => {
     if (isRendering) return;
     const textDiv = textLayerRef.current;
@@ -141,11 +143,25 @@ export function PdfCanvas({
     });
     searchMarksRef.current = marks;
 
-    if (marks.length > 0) {
-      const idx = currentMatchIndex % marks.length;
-      applyMarkStyles(marks, idx);
+    if (marks.length === 0) return;
+
+    // グローバル一致のうち、このページの何番目が「現在」か
+    const current = pdfMatches[currentMatchIndex];
+    let localCurrent = -1;
+    if (current && current.pageIndex === pageIndex) {
+      localCurrent = Math.min(current.matchIndexOnPage, marks.length - 1);
     }
-  }, [isRendering, searchIsOpen, searchQuery, searchUseRegex, searchCaseSensitive, currentMatchIndex]);
+    applyMarkStyles(marks, localCurrent);
+  }, [
+    isRendering,
+    searchIsOpen,
+    searchQuery,
+    searchUseRegex,
+    searchCaseSensitive,
+    currentMatchIndex,
+    pdfMatches,
+    pageIndex,
+  ]);
 
   // テキスト選択完了時にカラーピッカーを表示（highlightモード時のみ）
   const handleMouseUp = useCallback(() => {

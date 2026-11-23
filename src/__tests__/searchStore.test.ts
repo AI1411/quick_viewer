@@ -8,6 +8,7 @@ const defaultState = {
   matchCount: 0,
   currentMatchIndex: 0,
   cellMatches: [] as { row: number; col: number }[],
+  pdfMatches: [] as { pageIndex: number; matchIndexOnPage: number }[],
 };
 
 describe("searchStore", () => {
@@ -37,6 +38,17 @@ describe("searchStore", () => {
     expect(useSearchStore.getState().currentMatchIndex).toBe(0);
   });
 
+  it("setPdfMatches で PDF マッチが設定され matchCount も更新される", () => {
+    const matches = [
+      { pageIndex: 0, matchIndexOnPage: 0 },
+      { pageIndex: 2, matchIndexOnPage: 1 },
+    ];
+    useSearchStore.getState().setPdfMatches(matches);
+    expect(useSearchStore.getState().pdfMatches).toHaveLength(2);
+    expect(useSearchStore.getState().matchCount).toBe(2);
+    expect(useSearchStore.getState().currentMatchIndex).toBe(0);
+  });
+
   it("nextMatch で次のインデックスに進む（循環）", () => {
     useSearchStore.setState({ matchCount: 3, currentMatchIndex: 2 });
     useSearchStore.getState().nextMatch();
@@ -60,12 +72,14 @@ describe("searchStore", () => {
       isOpen: true,
       query: "test",
       cellMatches: [{ row: 0, col: 0 }],
+      pdfMatches: [{ pageIndex: 1, matchIndexOnPage: 0 }],
       matchCount: 1,
     });
     useSearchStore.getState().close();
     expect(useSearchStore.getState().isOpen).toBe(false);
     expect(useSearchStore.getState().query).toBe("");
     expect(useSearchStore.getState().cellMatches).toHaveLength(0);
+    expect(useSearchStore.getState().pdfMatches).toHaveLength(0);
     expect(useSearchStore.getState().matchCount).toBe(0);
   });
 });

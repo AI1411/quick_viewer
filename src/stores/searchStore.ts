@@ -10,6 +10,12 @@ export interface CellMatch {
   col: number;
 }
 
+/** PDF search hit: 0-based page index + occurrence on that page. */
+export interface PdfMatch {
+  pageIndex: number;
+  matchIndexOnPage: number;
+}
+
 interface SearchStore {
   isOpen: boolean;
   query: string;
@@ -17,11 +23,13 @@ interface SearchStore {
   matchCount: number;
   currentMatchIndex: number;
   cellMatches: CellMatch[];
+  pdfMatches: PdfMatch[];
   setOpen: (open: boolean) => void;
   setQuery: (query: string) => void;
   setOptions: (options: SearchOptions) => void;
   setMatchCount: (count: number) => void;
   setCellMatches: (matches: CellMatch[]) => void;
+  setPdfMatches: (matches: PdfMatch[]) => void;
   nextMatch: () => void;
   prevMatch: () => void;
   close: () => void;
@@ -34,6 +42,7 @@ export const useSearchStore = create<SearchStore>((set, get) => ({
   matchCount: 0,
   currentMatchIndex: 0,
   cellMatches: [],
+  pdfMatches: [],
 
   setOpen: (open) => set({ isOpen: open }),
   setQuery: (query) => set({ query, currentMatchIndex: 0 }),
@@ -41,6 +50,8 @@ export const useSearchStore = create<SearchStore>((set, get) => ({
   setMatchCount: (matchCount) => set({ matchCount, currentMatchIndex: 0 }),
   setCellMatches: (cellMatches) =>
     set({ cellMatches, matchCount: cellMatches.length, currentMatchIndex: 0 }),
+  setPdfMatches: (pdfMatches) =>
+    set({ pdfMatches, matchCount: pdfMatches.length, currentMatchIndex: 0 }),
   nextMatch: () => {
     const { matchCount, currentMatchIndex } = get();
     if (matchCount === 0) return;
@@ -52,5 +63,12 @@ export const useSearchStore = create<SearchStore>((set, get) => ({
     set({ currentMatchIndex: (currentMatchIndex - 1 + matchCount) % matchCount });
   },
   close: () =>
-    set({ isOpen: false, query: "", cellMatches: [], matchCount: 0, currentMatchIndex: 0 }),
+    set({
+      isOpen: false,
+      query: "",
+      cellMatches: [],
+      pdfMatches: [],
+      matchCount: 0,
+      currentMatchIndex: 0,
+    }),
 }));
