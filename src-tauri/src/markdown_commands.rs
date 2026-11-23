@@ -208,7 +208,8 @@ pub fn save_markdown(
 ) -> Result<(), String> {
     let encoding_name = encoding.as_deref().unwrap_or("UTF-8");
     let bytes = encode_file(&content, encoding_name);
-    crate::utils::atomic_write(std::path::Path::new(&path), &bytes).map_err(|e| e.to_string())
+    crate::utils::atomic_write_user_file(std::path::Path::new(&path), &bytes)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
