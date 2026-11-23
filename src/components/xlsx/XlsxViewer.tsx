@@ -45,7 +45,6 @@ function matchesFilter(value: string, cond: FilterCondition): boolean {
 }
 
 export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
-  const store = useXlsxStore();
   const tab = useXlsxStore((s) => s.tabs[tabId]);
   const [filterPopover, setFilterPopover] = useState<{
     column: string;
@@ -53,53 +52,52 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   } | null>(null);
 
   useEffect(() => {
-    store.initTab(tabId);
-  }, [tabId]);
-
-  useEffect(() => {
+    const { initTab, setLoading, setInfo, setSheetData, setError } = useXlsxStore.getState();
+    initTab(tabId);
     if (!filePath) return;
     let cancelled = false;
-    store.setLoading(tabId, true);
+    setLoading(tabId, true);
     invoke<XlsxInfo>("read_xlsx", { path: filePath })
       .then((info) => {
         if (cancelled) return;
-        store.setInfo(tabId, info);
+        setInfo(tabId, info);
         const firstSheet = info.sheets[0];
         if (firstSheet) {
           return invoke<XlsxSheetData>("read_xlsx_sheet", {
             path: filePath,
             sheetName: firstSheet.name,
           }).then((data) => {
-            if (!cancelled) store.setSheetData(tabId, data, firstSheet.name);
+            if (!cancelled) setSheetData(tabId, data, firstSheet.name);
           });
         }
       })
-      .catch((e) => { if (!cancelled) store.setError(tabId, String(e)); });
+      .catch((e) => { if (!cancelled) setError(tabId, String(e)); });
     return () => { cancelled = true; };
   }, [tabId, filePath]);
 
   // アンマウント時にストア状態をクリーンアップ
   useEffect(() => {
     return () => {
-      store.removeTab(tabId);
+      useXlsxStore.getState().removeTab(tabId);
     };
-  }, [tabId, store]);
+  }, [tabId]);
 
   const sheetRequestSeqRef = useRef(0);
 
   const handleSheetSelect = useCallback(
     (sheetName: string) => {
       if (sheetName === tab?.activeSheetName) return;
-      store.setLoading(tabId, true);
+      const { setLoading, setSheetData, setError } = useXlsxStore.getState();
+      setLoading(tabId, true);
       const seq = ++sheetRequestSeqRef.current;
       invoke<XlsxSheetData>("read_xlsx_sheet", { path: filePath, sheetName })
         .then((data) => {
           if (seq !== sheetRequestSeqRef.current) return;
-          store.setSheetData(tabId, data, sheetName);
+          setSheetData(tabId, data, sheetName);
         })
         .catch((e) => {
           if (seq !== sheetRequestSeqRef.current) return;
-          store.setError(tabId, String(e));
+          setError(tabId, String(e));
         });
     },
     [tabId, filePath, tab?.activeSheetName]
@@ -215,13 +213,14 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
 
   const handleSort = useCallback(
     (colIndex: number) => {
+      const { setSort } = useXlsxStore.getState();
       const current = tab?.sort;
       if (!current || current.columnIndex !== colIndex) {
-        store.setSort(tabId, { columnIndex: colIndex, direction: "asc" });
+        setSort(tabId, { columnIndex: colIndex, direction: "asc" });
       } else if (current.direction === "asc") {
-        store.setSort(tabId, { columnIndex: colIndex, direction: "desc" });
+        setSort(tabId, { columnIndex: colIndex, direction: "desc" });
       } else {
-        store.setSort(tabId, null);
+        setSort(tabId, null);
       }
     },
     [tabId, tab?.sort]
@@ -229,17 +228,18 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
 
   const handleColumnResize = useCallback(
     (colIndex: number, width: number) => {
-      store.setColumnWidth(tabId, colIndex, width);
+      useXlsxStore.getState().setColumnWidth(tabId, colIndex, width);
     },
     [tabId]
   );
 
   const handleCellClick = useCallback(
     (row: number, col: number, shift: boolean) => {
+      const { setSelection } = useXlsxStore.getState();
       if (shift && tab?.selectedAnchor) {
-        store.setSelection(tabId, tab.selectedAnchor, { row, col });
+        setSelection(tabId, tab.selectedAnchor, { row, col });
       } else {
-        store.setSelection(tabId, { row, col }, null);
+        setSelection(tabId, { row, col }, null);
       }
     },
     [tabId, tab?.selectedAnchor]
@@ -258,7 +258,7 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
         ...(tab?.filters ?? []).filter((f) => f.column !== cond.column),
         cond,
       ];
-      store.setFilters(tabId, newFilters);
+      useXlsxStore.getState().setFilters(tabId, newFilters);
       setFilterPopover(null);
     },
     [tabId, tab?.filters]
@@ -266,14 +266,17 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
 
   const handleFilterClear = useCallback(
     (column: string) => {
-      store.setFilters(tabId, (tab?.filters ?? []).filter((f) => f.column !== column));
+      useXlsxStore.getState().setFilters(
+        tabId,
+        (tab?.filters ?? []).filter((f) => f.column !== column)
+      );
       setFilterPopover(null);
     },
     [tabId, tab?.filters]
   );
 
   const handleClearAllFilters = useCallback(() => {
-    store.clearFilters(tabId);
+    useXlsxStore.getState().clearFilters(tabId);
   }, [tabId]);
 
   const handleExport = useCallback(async () => {
