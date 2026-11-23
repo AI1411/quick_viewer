@@ -9,6 +9,59 @@ pub mod xlsx_commands;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager};
+
+/// Paths from Finder / `open -a` that arrived before the webview was ready.
+struct PendingOpenPaths {
+    ready: bool,
+    paths: Vec<String>,
+}
+
+fn urls_to_paths(urls: Vec<tauri::Url>) -> Vec<String> {
+    urls.into_iter()
+        .filter_map(|url| {
+            url.to_file_path()
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+        })
+        .collect()
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+fn emit_or_buffer_open_paths(app: &AppHandle, paths: Vec<String>) {
+    if paths.is_empty() {
+        return;
+    }
+    let mut state = match app.state::<Mutex<PendingOpenPaths>>().lock() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    if state.ready {
+        drop(state);
+        let _ = app.emit("open-paths", paths);
+    } else {
+        state.paths.extend(paths);
+    }
+}
+
+/// Called once the frontend has subscribed to `open-paths`.
+#[tauri::command]
+fn frontend_ready(app: AppHandle) -> Result<(), String> {
+    let paths = {
+        let mut state = app
+            .state::<Mutex<PendingOpenPaths>>()
+            .lock()
+            .map_err(|e| e.to_string())?;
+        state.ready = true;
+        std::mem::take(&mut state.paths)
+    };
+    if !paths.is_empty() {
+        app.emit("open-paths", paths)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
 
 #[derive(Debug, Serialize)]
 pub struct FileInfo {
@@ -120,6 +173,20 @@ mod tests {
         let result = format!("Hello, {}! You've been greeted from Rust!", "QuickView");
         assert!(result.contains("QuickView"));
     }
+
+    #[test]
+    fn urls_to_paths_converts_file_urls() {
+        let url = tauri::Url::parse("file:///tmp/sample.csv").unwrap();
+        let paths = urls_to_paths(vec![url]);
+        assert_eq!(paths, vec!["/tmp/sample.csv"]);
+    }
+
+    #[test]
+    fn urls_to_paths_skips_non_file_urls() {
+        let url = tauri::Url::parse("https://example.com/a.csv").unwrap();
+        let paths = urls_to_paths(vec![url]);
+        assert!(paths.is_empty());
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -133,8 +200,13 @@ pub fn run() {
             std::collections::HashMap::new(),
         )))
         .manage(csv_commands::CsvCache::default())
+        .manage(Mutex::new(PendingOpenPaths {
+            ready: false,
+            paths: Vec::new(),
+        }))
         .invoke_handler(tauri::generate_handler![
             open_file,
+            frontend_ready,
             csv_commands::detect_encoding,
             csv_commands::read_csv,
             csv_commands::read_csv_chunk,
@@ -157,6 +229,18 @@ pub fn run() {
             persistence_commands::save_app_data,
             persistence_commands::load_app_data,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+            if let tauri::RunEvent::Opened { urls } = event {
+                emit_or_buffer_open_paths(app, urls_to_paths(urls));
+            } else {
+                let _ = app;
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+            {
+                let _ = (app, event);
+            }
+        });
 }

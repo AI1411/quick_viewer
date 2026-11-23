@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { check } from "@tauri-apps/plugin-updater";
 import { EmptyState } from "./components/EmptyState";
@@ -200,6 +202,42 @@ function App() {
         if (cancelled) fn();
         else unlisten = fn;
       });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Finder / `open -a` 経由のファイルオープン（起動時バッファ＋実行中イベント）
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    const openPaths = (paths: string[]) => {
+      const { addTab, setActiveTab } = useTabStore.getState();
+      for (const path of paths) {
+        void handleOpenPath(path, addTab, setActiveTab);
+      }
+    };
+
+    (async () => {
+      try {
+        const un = await listen<string[]>("open-paths", (event) => {
+          if (cancelled) return;
+          openPaths(event.payload ?? []);
+        });
+        if (cancelled) {
+          un();
+          return;
+        }
+        unlisten = un;
+        // リスナー登録後に ready を通知し、コールドスタート分をフラッシュ
+        await invoke("frontend_ready");
+      } catch (err) {
+        console.error("Failed to wire file-open associations:", err);
+      }
+    })();
+
     return () => {
       cancelled = true;
       unlisten?.();

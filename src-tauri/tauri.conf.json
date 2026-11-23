@@ -42,6 +42,33 @@
     "icon": [
       "icons/icon.ico"
     ],
+    "fileAssociations": [
+      {
+        "ext": ["csv"],
+        "mimeType": "text/csv",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["tsv"],
+        "mimeType": "text/tab-separated-values",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["pdf"],
+        "mimeType": "application/pdf",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["md", "markdown"],
+        "mimeType": "text/markdown",
+        "role": "Viewer"
+      },
+      {
+        "ext": ["xlsx"],
+        "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "role": "Viewer"
+      }
+    ],
     "macOS": {
       "entitlements": "./entitlements.plist",
       "signingIdentity": null,
