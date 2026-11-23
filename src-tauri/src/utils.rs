@@ -180,7 +180,10 @@ mod tests {
         atomic_write_user_file(&link, b"updated").unwrap();
 
         assert!(
-            fs::symlink_metadata(&link).unwrap().file_type().is_symlink(),
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
             "symlink should remain a symlink"
         );
         assert_eq!(fs::read(&target).unwrap(), b"updated");
