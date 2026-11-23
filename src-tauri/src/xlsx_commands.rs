@@ -337,12 +337,44 @@ fn load_sheet_xml(
     parse_sheet_xml(&content)
 }
 
+/// 色指定 `[...]`、文字列リテラル `"..."`、`\` エスケープを取り除く
+/// （日付トークン判定の前処理用）
+fn strip_non_format_tokens(fmt: &str) -> String {
+    let mut result = String::with_capacity(fmt.len());
+    let mut chars = fmt.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                // 次の1文字をスキップ（エスケープされたリテラル）
+                chars.next();
+            }
+            '"' => {
+                while let Some(qc) = chars.next() {
+                    if qc == '"' {
+                        break;
+                    }
+                }
+            }
+            '[' => {
+                while let Some(bc) = chars.next() {
+                    if bc == ']' {
+                        break;
+                    }
+                }
+            }
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
 /// フォーマットコード文字列が日付系かどうかを判定する
 fn is_date_format_code(fmt: &str) -> bool {
     if fmt.contains('%') || fmt.contains('$') || fmt.contains('¥') || fmt.contains('€') {
         return false;
     }
-    let f = fmt.to_lowercase();
+    // [Red] の d や "days" の d を日付トークンと誤認しないよう除去してから判定
+    let f = strip_non_format_tokens(fmt).to_lowercase();
     (f.contains('y') || f.contains('d') || f.contains('h'))
         && (f.contains('m') || f.contains('y') || f.contains('d'))
 }
@@ -833,6 +865,35 @@ mod tests {
         assert_eq!(freeze.cols, 2);
     }
 
+    // is_date_format_code tests
+
+    #[test]
+    fn is_date_format_code_rejects_red_color_number_formats() {
+        assert!(!is_date_format_code("#,##0 ;[Red](#,##0)"));
+        assert!(!is_date_format_code("#,##0.00;[Red](#,##0.00)"));
+    }
+
+    #[test]
+    fn is_date_format_code_rejects_quoted_literal_with_d() {
+        assert!(!is_date_format_code(r#"0.0"days""#));
+    }
+
+    #[test]
+    fn is_date_format_code_rejects_plain_number_format() {
+        assert!(!is_date_format_code("#,##0"));
+    }
+
+    #[test]
+    fn is_date_format_code_accepts_real_date_format() {
+        assert!(is_date_format_code("yyyy/mm/dd"));
+        assert!(is_date_format_code("m/d/yyyy"));
+    }
+
+    #[test]
+    fn is_date_format_code_rejects_backslash_escaped_literal() {
+        assert!(!is_date_format_code(r"0.0\d\a\y\s"));
+    }
+
     // convert_cell tests
 
     #[test]
@@ -854,6 +915,16 @@ mod tests {
         let cell = convert_cell(&Data::Float(3.14), Some("#,##0.00".to_string()));
         assert_eq!(cell.cell_type, "number");
         assert_eq!(cell.raw, "3.14");
+    }
+
+    #[test]
+    fn convert_cell_float_stays_number_with_red_format() {
+        let cell = convert_cell(
+            &Data::Float(1234.5),
+            Some("#,##0 ;[Red](#,##0)".to_string()),
+        );
+        assert_eq!(cell.cell_type, "number");
+        assert_eq!(cell.value, "1234.5");
     }
 
     #[test]
