@@ -49,7 +49,7 @@ fn detect_format(path: &Path, bytes: &[u8]) -> Result<String, String> {
 
 const MAX_OPEN_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1 GB
 
-#[tauri::command]
+#[tauri::command(async)]
 fn open_file(path: String) -> Result<FileInfo, String> {
     let p = Path::new(&path);
     let size = utils::assert_regular_file(p)?;

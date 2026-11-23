@@ -152,7 +152,7 @@ fn sanitize_markdown_html(html: &str) -> String {
     b.clean(html).to_string()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
     let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let (frontmatter, content) = parse_frontmatter(&raw);
@@ -160,13 +160,13 @@ pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
     Ok(MarkdownResult { html, toc, frontmatter, raw })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_markdown(path: String, content: String) -> Result<(), String> {
     crate::utils::atomic_write(std::path::Path::new(&path), content.as_bytes())
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn render_markdown_string(content: String) -> Result<MarkdownResult, String> {
     let (frontmatter, body) = parse_frontmatter(&content);
     let (html, toc) = render_markdown(body);

@@ -597,7 +597,7 @@ fn load_sheet_file_map(xlsx_path: &str) -> HashMap<String, String> {
 
 // ── Tauri コマンド ────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_xlsx(path: String) -> Result<XlsxInfo, String> {
     let workbook: Xlsx<_> = open_workbook::<Xlsx<_>, _>(&path).map_err(|e| e.to_string())?;
     let names = workbook.sheet_names().to_vec();
@@ -612,7 +612,7 @@ pub fn read_xlsx(path: String) -> Result<XlsxInfo, String> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData, String> {
     let mut workbook: Xlsx<_> = open_workbook::<Xlsx<_>, _>(&path).map_err(|e| e.to_string())?;
     let range: Range<Data> = workbook
@@ -663,7 +663,7 @@ pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData
 }
 
 /// XLSX シートを CSV としてエクスポートする。フィルタ条件（AND 複合）を適用可能。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_xlsx_sheet_as_csv(
     path: String,
     sheet_name: String,
