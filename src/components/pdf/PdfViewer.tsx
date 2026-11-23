@@ -1,8 +1,9 @@
 import { useEffect, useCallback, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { usePdfStore } from "../../stores/pdfStore";
 import { useSearchStore } from "../../stores/searchStore";
-import { showError } from "../../stores/toastStore";
+import { showError, showInfo } from "../../stores/toastStore";
 import { extractPdfInfo, loadPdfDocument } from "../../lib/pdfLib";
 import { findPdfMatches, clearPdfTextCache } from "../../lib/pdfTextIndex";
 import { PdfCanvas } from "./PdfCanvas";
@@ -423,6 +424,45 @@ export function PdfViewer({ tabId, filePath, isActive = true }: PdfViewerProps) 
     [tabId]
   );
 
+  const handleExportAnnotations = useCallback(async () => {
+    try {
+      const base =
+        filePath.split(/[/\\]/).pop()?.replace(/\.pdf$/i, "") ?? "annotations";
+      const outputPath = await saveDialog({
+        filters: [{ name: "JSON", extensions: ["json"] }],
+        defaultPath: `${base}-annotations.json`,
+      });
+      if (!outputPath) return;
+      await invoke("export_annotations", { pdfPath: filePath, outputPath });
+      showInfo("注釈をエクスポートしました");
+    } catch (err) {
+      showError(`注釈のエクスポートに失敗しました: ${String(err)}`);
+    }
+  }, [filePath]);
+
+  const handleImportAnnotations = useCallback(async () => {
+    try {
+      const inputPath = await openDialog({
+        multiple: false,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!inputPath || typeof inputPath !== "string") return;
+      const json = await invoke<string>("import_annotations", {
+        pdfPath: filePath,
+        inputPath,
+      });
+      if (json.length < 5 * 1024 * 1024) {
+        const anns: Annotation[] = JSON.parse(json);
+        if (Array.isArray(anns)) {
+          usePdfStore.getState().setAnnotations(tabId, anns);
+        }
+      }
+      showInfo("注釈をインポートしました");
+    } catch (err) {
+      showError(`注釈のインポートに失敗しました: ${String(err)}`);
+    }
+  }, [filePath, tabId]);
+
   // ── ローディング / エラー状態 ──────────────────────────────────────────────
   if (!tabState) return null;
 
@@ -674,6 +714,23 @@ export function PdfViewer({ tabId, filePath, isActive = true }: PdfViewerProps) 
             🗑
           </button>
         )}
+
+        <div style={{ width: 1, height: 16, backgroundColor: "var(--border-color)" }} />
+
+        <button
+          onClick={handleExportAnnotations}
+          className="px-2 py-0.5 rounded hover:bg-white/10 text-xs"
+          title="注釈を JSON でエクスポート"
+        >
+          書出
+        </button>
+        <button
+          onClick={handleImportAnnotations}
+          className="px-2 py-0.5 rounded hover:bg-white/10 text-xs"
+          title="注釈を JSON からインポート"
+        >
+          読込
+        </button>
       </div>
 
       {/* メインコンテンツ */}
