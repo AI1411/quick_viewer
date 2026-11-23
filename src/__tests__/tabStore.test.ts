@@ -13,6 +13,28 @@ describe("tabStore", () => {
     expect(useTabStore.getState().tabs[0]).toEqual(tab);
   });
 
+  it("同じ filePath の addTab は重複せず既存タブをアクティブにする", () => {
+    const { addTab } = useTabStore.getState();
+    addTab({
+      id: "1",
+      title: "test.csv",
+      filePath: "/tmp/test.csv",
+      isDirty: false,
+      reloadCount: 0,
+    });
+    addTab({
+      id: "2",
+      title: "test.csv",
+      filePath: "/tmp/test.csv",
+      isDirty: false,
+      reloadCount: 0,
+    });
+    const state = useTabStore.getState();
+    expect(state.tabs).toHaveLength(1);
+    expect(state.tabs[0].id).toBe("1");
+    expect(state.activeTabId).toBe("1");
+  });
+
   it("removeTab でタブが削除される", () => {
     const tab = { id: "1", title: "test.csv", filePath: "/tmp/test.csv", isDirty: false, reloadCount: 0 };
     useTabStore.getState().addTab(tab);
