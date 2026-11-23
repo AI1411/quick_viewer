@@ -217,6 +217,8 @@ pub fn run() {
             pdf_commands::read_pdf_bytes,
             pdf_commands::save_annotations,
             pdf_commands::load_annotations,
+            pdf_commands::export_annotations,
+            pdf_commands::import_annotations,
             markdown_commands::read_markdown,
             markdown_commands::save_markdown,
             markdown_commands::render_markdown_string,
