@@ -1,6 +1,7 @@
 use chardetng::EncodingDetector;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::fs;
 
 // ─── Data Types ───────────────────────────────────────────────────────────────
@@ -35,6 +36,12 @@ pub struct FilterCondition {
     /// "exact" | "contains" | "starts_with" | "regex" | "gt" | "lt" | "gte" | "lte" | "eq_num"
     pub filter_type: String,
     pub value: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct CellMatch {
+    pub row: usize,
+    pub col: usize,
 }
 
 // ─── Helper Functions ─────────────────────────────────────────────────────────
@@ -156,6 +163,78 @@ fn parse_f64(s: &str) -> Option<f64> {
     s.parse::<f64>().ok()
 }
 
+/// Parse a string as a number only when the entire string is numeric
+/// (mirrors frontend `tryParseEntireNumber` / `compareCellValues`).
+fn try_parse_entire_number(s: &str) -> Option<f64> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    trimmed.parse::<f64>().ok()
+}
+
+/// Shared cell-value comparator for CSV column sorting.
+pub(crate) fn compare_cell_values(a: &str, b: &str) -> Ordering {
+    match (try_parse_entire_number(a), try_parse_entire_number(b)) {
+        (Some(na), Some(nb)) => na.partial_cmp(&nb).unwrap_or(Ordering::Equal),
+        _ => a.cmp(b),
+    }
+}
+
+/// Sort all rows by column index. `direction` is `"asc"` or `"desc"`.
+pub(crate) fn sort_rows(
+    rows: &mut [Vec<String>],
+    column_index: usize,
+    direction: &str,
+) {
+    let desc = direction.eq_ignore_ascii_case("desc");
+    rows.sort_by(|a, b| {
+        let av = a.get(column_index).map(|s| s.as_str()).unwrap_or("");
+        let bv = b.get(column_index).map(|s| s.as_str()).unwrap_or("");
+        let cmp = compare_cell_values(av, bv);
+        if desc { cmp.reverse() } else { cmp }
+    });
+}
+
+/// Build a search regex mirroring frontend `buildRegex`.
+fn build_search_regex(query: &str, use_regex: bool, case_sensitive: bool) -> Option<Regex> {
+    if query.is_empty() {
+        return None;
+    }
+    let pattern = if use_regex {
+        query.to_string()
+    } else {
+        regex::escape(query)
+    };
+    regex::RegexBuilder::new(&pattern)
+        .case_insensitive(!case_sensitive)
+        .build()
+        .ok()
+}
+
+/// Search all cells; returns (row, col) matches in display order.
+pub(crate) fn search_rows(
+    rows: &[Vec<String>],
+    col_count: usize,
+    query: &str,
+    use_regex: bool,
+    case_sensitive: bool,
+) -> Vec<CellMatch> {
+    let Some(re) = build_search_regex(query, use_regex, case_sensitive) else {
+        return Vec::new();
+    };
+    let mut matches = Vec::new();
+    for (r, row) in rows.iter().enumerate() {
+        for c in 0..col_count {
+            let value = row.get(c).map(|s| s.as_str()).unwrap_or("");
+            if re.is_match(value) {
+                matches.push(CellMatch { row: r, col: c });
+            }
+        }
+    }
+    matches
+}
+
 /// 複数フィルタ条件（AND）を全行に適用して合致行を返す。
 pub(crate) fn apply_filters(
     headers: &[String],
@@ -175,6 +254,43 @@ pub(crate) fn apply_filters(
         })
         .cloned()
         .collect()
+}
+
+/// Load and normalize the full CSV.
+/// Returns (headers, rows, encoding_name, delimiter_string, delimiter_byte).
+fn load_full_csv(
+    path: &str,
+    delimiter: Option<String>,
+) -> Result<(Vec<String>, Vec<Vec<String>>, String, String, u8), String> {
+    check_csv_file(path)?;
+    let raw = fs::read(path).map_err(|e| e.to_string())?;
+    let (content, encoding_name) = decode_file(&raw);
+    let delim = parse_delimiter(delimiter, &content);
+    let delim_str = (delim as char).to_string();
+
+    let mut rdr = csv::ReaderBuilder::new()
+        .delimiter(delim)
+        .has_headers(true)
+        .flexible(true)
+        .from_reader(content.as_bytes());
+
+    let mut headers: Vec<String> = rdr
+        .headers()
+        .map_err(|e| e.to_string())?
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    let mut all_rows: Vec<Vec<String>> = rdr
+        .records()
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|r| r.iter().map(|s| s.to_string()).collect())
+        .collect();
+
+    normalize_columns(&mut headers, &mut all_rows);
+    Ok((headers, all_rows, encoding_name, delim_str, delim))
 }
 
 // ─── Tauri Commands ───────────────────────────────────────────────────────────
@@ -306,34 +422,7 @@ pub fn filter_csv(
     delimiter: Option<String>,
     conditions: Vec<FilterCondition>,
 ) -> Result<CsvData, String> {
-    check_csv_file(&path)?;
-    let raw = fs::read(&path).map_err(|e| e.to_string())?;
-    let (content, encoding_name) = decode_file(&raw);
-    let delim = parse_delimiter(delimiter, &content);
-    let delim_str = (delim as char).to_string();
-
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(delim)
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(content.as_bytes());
-
-    let mut headers: Vec<String> = rdr
-        .headers()
-        .map_err(|e| e.to_string())?
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-
-    let mut all_rows: Vec<Vec<String>> = rdr
-        .records()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|r| r.iter().map(|s| s.to_string()).collect())
-        .collect();
-
-    normalize_columns(&mut headers, &mut all_rows);
+    let (headers, all_rows, encoding_name, delim_str, _) = load_full_csv(&path, delimiter)?;
 
     let filtered = if conditions.is_empty() {
         all_rows
@@ -356,6 +445,88 @@ pub fn filter_csv(
     })
 }
 
+/// Sort all CSV rows by column index (full file). `ascending` true = asc.
+#[tauri::command]
+pub fn sort_csv(
+    path: String,
+    delimiter: Option<String>,
+    column_index: usize,
+    ascending: bool,
+    conditions: Option<Vec<FilterCondition>>,
+) -> Result<CsvData, String> {
+    let (headers, mut all_rows, encoding_name, delim_str, _) = load_full_csv(&path, delimiter)?;
+
+    if column_index >= headers.len() {
+        return Err(format!(
+            "column_index {} out of range ({} columns)",
+            column_index,
+            headers.len()
+        ));
+    }
+
+    let mut rows = match conditions {
+        Some(conds) if !conds.is_empty() => apply_filters(&headers, &all_rows, &conds),
+        _ => std::mem::take(&mut all_rows),
+    };
+
+    let direction = if ascending { "asc" } else { "desc" };
+    sort_rows(&mut rows, column_index, direction);
+
+    let total_rows = rows.len();
+    Ok(CsvData {
+        headers: headers.clone(),
+        rows,
+        meta: CsvMeta {
+            total_rows,
+            columns: headers.len(),
+            encoding: encoding_name,
+            delimiter: delim_str,
+            headers,
+        },
+    })
+}
+
+/// Search the whole CSV file; returns cell match indices into the (optionally filtered/sorted) row set.
+#[tauri::command]
+pub fn search_csv(
+    path: String,
+    delimiter: Option<String>,
+    query: String,
+    use_regex: Option<bool>,
+    case_sensitive: Option<bool>,
+    conditions: Option<Vec<FilterCondition>>,
+    sort_column_index: Option<usize>,
+    sort_ascending: Option<bool>,
+) -> Result<Vec<CellMatch>, String> {
+    let (headers, mut all_rows, _, _, _) = load_full_csv(&path, delimiter)?;
+
+    let mut rows = match conditions {
+        Some(conds) if !conds.is_empty() => apply_filters(&headers, &all_rows, &conds),
+        _ => std::mem::take(&mut all_rows),
+    };
+
+    if let Some(col) = sort_column_index {
+        if col >= headers.len() {
+            return Err(format!(
+                "sort_column_index {} out of range ({} columns)",
+                col,
+                headers.len()
+            ));
+        }
+        let ascending = sort_ascending.unwrap_or(true);
+        let direction = if ascending { "asc" } else { "desc" };
+        sort_rows(&mut rows, col, direction);
+    }
+
+    Ok(search_rows(
+        &rows,
+        headers.len(),
+        &query,
+        use_regex.unwrap_or(false),
+        case_sensitive.unwrap_or(false),
+    ))
+}
+
 /// フィルタ結果を CSV ファイルとして output_path に保存する。
 #[tauri::command]
 pub fn export_csv(
@@ -364,33 +535,7 @@ pub fn export_csv(
     output_path: String,
     conditions: Vec<FilterCondition>,
 ) -> Result<(), String> {
-    check_csv_file(&path)?;
-    let raw = fs::read(&path).map_err(|e| e.to_string())?;
-    let (content, _) = decode_file(&raw);
-    let delim = parse_delimiter(delimiter, &content);
-
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(delim)
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(content.as_bytes());
-
-    let mut headers: Vec<String> = rdr
-        .headers()
-        .map_err(|e| e.to_string())?
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-
-    let mut all_rows: Vec<Vec<String>> = rdr
-        .records()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|r| r.iter().map(|s| s.to_string()).collect())
-        .collect();
-
-    normalize_columns(&mut headers, &mut all_rows);
+    let (headers, all_rows, _, _, delim) = load_full_csv(&path, delimiter)?;
 
     let filtered = if conditions.is_empty() {
         all_rows
@@ -587,5 +732,71 @@ mod tests {
         let (decoded, encoding) = decode_file(data);
         assert_eq!(decoded, "hello, world");
         assert!(!encoding.is_empty());
+    }
+
+    #[test]
+    fn compare_cell_values_numeric_and_text() {
+        assert_eq!(compare_cell_values("1.25", "1.5"), Ordering::Less);
+        assert_eq!(compare_cell_values("-10", "-5"), Ordering::Less);
+        assert_eq!(compare_cell_values("apple", "banana"), Ordering::Less);
+        // ISO dates: whole-string not numeric → lexicographic (= date order)
+        assert_eq!(
+            compare_cell_values("2024-01-05", "2024-03-01"),
+            Ordering::Less
+        );
+    }
+
+    #[test]
+    fn sort_rows_ascending_numeric() {
+        let mut rows = vec![
+            vec!["b".into(), "10".into()],
+            vec!["a".into(), "2".into()],
+            vec!["c".into(), "1.5".into()],
+        ];
+        sort_rows(&mut rows, 1, "asc");
+        assert_eq!(rows[0][1], "1.5");
+        assert_eq!(rows[1][1], "2");
+        assert_eq!(rows[2][1], "10");
+    }
+
+    #[test]
+    fn sort_rows_descending() {
+        let mut rows = vec![
+            vec!["Alice".into()],
+            vec!["Carol".into()],
+            vec!["Bob".into()],
+        ];
+        sort_rows(&mut rows, 0, "desc");
+        assert_eq!(rows[0][0], "Carol");
+        assert_eq!(rows[1][0], "Bob");
+        assert_eq!(rows[2][0], "Alice");
+    }
+
+    #[test]
+    fn search_rows_literal_case_insensitive() {
+        let rows = vec![
+            vec!["Alice".into(), "Tokyo".into()],
+            vec!["Bob".into(), "Osaka".into()],
+            vec!["Carol".into(), "tokyo".into()],
+        ];
+        let matches = search_rows(&rows, 2, "tokyo", false, false);
+        assert_eq!(
+            matches,
+            vec![
+                CellMatch { row: 0, col: 1 },
+                CellMatch { row: 2, col: 1 },
+            ]
+        );
+    }
+
+    #[test]
+    fn search_rows_regex_case_sensitive() {
+        let rows = vec![
+            vec!["Alice".into()],
+            vec!["alice".into()],
+            vec!["ALICE".into()],
+        ];
+        let matches = search_rows(&rows, 1, "^Alice$", true, true);
+        assert_eq!(matches, vec![CellMatch { row: 0, col: 0 }]);
     }
 }
