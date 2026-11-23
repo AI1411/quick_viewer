@@ -37,12 +37,12 @@ export function ActiveFiltersBar({
       await onExport();
       return;
     }
-    const outputPath = await save({
-      filters: [{ name: "CSV", extensions: ["csv"] }],
-      defaultPath: "filtered.csv",
-    });
-    if (!outputPath) return;
     try {
+      const outputPath = await save({
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+        defaultPath: "filtered.csv",
+      });
+      if (!outputPath) return;
       await invoke("export_csv", {
         path: filePath,
         outputPath,

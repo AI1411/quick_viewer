@@ -18,6 +18,8 @@
     "core:window:allow-outer-position",
     "opener:default",
     "dialog:allow-open",
-    "dialog:allow-ask"
+    "dialog:allow-ask",
+    "dialog:allow-save",
+    "updater:default"
   ]
 }
