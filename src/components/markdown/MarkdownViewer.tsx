@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMarkdownStore } from "../../stores/markdownStore";
 import { useTabStore } from "../../stores/tabStore";
+import { showError } from "../../stores/toastStore";
 import { readMarkdown, saveMarkdown, renderMarkdownString } from "../../lib/markdownCommands";
 import { useShortcuts } from "../../hooks/useShortcuts";
 import { RenderedView } from "./RenderedView";
@@ -18,8 +19,10 @@ interface MarkdownViewerProps {
 export function MarkdownViewer({ tabId, filePath, isActive = true }: MarkdownViewerProps) {
   const tab = useMarkdownStore((s) => s.tabs[tabId]);
   const containerRef = useRef<HTMLDivElement>(null);
+  const isSavingRef = useRef(false);
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
   const [liveHtml, setLiveHtml] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     const { initTab, setData, setLoading, setError } = useMarkdownStore.getState();
@@ -100,28 +103,32 @@ export function MarkdownViewer({ tabId, filePath, isActive = true }: MarkdownVie
   useShortcuts(
     {
       "cmd+s": () => {
-        const {
-          setData,
-          setLoading,
-          setError,
-          setDirty,
-        } = useMarkdownStore.getState();
+        const { setData, setDirty } = useMarkdownStore.getState();
         const { setDirty: setTabDirty } = useTabStore.getState();
         const state = useMarkdownStore.getState().tabs[tabId];
-        if (!state?.isDirty || state.editContent === null) return;
-        setLoading(tabId, true);
-        saveMarkdown(filePath, state.editContent, state.data?.encoding)
-          .then(() => readMarkdown(filePath))
+        if (!state?.isDirty || state.editContent === null || isSavingRef.current) return;
+        const content = state.editContent;
+        const encoding = state.data?.encoding;
+        isSavingRef.current = true;
+        setIsSaving(true);
+        saveMarkdown(filePath, content, encoding)
+          .then(() => renderMarkdownString(content))
           .then((result) => {
-            setData(tabId, result);
+            setData(tabId, {
+              ...result,
+              // preserve file encoding; render_markdown_string always reports UTF-8
+              encoding: encoding ?? result.encoding,
+            });
+            setLiveHtml(result.html);
             setDirty(tabId, false);
             setTabDirty(tabId, false);
           })
           .catch((err: unknown) => {
-            setError(tabId, String(err));
+            showError(`保存に失敗しました: ${String(err)}`);
           })
           .finally(() => {
-            setLoading(tabId, false);
+            isSavingRef.current = false;
+            setIsSaving(false);
           });
       },
     },
@@ -182,11 +189,18 @@ export function MarkdownViewer({ tabId, filePath, isActive = true }: MarkdownVie
             </button>
           ))}
         </div>
-        {tab.isDirty && (
-          <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
-            未保存
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {isSaving && (
+            <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+              保存中...
+            </span>
+          )}
+          {!isSaving && tab.isDirty && (
+            <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+              未保存
+            </span>
+          )}
+        </div>
       </div>
 
       {/* メインコンテンツ */}
