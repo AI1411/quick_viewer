@@ -106,3 +106,26 @@ describe("PdfViewer のキーボード操作", () => {
     note.remove();
   });
 });
+
+describe("PdfViewer の連続表示", () => {
+  it("ページを指定するとそのページまでスクロールする", async () => {
+    class NoopObserver {
+      observe() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("IntersectionObserver", NoopObserver);
+    const scrolled: string[] = [];
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this.getAttribute("data-page") ?? "");
+    };
+
+    const { container } = render(<PdfViewer tabId="t1" filePath="/doc.pdf" />);
+    await flush(0);
+    act(() => usePdfStore.getState().setDisplayMode("t1", "continuous"));
+    act(() => usePdfStore.getState().setCurrentPage("t1", 3));
+
+    expect(container.querySelectorAll("[data-page]").length).toBe(3);
+    expect(scrolled[scrolled.length - 1]).toBe("3");
+    vi.unstubAllGlobals();
+  });
+});

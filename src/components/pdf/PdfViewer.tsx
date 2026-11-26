@@ -211,6 +211,45 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
     return () => window.removeEventListener("keydown", handleKey);
   }, [tabId]);
 
+  // ── 連続表示: ページ移動でスクロールし、スクロールで現在ページを更新する ──────
+  const scrolledPageRef = useRef<number | null>(null);
+  const currentPageForScroll = tabState?.currentPage;
+  const displayModeForScroll = tabState?.displayMode;
+  useEffect(() => {
+    if (displayModeForScroll !== "continuous" || currentPageForScroll === undefined) return;
+    // スクロール位置から求めたページなら、そこへスクロールし直さない
+    if (scrolledPageRef.current === currentPageForScroll) return;
+    containerRef.current
+      ?.querySelector(`[data-page="${currentPageForScroll}"]`)
+      ?.scrollIntoView({ block: "start" });
+  }, [currentPageForScroll, displayModeForScroll]);
+
+  const handleContinuousScroll = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const pages = container.querySelectorAll<HTMLElement>("[data-page]");
+    const top = container.getBoundingClientRect().top;
+    // 上端を越えた最後のページ (ページは上から順に並ぶので二分探索)
+    let lo = 0;
+    let hi = pages.length - 1;
+    let found = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (pages[mid].getBoundingClientRect().top - top <= 40) {
+        found = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    const page = found + 1;
+    const store = usePdfStore.getState();
+    if (store.tabs[tabId]?.currentPage !== page) {
+      scrolledPageRef.current = page;
+      store.setCurrentPage(tabId, page);
+    }
+  }, [tabId]);
+
   // ── ズームヘルパー ─────────────────────────────────────────────────────────
   const handleZoomIn = useCallback(() => {
     const tab = usePdfStore.getState().tabs[tabId];
@@ -560,6 +599,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
         )}
         <div
           ref={containerRef}
+          onScroll={displayMode === "continuous" ? handleContinuousScroll : undefined}
           className="flex-1 overflow-auto flex justify-center"
           style={{ backgroundColor: "var(--viewer-bg, #525659)", padding: 24 }}
         >
@@ -580,8 +620,8 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
           ) : (
             <div className="flex flex-col items-center gap-6">
               {Array.from({ length: pageCount }, (_, i) => (
+                <div key={i} data-page={i + 1}>
                 <LazyPdfCanvas
-                  key={i}
                   pdfDocument={pdfDocument}
                   pageIndex={i}
                   scale={zoom * 1.5}
@@ -593,6 +633,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
                   onAnnotationDelete={handleAnnotationDelete}
                   onAnnotationSelect={handleAnnotationSelect}
                 />
+                </div>
               ))}
             </div>
           )}
