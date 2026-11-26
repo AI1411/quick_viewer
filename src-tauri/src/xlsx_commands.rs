@@ -199,22 +199,35 @@ pub(crate) fn parse_styles_xml(xml: &str) -> Result<HashMap<u32, String>, String
     Ok(result)
 }
 
-/// xlsx ファイルから xl/styles.xml を読み込んで parse_styles_xml を呼ぶ
-fn load_styles(xlsx_path: &str) -> Result<HashMap<u32, String>, String> {
+/// ZIP 内のファイルを最大 `limit` バイトまで文字列として読む。無ければ Ok(None)。
+/// ZIP ヘッダの宣言サイズは偽装できるため、実際に読んだ量で上限を判定する。
+fn read_zip_entry_limited(xlsx_path: &str, entry: &str, limit: u64) -> Result<Option<String>, String> {
     let file = std::fs::File::open(xlsx_path).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
+    let f = match archive.by_name(entry) {
+        Ok(f) => f,
+        Err(_) => return Ok(None),
+    };
     let mut content = String::new();
-    match archive.by_name("xl/styles.xml") {
-        Ok(mut f) => {
-            const MAX_STYLES_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
-            if f.size() > MAX_STYLES_SIZE {
-                return Err("xl/styles.xml exceeds size limit (10 MB)".to_string());
-            }
-            f.read_to_string(&mut content).map_err(|e| e.to_string())?;
-        }
-        Err(_) => return Ok(HashMap::new()),
+    f.take(limit + 1)
+        .read_to_string(&mut content)
+        .map_err(|e| e.to_string())?;
+    if content.len() as u64 > limit {
+        return Err(format!("{} exceeds size limit ({} bytes)", entry, limit));
     }
-    parse_styles_xml(&content)
+    Ok(Some(content))
+}
+
+const MAX_STYLES_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+const MAX_SHEET_XML_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
+const MAX_WORKBOOK_XML_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+
+/// xlsx ファイルから xl/styles.xml を読み込んで parse_styles_xml を呼ぶ
+fn load_styles(xlsx_path: &str) -> Result<HashMap<u32, String>, String> {
+    match read_zip_entry_limited(xlsx_path, "xl/styles.xml", MAX_STYLES_SIZE)? {
+        Some(content) => parse_styles_xml(&content),
+        None => Ok(HashMap::new()),
+    }
 }
 
 /// Excel 列文字列 (A, B, ..., Z, AA, ...) → 0 始まりのインデックス。
@@ -330,23 +343,10 @@ fn load_sheet_xml(
     xlsx_path: &str,
     sheet_file_name: &str,
 ) -> Result<(HashMap<(u32, u32), u32>, FreezePane), String> {
-    let file = std::fs::File::open(xlsx_path).map_err(|e| e.to_string())?;
-    let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
-    let mut content = String::new();
-    match archive.by_name(sheet_file_name) {
-        Ok(mut f) => {
-            const MAX_SHEET_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
-            if f.size() > MAX_SHEET_SIZE {
-                return Err(format!(
-                    "{} exceeds size limit (100 MB)",
-                    sheet_file_name
-                ));
-            }
-            f.read_to_string(&mut content).map_err(|e| e.to_string())?;
-        }
-        Err(_) => return Ok((HashMap::new(), FreezePane::default())),
+    match read_zip_entry_limited(xlsx_path, sheet_file_name, MAX_SHEET_XML_SIZE)? {
+        Some(content) => parse_sheet_xml(&content),
+        None => Ok((HashMap::new(), FreezePane::default())),
     }
-    parse_sheet_xml(&content)
 }
 
 /// 書式コードから日付トークンと無関係な部分を除く。
@@ -501,6 +501,16 @@ fn parse_workbook_xml(xml: &str) -> HashMap<String, String> {
     name_to_rid
 }
 
+/// workbook.xml.rels の Target を ZIP 内のパスにする。
+/// 通常は "worksheets/sheet1.xml" (xl/ からの相対) だが、"/xl/worksheets/sheet1.xml"
+/// のようなパッケージ絶対パスで書くツールもある。
+fn resolve_rels_target(target: &str) -> String {
+    match target.strip_prefix('/') {
+        Some(absolute) => absolute.to_string(),
+        None => format!("xl/{}", target),
+    }
+}
+
 /// xl/_rels/workbook.xml.rels を解析して rId → ファイルパスのマップを返す
 fn parse_workbook_rels_xml(xml: &str) -> HashMap<String, String> {
     let mut rid_to_path: HashMap<String, String> = HashMap::new();
@@ -530,8 +540,7 @@ fn parse_workbook_rels_xml(xml: &str) -> HashMap<String, String> {
                     }
                 }
                 if !id.is_empty() && !target.is_empty() {
-                    // Target は "worksheets/sheet1.xml" 形式なので "xl/" を前置する
-                    rid_to_path.insert(id, format!("xl/{}", target));
+                    rid_to_path.insert(id, resolve_rels_target(&target));
                 }
             }
             Ok(Event::Eof) => break,
@@ -546,49 +555,12 @@ fn parse_workbook_rels_xml(xml: &str) -> HashMap<String, String> {
 
 /// xlsx ファイルからシート名 → xl/worksheets/sheetN.xml パスのマップを構築する
 fn load_sheet_file_map(xlsx_path: &str) -> HashMap<String, String> {
-    let name_to_rid = {
-        let file = match std::fs::File::open(xlsx_path) {
-            Ok(f) => f,
-            Err(_) => return HashMap::new(),
-        };
-        let mut archive = match ZipArchive::new(file) {
-            Ok(a) => a,
-            Err(_) => return HashMap::new(),
-        };
-        let mut content = String::new();
-        if archive
-            .by_name("xl/workbook.xml")
-            .ok()
-            .and_then(|mut f| f.read_to_string(&mut content).ok())
-            .is_none()
-        {
-            return HashMap::new();
-        }
-        parse_workbook_xml(&content)
+    let read = |entry| read_zip_entry_limited(xlsx_path, entry, MAX_WORKBOOK_XML_SIZE).ok().flatten();
+    let (Some(workbook), Some(rels)) = (read("xl/workbook.xml"), read("xl/_rels/workbook.xml.rels")) else {
+        return HashMap::new();
     };
-
-    let rid_to_path = {
-        let file = match std::fs::File::open(xlsx_path) {
-            Ok(f) => f,
-            Err(_) => return HashMap::new(),
-        };
-        let mut archive = match ZipArchive::new(file) {
-            Ok(a) => a,
-            Err(_) => return HashMap::new(),
-        };
-        let mut content = String::new();
-        if archive
-            .by_name("xl/_rels/workbook.xml.rels")
-            .ok()
-            .and_then(|mut f| f.read_to_string(&mut content).ok())
-            .is_none()
-        {
-            return HashMap::new();
-        }
-        parse_workbook_rels_xml(&content)
-    };
-
-    name_to_rid
+    let rid_to_path = parse_workbook_rels_xml(&rels);
+    parse_workbook_xml(&workbook)
         .into_iter()
         .filter_map(|(name, rid)| rid_to_path.get(&rid).map(|path| (name, path.clone())))
         .collect()
@@ -718,13 +690,11 @@ pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData
     let (display_rows, display_cols) = display_size(total_rows, total_cols);
 
     let xf_to_fmt = load_styles(&path).unwrap_or_default();
-    let sheet_file_map = load_sheet_file_map(&path);
-    let sheet_file = sheet_file_map
+    // シートの XML が特定できないときに sheet1.xml を当てると、別シートの書式とフリーズを表示してしまう
+    let (cell_xf_map, mut freeze_pane) = load_sheet_file_map(&path)
         .get(&sheet_name)
-        .cloned()
-        .unwrap_or_else(|| "xl/worksheets/sheet1.xml".to_string());
-    let (cell_xf_map, mut freeze_pane) =
-        load_sheet_xml(&path, &sheet_file).unwrap_or_default();
+        .and_then(|sheet_file| load_sheet_xml(&path, sheet_file).ok())
+        .unwrap_or_default();
     freeze_pane.rows = freeze_pane.rows.min(display_rows as u32);
     freeze_pane.cols = freeze_pane.cols.min(display_cols as u32);
 
@@ -959,6 +929,25 @@ mod tests {
         }
         zip.finish().unwrap();
         path
+    }
+
+    #[test]
+    fn rels_target_accepts_package_absolute_paths() {
+        assert_eq!(resolve_rels_target("worksheets/sheet2.xml"), "xl/worksheets/sheet2.xml");
+        assert_eq!(resolve_rels_target("/xl/worksheets/sheet2.xml"), "xl/worksheets/sheet2.xml");
+    }
+
+    #[test]
+    fn zip_entry_over_limit_is_rejected_by_actual_size() {
+        let path = write_test_xlsx("limit", r#"<xf numFmtId="0"/>"#, "<sheetData/>");
+        let p = path.to_string_lossy().into_owned();
+        let small = read_zip_entry_limited(&p, "xl/workbook.xml", 10_000).unwrap();
+        let too_big = read_zip_entry_limited(&p, "xl/workbook.xml", 10);
+        let missing = read_zip_entry_limited(&p, "xl/missing.xml", 10).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert!(small.unwrap().contains("<sheets>"));
+        assert!(too_big.is_err());
+        assert!(missing.is_none());
     }
 
     #[test]
