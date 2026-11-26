@@ -15,6 +15,7 @@ import { RecentFilesMenu } from "./components/RecentFilesMenu";
 import { showOpenDialog } from "./lib/fileCommands";
 import { openPathInTab } from "./lib/openPathInTab";
 import { reloadTabFromDisk, closeTab, confirmCloseAllTabs } from "./lib/tabActions";
+import { enqueueReload, nextReload, type PendingReload } from "./lib/reloadQueue";
 import { parseSavedWindowState, toRestoreBounds, type SavedWindowState } from "./lib/windowState";
 import { useTabStore, useSettingsStore, useSearchStore, useRecentFilesStore, showError } from "./stores";
 import { Toast } from "./components/Toast";
@@ -28,18 +29,18 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [recentMenuOpen, setRecentMenuOpen] = useState(false);
-  const [pendingReload, setPendingReload] = useState<{
-    tabId: string;
-    filePath: string;
-  } | null>(null);
+  const [reloadQueue, setReloadQueue] = useState<PendingReload[]>([]);
   const activeTabId = useTabStore((state) => state.activeTabId);
+  const openTabIds = useTabStore((state) => state.tabs.map((t) => t.id).join("\n"));
+  const pendingReload = nextReload(reloadQueue, openTabIds.split("\n"));
+  const finishReload = (tabId: string) => setReloadQueue((q) => q.filter((p) => p.tabId !== tabId));
   const theme = useSettingsStore((state) => state.theme);
   const zoomLevel = useSettingsStore((state) => state.zoomLevel);
   const fontFamily = useSettingsStore((state) => state.fontFamily);
 
   const handleFileChanged = useCallback(
     (tabId: string, filePath: string) => {
-      setPendingReload((prev) => prev ?? { tabId, filePath });
+      setReloadQueue((q) => enqueueReload(q, { tabId, filePath }));
     },
     []
   );
@@ -309,9 +310,9 @@ function App() {
           }
           onReload={() => {
             reloadTabFromDisk(pendingReload.tabId);
-            setPendingReload(null);
+            finishReload(pendingReload.tabId);
           }}
-          onDismiss={() => setPendingReload(null)}
+          onDismiss={() => finishReload(pendingReload.tabId)}
         />
       )}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
