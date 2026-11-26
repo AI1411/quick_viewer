@@ -3,6 +3,8 @@ import { useMarkdownStore } from "../../stores/markdownStore";
 import { useTabStore } from "../../stores/tabStore";
 import { readMarkdown, saveMarkdown, renderMarkdownString } from "../../lib/markdownCommands";
 import { useShortcuts } from "../../hooks/useShortcuts";
+import { showError, showWarning } from "../../stores/toastStore";
+import { errorMessage } from "../../lib/errorUtils";
 import { RenderedView } from "./RenderedView";
 import { TocSidebar } from "./TocSidebar";
 import { SourceEditor } from "./SourceEditor";
@@ -101,24 +103,30 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
     setTabDirty(tabId, dirty);
   }
 
+  // 保存中もエディタを表示したままにする (キャレット位置と undo 履歴を保つ)。
+  // 失敗してもエラー画面に切り替えず、編集内容を残したまま通知する。
   useShortcuts({
-    "cmd+s": () => {
+    "cmd+s": async () => {
       const state = useMarkdownStore.getState().tabs[tabId];
       if (!state?.isDirty || state.editContent === null) return;
-      setLoading(tabId, true);
-      saveMarkdown(filePath, state.editContent)
-        .then(() => readMarkdown(filePath))
-        .then((result) => {
-          setData(tabId, result);
-          setDirty(tabId, false);
-          setTabDirty(tabId, false);
-        })
-        .catch((err: unknown) => {
-          setError(tabId, String(err));
-        })
-        .finally(() => {
-          setLoading(tabId, false);
-        });
+      const content = state.editContent;
+      try {
+        await saveMarkdown(filePath, content);
+      } catch (err) {
+        showError(`保存に失敗しました: ${errorMessage(err)}`);
+        return;
+      }
+      try {
+        const result = await readMarkdown(filePath);
+        setData(tabId, result);
+      } catch (err) {
+        showWarning(`保存しましたが、再読み込みに失敗しました: ${errorMessage(err)}`);
+      }
+      // 保存中に続けて入力された分は未保存のまま残す
+      const latest = useMarkdownStore.getState().tabs[tabId]?.editContent;
+      const dirty = latest != null && latest !== content;
+      setDirty(tabId, dirty);
+      setTabDirty(tabId, dirty);
     },
   });
 

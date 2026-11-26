@@ -147,3 +147,50 @@ describe("MarkdownViewer の再マウント (タブ切替・再読み込み)", (
     expect(screen.queryByText(/temporary failure/)).toBeNull();
   });
 });
+
+describe("MarkdownViewer の保存 (Cmd+S)", () => {
+  const md = (raw: string) => ({ html: "", toc: [], frontmatter: null, raw });
+  const pressSave = () =>
+    act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", metaKey: true }));
+    });
+
+  beforeEach(async () => {
+    useMarkdownStore.setState({ tabs: {} });
+    const { useToastStore } = await import("../../stores/toastStore");
+    useToastStore.setState({ toasts: [] });
+    vi.clearAllMocks();
+  });
+
+  it("保存に失敗してもエディタと編集内容を残し、トーストで通知する", async () => {
+    const cmds = await import("../../lib/markdownCommands");
+    const { useToastStore } = await import("../../stores/toastStore");
+    vi.mocked(cmds.readMarkdown).mockResolvedValue(md("base"));
+    vi.mocked(cmds.saveMarkdown).mockRejectedValueOnce("Permission denied");
+    render(<MarkdownViewer tabId="t1" filePath="/readonly/note.md" />);
+    fireEvent.click(await screen.findByText("ソース"));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "base + edit" } });
+
+    await pressSave();
+
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("base + edit");
+    expect(useMarkdownStore.getState().tabs.t1.isDirty).toBe(true);
+    expect(useToastStore.getState().toasts.map((t) => t.message).join()).toContain("Permission denied");
+  });
+
+  it("保存中もエディタを作り直さない (キャレットと undo 履歴が消えない)", async () => {
+    const cmds = await import("../../lib/markdownCommands");
+    vi.mocked(cmds.readMarkdown).mockResolvedValue(md("base"));
+    vi.mocked(cmds.saveMarkdown).mockResolvedValueOnce(undefined);
+    render(<MarkdownViewer tabId="t1" filePath="/note.md" />);
+    fireEvent.click(await screen.findByText("ソース"));
+    const before = screen.getByRole("textbox");
+    fireEvent.change(before, { target: { value: "saved text" } });
+    vi.mocked(cmds.readMarkdown).mockResolvedValue(md("saved text"));
+
+    await pressSave();
+
+    expect(screen.getByRole("textbox")).toBe(before);
+    expect(useMarkdownStore.getState().tabs.t1.isDirty).toBe(false);
+  });
+});
