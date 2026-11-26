@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { sortByColumn } from "../../lib/tableSort";
 import { useCsvStore } from "../../stores/csvStore";
 import { useSearchStore } from "../../stores/searchStore";
-import { showError } from "../../stores/toastStore";
+import { showError, showWarning } from "../../stores/toastStore";
 import { buildRegex } from "../../lib/searchHighlight";
 import type { CellMatch } from "../../stores/searchStore";
 import { VirtualTable } from "./VirtualTable";
@@ -14,6 +14,8 @@ import type { CsvData, CsvChunk, FilterCondition } from "../../types";
 import type React from "react";
 
 const CHUNK_SIZE = 200;
+/** 並べ替え・検索のために全行を読み込む上限 */
+const FULL_LOAD_LIMIT = 300_000;
 const INITIAL_LIMIT = 100;
 
 interface CsvViewerProps {
@@ -183,6 +185,34 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
   const handleClearAllFilters = useCallback(() => {
     useCsvStore.getState().clearFilters(tabId);
   }, [tabId]);
+
+  // 並べ替え・検索は表示中の行だけを対象にするため、読み込み途中だと最初の数百行しか
+  // 対象にならない。行数が多すぎなければ残りをすべて読み込み、多すぎる場合は対象範囲を知らせる
+  const searchActive = useSearchStore((s) => s.isOpen && s.query !== "");
+  const sortActive = tabState?.sort != null;
+  const isLoadingChunk = tabState?.isLoadingChunk ?? false;
+  useEffect(() => {
+    if (!sortActive && !searchActive) return;
+    const tab = useCsvStore.getState().tabs[tabId];
+    if (!tab?.data || tab.filters.length > 0 || tab.isLoadingChunk) return;
+    const total = tab.data.meta.total_rows;
+    const remaining = total - tab.loadedRows;
+    if (remaining <= 0) return;
+    if (total > FULL_LOAD_LIMIT) {
+      showWarning(
+        `並べ替えと検索は読み込み済みの ${tab.loadedRows.toLocaleString()} 行が対象です（全 ${total.toLocaleString()} 行）`
+      );
+      return;
+    }
+    const { setLoadingChunk, appendRows } = useCsvStore.getState();
+    setLoadingChunk(tabId, true);
+    invoke<CsvChunk>("read_csv_chunk", { path: filePath, offset: tab.loadedRows, limit: remaining })
+      .then((chunk) => appendRows(tabId, chunk.rows, chunk.total_rows))
+      .catch((err) => {
+        setLoadingChunk(tabId, false);
+        showError(`残りの行を読み込めませんでした: ${String(err)}`);
+      });
+  }, [tabId, filePath, sortActive, searchActive, isLoadingChunk]);
 
   // 表示行（フィルタ結果優先 → クライアントサイドソート）
   const displayRows = useMemo(() => {
