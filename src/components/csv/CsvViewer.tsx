@@ -1,5 +1,6 @@
 import { useEffect, useCallback, useMemo, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { sortByColumn } from "../../lib/tableSort";
 import { useCsvStore } from "../../stores/csvStore";
 import { useSearchStore } from "../../stores/searchStore";
 import { showError } from "../../stores/toastStore";
@@ -190,15 +191,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     const sort = tabState.sort;
     if (!sort) return rows;
     const { columnIndex, direction } = sort;
-    return [...rows].sort((a, b) => {
-      const va = a[columnIndex] ?? "";
-      const vb = b[columnIndex] ?? "";
-      const numA = parseFloat(va);
-      const numB = parseFloat(vb);
-      const isNumeric = !isNaN(numA) && !isNaN(numB);
-      const cmp = isNumeric ? numA - numB : va.localeCompare(vb);
-      return direction === "asc" ? cmp : -cmp;
-    });
+    return sortByColumn(rows, (row) => row[columnIndex] ?? "", direction);
   }, [tabState?.data, tabState?.filteredRows, tabState?.sort]);
 
   // 検索ハイライト

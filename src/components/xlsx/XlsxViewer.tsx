@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useCallback, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { sortByColumn } from "../../lib/tableSort";
 import { save } from "@tauri-apps/plugin-dialog";
 import { VirtualTable } from "../csv/VirtualTable";
 import { FilterPopover } from "../csv/FilterPopover";
@@ -129,12 +130,7 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
 
     if (!tab.sort) return rows;
     const { columnIndex, direction } = tab.sort;
-    return [...rows].sort((a, b) => {
-      const av = a[columnIndex]?.value ?? "";
-      const bv = b[columnIndex]?.value ?? "";
-      const cmp = av.localeCompare(bv, undefined, { numeric: true });
-      return direction === "asc" ? cmp : -cmp;
-    });
+    return sortByColumn(rows, (row) => row[columnIndex]?.value ?? "", direction);
   }, [tab?.sheetData, tab?.sort, filters, headers]);
 
   const frozenDisplayRows = useMemo((): string[][] => {
