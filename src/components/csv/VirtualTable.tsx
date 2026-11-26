@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useEffect } from "react";
+import React, { useRef, useCallback, useEffect, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { SortState, SelectedCell } from "../../stores/csvStore";
 import type { FilterCondition } from "../../types";
@@ -105,6 +105,41 @@ export function VirtualTable({
     [columnWidths]
   );
 
+  // colOffsets[i] = 列 i の左端 (行番号列を除く)。ピン留め列の位置を O(1) で求める
+  const colOffsets = useMemo(() => {
+    const offsets = new Array<number>(headers.length + 1);
+    offsets[0] = 0;
+    for (let i = 0; i < headers.length; i++) offsets[i + 1] = offsets[i] + getColWidth(i);
+    return offsets;
+  }, [headers.length, getColWidth]);
+
+  // 列も仮想化する。数千〜数万列の CSV / XLSX で全セルの div を作ると描画が固まるため
+  const colVirtualizer = useVirtualizer({
+    horizontal: true,
+    count: headers.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: getColWidth,
+    overscan: 3,
+  });
+  useEffect(() => {
+    colVirtualizer.measure();
+  }, [colVirtualizer, columnWidths]);
+
+  const pinned = Math.min(pinnedCount, headers.length);
+  const visibleCols = colVirtualizer
+    .getVirtualItems()
+    .map((c) => c.index)
+    .filter((i) => i >= pinned);
+  // ピン留め列の直後から最初の表示列までを埋める幅
+  const leadingSpacer = visibleCols.length > 0 ? colOffsets[visibleCols[0]] - colOffsets[pinned] : 0;
+
+  /** ピン留め列 + 余白 + 表示範囲の列だけを描画する */
+  const renderColumns = (renderCell: (colIdx: number) => React.ReactNode) => [
+    ...Array.from({ length: pinned }, (_, i) => renderCell(i)),
+    leadingSpacer > 0 ? <div key="spacer" style={{ width: leadingSpacer, flexShrink: 0 }} /> : null,
+    ...visibleCols.map(renderCell),
+  ];
+
   // 列リサイズ開始
   const startResize = useCallback(
     (e: React.MouseEvent, colIndex: number) => {
@@ -133,13 +168,9 @@ export function VirtualTable({
     [getColWidth, onColumnResize]
   );
 
-  const totalColWidth =
-    ROW_NUM_WIDTH +
-    headers.reduce((sum, _, i) => sum + getColWidth(i), 0);
+  const totalColWidth = ROW_NUM_WIDTH + colOffsets[headers.length];
 
-  const pinnedLeftOf = (i: number) =>
-    ROW_NUM_WIDTH +
-    headers.slice(0, i).reduce((s, _, j) => s + getColWidth(j), 0);
+  const pinnedLeftOf = (i: number) => ROW_NUM_WIDTH + colOffsets[i];
 
   const sortIcon = (i: number) => {
     if (!sort || sort.columnIndex !== i) return " ↕";
@@ -175,7 +206,8 @@ export function VirtualTable({
         </div>
 
         {/* Column headers */}
-        {headers.map((header, i) => {
+        {renderColumns((i) => {
+          const header = headers[i];
           const isPinned = i < pinnedCount;
           const hasFilter = filters?.some((f) => f.column === header) ?? false;
           return (
@@ -281,7 +313,7 @@ export function VirtualTable({
           >
             {frozenIdx + 1}
           </div>
-          {headers.map((_, colIdx) => (
+          {renderColumns((colIdx) => (
             <div
               key={colIdx}
               className="flex items-center px-2 text-xs overflow-hidden"
@@ -289,6 +321,9 @@ export function VirtualTable({
                 width: getColWidth(colIdx),
                 flexShrink: 0,
                 borderRight: "1px solid var(--border-color)",
+                ...(colIdx < pinnedCount
+                  ? { position: "sticky", left: pinnedLeftOf(colIdx), backgroundColor: "var(--tabbar-bg)", zIndex: 6 }
+                  : {}),
               }}
             >
               <span className="truncate">{frozenRow[colIdx] ?? ""}</span>
@@ -331,7 +366,7 @@ export function VirtualTable({
               </div>
 
               {/* Cells */}
-              {headers.map((_, colIdx) => {
+              {renderColumns((colIdx) => {
                 const selected = isCellSelected(
                   virtualRow.index,
                   colIdx,

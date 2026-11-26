@@ -576,6 +576,8 @@ type Workbook = Xlsx<std::io::BufReader<std::fs::File>>;
 const MAX_DISPLAY_ROWS: usize = 10_000;
 const MAX_DISPLAY_COLS: usize = 1_000;
 const MAX_DISPLAY_CELLS: usize = 1_000_000;
+const MAX_FREEZE_ROWS: u32 = 50;
+const MAX_FREEZE_COLS: u32 = 20;
 /// エクスポートする CSV の上限 (行×列)。巨大な空範囲で出力が数 GB になるのを防ぐ。
 const MAX_EXPORT_CELLS: usize = 50_000_000;
 
@@ -698,8 +700,9 @@ pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData
             .get(&sheet_name)
             .and_then(|sheet_file| load_sheet_xml(&path, sheet_file).ok())
             .unwrap_or_default();
-        freeze_pane.rows = freeze_pane.rows.min(display_rows as u32);
-        freeze_pane.cols = freeze_pane.cols.min(display_cols as u32);
+        // 固定行・列は仮想化せず常に描画するため、画面に収まる程度に制限する
+        freeze_pane.rows = freeze_pane.rows.min(display_rows as u32).min(MAX_FREEZE_ROWS);
+        freeze_pane.cols = freeze_pane.cols.min(display_cols as u32).min(MAX_FREEZE_COLS);
 
         let empty = convert_cell(&Data::Empty, None);
         let mut rows: Vec<Vec<XlsxCell>> = vec![vec![empty; display_cols]; display_rows];
@@ -967,9 +970,9 @@ mod tests {
         assert_eq!(data.rows.len(), MAX_DISPLAY_CELLS / MAX_DISPLAY_COLS);
         assert!(data.rows.iter().all(|r| r.len() == MAX_DISPLAY_COLS));
         assert_eq!(data.rows[0][0].value, "1");
-        // フリーズ行・列は読み込んだ範囲を超えない
-        assert_eq!(data.freeze_pane.rows as usize, data.rows.len());
-        assert_eq!(data.freeze_pane.cols as usize, MAX_DISPLAY_COLS);
+        // フリーズ行・列は画面に収まる程度に制限する
+        assert_eq!(data.freeze_pane.rows, MAX_FREEZE_ROWS);
+        assert_eq!(data.freeze_pane.cols, MAX_FREEZE_COLS);
     }
 
     #[test]
