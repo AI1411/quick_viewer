@@ -2,11 +2,12 @@ import { useEffect } from "react";
 
 interface Props {
   filePath: string;
+  hasUnsavedChanges?: boolean;
   onReload: () => void;
   onDismiss: () => void;
 }
 
-export function FileChangedDialog({ filePath, onReload, onDismiss }: Props) {
+export function FileChangedDialog({ filePath, hasUnsavedChanges = false, onReload, onDismiss }: Props) {
   const fileName = filePath.split("/").pop() ?? filePath;
 
   // Esc キーでキャンセル
@@ -47,6 +48,11 @@ export function FileChangedDialog({ filePath, onReload, onDismiss }: Props) {
             {fileName}
           </span>{" "}
           が外部で変更されました。再読み込みしますか？
+          {hasUnsavedChanges && (
+            <span className="block mt-2" style={{ color: "#f85149" }}>
+              再読み込みすると、このタブの未保存の変更は破棄されます。
+            </span>
+          )}
         </p>
         <div className="flex gap-3 justify-end">
           <button

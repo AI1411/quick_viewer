@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import { MarkdownViewer } from "./MarkdownViewer";
 import { useMarkdownStore } from "../../stores/markdownStore";
 
@@ -35,7 +35,8 @@ vi.mock("../../lib/markdownCommands", () => ({
     frontmatter: null,
     raw: "",
   }),
-  saveMarkdown: vi.fn(),
+  saveMarkdown: vi.fn().mockResolvedValue(undefined),
+  renderMarkdownString: vi.fn().mockResolvedValue({ html: "", toc: [], frontmatter: null, raw: "" }),
 }));
 
 describe("MarkdownViewer", () => {
@@ -88,5 +89,61 @@ describe("MarkdownViewer", () => {
       expect(screen.queryByTestId("rendered-view")).toBeTruthy();
     });
     expect(screen.queryByTestId("toc-sidebar")).toBeNull();
+  });
+});
+
+describe("MarkdownViewer の再マウント (タブ切替・再読み込み)", () => {
+  const md = (raw: string) => ({ html: "", toc: [], frontmatter: null, raw });
+
+  beforeEach(() => {
+    useMarkdownStore.setState({ tabs: {} });
+    vi.clearAllMocks();
+  });
+
+  it("未編集ならエディタは外部で変更された最新の内容を表示し、保存で巻き戻さない", async () => {
+    const cmds = await import("../../lib/markdownCommands");
+    vi.mocked(cmds.readMarkdown).mockResolvedValue(md("v1 original"));
+    const first = render(<MarkdownViewer tabId="t1" filePath="/note.md" />);
+    fireEvent.click(await screen.findByText("ソース"));
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("v1 original");
+    first.unmount();
+
+    vi.mocked(cmds.readMarkdown).mockResolvedValue(md("v2 changed elsewhere"));
+    render(<MarkdownViewer tabId="t1" filePath="/note.md" />);
+    const box = (await screen.findByRole("textbox")) as HTMLTextAreaElement;
+    await waitFor(() => expect(box.value).toBe("v2 changed elsewhere"));
+
+    fireEvent.change(box, { target: { value: box.value + "!" } });
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", metaKey: true }));
+    });
+    expect(vi.mocked(cmds.saveMarkdown)).toHaveBeenCalledWith("/note.md", "v2 changed elsewhere!");
+  });
+
+  it("未保存の編集はタブを切り替えて戻っても残る", async () => {
+    const cmds = await import("../../lib/markdownCommands");
+    vi.mocked(cmds.readMarkdown).mockResolvedValue(md("base"));
+    const first = render(<MarkdownViewer tabId="t1" filePath="/note.md" />);
+    fireEvent.click(await screen.findByText("ソース"));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "base + my edit" } });
+    first.unmount();
+
+    render(<MarkdownViewer tabId="t1" filePath="/note.md" />);
+    const box = (await screen.findByRole("textbox")) as HTMLTextAreaElement;
+    expect(box.value).toBe("base + my edit");
+    expect(useMarkdownStore.getState().tabs.t1.isDirty).toBe(true);
+  });
+
+  it("一度読込エラーになっても、再マウントで読めれば表示に戻る", async () => {
+    const cmds = await import("../../lib/markdownCommands");
+    vi.mocked(cmds.readMarkdown).mockRejectedValueOnce("temporary failure");
+    const first = render(<MarkdownViewer tabId="t1" filePath="/note.md" />);
+    await screen.findByText(/temporary failure/);
+    first.unmount();
+
+    vi.mocked(cmds.readMarkdown).mockResolvedValue(md("ok now"));
+    render(<MarkdownViewer tabId="t1" filePath="/note.md" />);
+    await screen.findByTestId("rendered-view");
+    expect(screen.queryByText(/temporary failure/)).toBeNull();
   });
 });

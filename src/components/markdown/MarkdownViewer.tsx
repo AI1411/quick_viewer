@@ -25,10 +25,16 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
 
   useEffect(() => {
     initTab(tabId);
+    // ストアのエントリはアンマウント後も残るので、前回の読込エラーをここで消す
+    setError(tabId, null);
     setLoading(tabId, true);
     readMarkdown(filePath)
       .then((result) => {
         setData(tabId, result);
+        // 未保存の編集が無ければ、エディタをディスクの最新内容に合わせる
+        if (!useMarkdownStore.getState().tabs[tabId]?.isDirty) {
+          useMarkdownStore.getState().discardEdits(tabId);
+        }
         setLoading(tabId, false);
       })
       .catch((err: unknown) => {

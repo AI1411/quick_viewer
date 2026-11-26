@@ -13,6 +13,7 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { RecentFilesMenu } from "./components/RecentFilesMenu";
 import { showOpenDialog } from "./lib/fileCommands";
 import { openPathInTab } from "./lib/openPathInTab";
+import { reloadTabFromDisk } from "./lib/tabActions";
 import { useTabStore, useSettingsStore, useSearchStore, useRecentFilesStore, showError } from "./stores";
 import { Toast } from "./components/Toast";
 import { errorMessage } from "./lib/errorUtils";
@@ -38,7 +39,6 @@ function App() {
     filePath: string;
   } | null>(null);
   const activeTabId = useTabStore((state) => state.activeTabId);
-  const bumpReload = useTabStore((s) => s.bumpReload);
   const theme = useSettingsStore((state) => state.theme);
   const zoomLevel = useSettingsStore((state) => state.zoomLevel);
   const fontFamily = useSettingsStore((state) => state.fontFamily);
@@ -277,8 +277,11 @@ function App() {
       {pendingReload && (
         <FileChangedDialog
           filePath={pendingReload.filePath}
+          hasUnsavedChanges={
+            useTabStore.getState().tabs.find((t) => t.id === pendingReload.tabId)?.isDirty ?? false
+          }
           onReload={() => {
-            bumpReload(pendingReload.tabId);
+            reloadTabFromDisk(pendingReload.tabId);
             setPendingReload(null);
           }}
           onDismiss={() => setPendingReload(null)}

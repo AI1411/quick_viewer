@@ -20,6 +20,7 @@ interface MarkdownStore {
   setViewMode: (tabId: string, mode: ViewMode) => void;
   setEditContent: (tabId: string, content: string) => void;
   setDirty: (tabId: string, isDirty: boolean) => void;
+  discardEdits: (tabId: string) => void;
 }
 
 export const useMarkdownStore = create<MarkdownStore>((set) => ({
@@ -78,4 +79,11 @@ export const useMarkdownStore = create<MarkdownStore>((set) => ({
     set((s) => ({
       tabs: { ...s.tabs, [tabId]: { ...s.tabs[tabId], isDirty } },
     })),
+
+  discardEdits: (tabId) =>
+    set((s) => {
+      const tab = s.tabs[tabId];
+      if (!tab) return s;
+      return { tabs: { ...s.tabs, [tabId]: { ...tab, editContent: null, isDirty: false } } };
+    }),
 }));
