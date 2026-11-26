@@ -49,6 +49,9 @@ pub struct XlsxSheetData {
 /// Excel 日付シリアル値 → ISO 日付文字列
 /// Excel は 1900-02-29 を誤って存在するとして扱う（シリアル値 60）
 pub(crate) fn serial_to_date_string(serial: f64) -> String {
+    if !serial.is_finite() {
+        return serial.to_string();
+    }
     let n = serial.floor() as i64;
     if n <= 0 {
         return serial.to_string();
@@ -57,23 +60,26 @@ pub(crate) fn serial_to_date_string(serial: f64) -> String {
         return "1900-02-29".to_string();
     }
     let adjusted = if n > 60 { n - 1 } else { n };
-    let base = match NaiveDate::from_ymd_opt(1899, 12, 31) {
-        Some(d) => d,
-        None => return serial.to_string(),
-    };
-    match base.checked_add_signed(chrono::Duration::days(adjusted)) {
-        Some(date) => {
-            let frac = serial - serial.floor();
-            if frac > 1e-6 {
-                let total_secs = (frac * 86400.0).round() as u32;
-                let h = total_secs / 3600;
-                let m = (total_secs % 3600) / 60;
-                let s = total_secs % 60;
-                format!("{} {:02}:{:02}:{:02}", date.format("%Y-%m-%d"), h, m, s)
-            } else {
-                date.format("%Y-%m-%d").to_string()
-            }
-        }
+    // 時刻部分を秒に丸めた結果が 24:00:00 になる場合は翌日の 00:00:00 に繰り上げる
+    let mut secs = ((serial - serial.floor()) * 86400.0).round() as i64;
+    let mut day_offset = adjusted;
+    if secs >= 86400 {
+        secs -= 86400;
+        day_offset += 1;
+    }
+    // 細工されたファイルの巨大な値で chrono::Duration::days が panic しないよう try_days を使う
+    let date = NaiveDate::from_ymd_opt(1899, 12, 31)
+        .zip(chrono::TimeDelta::try_days(day_offset))
+        .and_then(|(base, days)| base.checked_add_signed(days));
+    match date {
+        Some(date) if secs > 0 => format!(
+            "{} {:02}:{:02}:{:02}",
+            date.format("%Y-%m-%d"),
+            secs / 3600,
+            (secs % 3600) / 60,
+            secs % 60
+        ),
+        Some(date) => date.format("%Y-%m-%d").to_string(),
         None => serial.to_string(),
     }
 }
@@ -853,6 +859,22 @@ mod tests {
     }
 
     // convert_cell tests
+
+    #[test]
+    fn serial_to_date_out_of_range_values_do_not_panic() {
+        assert_eq!(serial_to_date_string(1e15), "1000000000000000");
+        assert_eq!(serial_to_date_string(f64::INFINITY), "inf");
+        assert_eq!(serial_to_date_string(f64::NAN), "NaN");
+        assert_eq!(serial_to_date_string(f64::MAX), f64::MAX.to_string());
+    }
+
+    #[test]
+    fn serial_to_date_rounds_up_to_next_day_instead_of_24h() {
+        // 2023-03-15 23:59:59.9 は "2023-03-15 24:00:00" ではなく翌日 00:00:00 になる
+        assert_eq!(serial_to_date_string(45000.0), "2023-03-15");
+        let almost_midnight = 45000.0 + (86399.9 / 86400.0);
+        assert_eq!(serial_to_date_string(almost_midnight), "2023-03-16");
+    }
 
     #[test]
     fn number_formats_with_color_or_literals_are_not_dates() {
