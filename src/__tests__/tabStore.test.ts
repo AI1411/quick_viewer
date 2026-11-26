@@ -65,37 +65,6 @@ describe("removeTab - active tab handling", () => {
   });
 });
 
-describe("closeOtherTabs", () => {
-  beforeEach(() => {
-    useTabStore.setState({ tabs: [], activeTabId: null });
-  });
-
-  it("指定タブ以外を全て閉じる", () => {
-    const { addTab, closeOtherTabs } = useTabStore.getState();
-    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false, reloadCount: 0 });
-    addTab({ id: "b", title: "B", filePath: "/b.csv", isDirty: false, reloadCount: 0 });
-    addTab({ id: "c", title: "C", filePath: "/c.csv", isDirty: false, reloadCount: 0 });
-    closeOtherTabs("b");
-    expect(useTabStore.getState().tabs.map((t) => t.id)).toEqual(["b"]);
-    expect(useTabStore.getState().activeTabId).toBe("b");
-  });
-});
-
-describe("closeTabsToRight", () => {
-  beforeEach(() => {
-    useTabStore.setState({ tabs: [], activeTabId: null });
-  });
-
-  it("指定タブより右を全て閉じる", () => {
-    const { addTab, closeTabsToRight } = useTabStore.getState();
-    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false, reloadCount: 0 });
-    addTab({ id: "b", title: "B", filePath: "/b.csv", isDirty: false, reloadCount: 0 });
-    addTab({ id: "c", title: "C", filePath: "/c.csv", isDirty: false, reloadCount: 0 });
-    closeTabsToRight("a");
-    expect(useTabStore.getState().tabs.map((t) => t.id)).toEqual(["a"]);
-  });
-});
-
 describe("setDirty", () => {
   beforeEach(() => {
     useTabStore.setState({ tabs: [], activeTabId: null });

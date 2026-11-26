@@ -3,6 +3,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize, LogicalPosition } from "@tauri-apps/api/dpi";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { check } from "@tauri-apps/plugin-updater";
 import { EmptyState } from "./components/EmptyState";
 import { Sidebar } from "./components/Sidebar";
@@ -13,7 +14,7 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { RecentFilesMenu } from "./components/RecentFilesMenu";
 import { showOpenDialog } from "./lib/fileCommands";
 import { openPathInTab } from "./lib/openPathInTab";
-import { reloadTabFromDisk } from "./lib/tabActions";
+import { reloadTabFromDisk, closeTab, confirmCloseAllTabs } from "./lib/tabActions";
 import { useTabStore, useSettingsStore, useSearchStore, useRecentFilesStore, showError } from "./stores";
 import { Toast } from "./components/Toast";
 import { errorMessage } from "./lib/errorUtils";
@@ -136,6 +137,33 @@ function App() {
     };
   }, []);
 
+  // ウィンドウを閉じる・アプリを終了する前に未保存の変更を確認する
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let cancelled = false;
+    const unlisteners: Array<() => void> = [];
+    const track = (p: Promise<() => void>) =>
+      p.then((fn) => {
+        if (cancelled) fn();
+        else unlisteners.push(fn);
+      });
+    track(
+      win.onCloseRequested(async (event) => {
+        if (!(await confirmCloseAllTabs())) event.preventDefault();
+      })
+    );
+    // Cmd+Q はウィンドウの close を経由しないため、Rust 側でメニューの「終了」をこのイベントに差し替えている
+    track(
+      listen("quit-requested", async () => {
+        if (await confirmCloseAllTabs()) await win.destroy();
+      })
+    );
+    return () => {
+      cancelled = true;
+      unlisteners.forEach((fn) => fn());
+    };
+  }, []);
+
   // テーマを data-theme 属性に反映
   useEffect(() => {
     const root = document.documentElement;
@@ -171,14 +199,8 @@ function App() {
     "cmd+,": () => setSettingsOpen((prev) => !prev),
     // タブ操作
     "cmd+w": () => {
-      const { activeTabId: aid, removeTab, tabs } = useTabStore.getState();
-      if (!aid) return;
-      const tab = tabs.find((t) => t.id === aid);
-      if (tab?.isDirty) {
-        const ok = window.confirm(`「${tab.title}」には未保存の変更があります。閉じますか？`);
-        if (!ok) return;
-      }
-      removeTab(aid);
+      const { activeTabId: aid } = useTabStore.getState();
+      if (aid) void closeTab(aid);
     },
     "ctrl+tab": () => {
       const { tabs, activeTabId: aid, setActiveTab } = useTabStore.getState();

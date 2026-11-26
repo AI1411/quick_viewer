@@ -7,6 +7,7 @@ pub mod persistence_commands;
 pub mod xlsx_commands;
 
 use serde::Serialize;
+use tauri::Emitter;
 use std::fs;
 use std::path::Path;
 
@@ -153,6 +154,49 @@ fn is_app_entry_url(url: &tauri::Url) -> bool {
     is_app_origin && matches!(url.path(), "" | "/" | "/index.html")
 }
 
+const QUIT_MENU_ID: &str = "quit";
+
+/// macOS 標準メニューの「終了」(Cmd+Q) はウィンドウの close を経由せずに
+/// プロセスを終わらせるため、未保存の確認ができない。
+/// アプリメニューを作り直し、「終了」をフロントへの quit-requested イベントに差し替える。
+#[cfg(target_os = "macos")]
+fn route_quit_through_frontend<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    menu: &tauri::menu::Menu<R>,
+) -> tauri::Result<()> {
+    use tauri::menu::{AboutMetadata, MenuItem, PredefinedMenuItem, Submenu};
+    let info = app.package_info();
+    let about = AboutMetadata {
+        name: Some(info.name.clone()),
+        version: Some(info.version.to_string()),
+        ..Default::default()
+    };
+    let app_menu = Submenu::with_items(
+        app,
+        info.name.clone(),
+        true,
+        &[
+            &PredefinedMenuItem::about(app, None, Some(about))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, None)?,
+            &PredefinedMenuItem::hide_others(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(
+                app,
+                QUIT_MENU_ID,
+                format!("{} を終了", info.name),
+                true,
+                Some("CmdOrCtrl+Q"),
+            )?,
+        ],
+    )?;
+    menu.remove_at(0)?;
+    menu.prepend(&app_menu)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -161,6 +205,17 @@ pub fn run() {
                 .on_navigation(|_webview, url| is_app_entry_url(url))
                 .build(),
         )
+        .menu(|app| {
+            let menu = tauri::menu::Menu::default(app)?;
+            #[cfg(target_os = "macos")]
+            route_quit_through_frontend(app, &menu)?;
+            Ok(menu)
+        })
+        .on_menu_event(|app, event| {
+            if event.id() == QUIT_MENU_ID {
+                let _ = app.emit("quit-requested", ());
+            }
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

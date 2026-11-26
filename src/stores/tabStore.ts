@@ -17,8 +17,6 @@ interface TabState {
   removeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   reorderTabs: (dragId: string, toIndex: number) => void;
-  closeOtherTabs: (id: string) => void;
-  closeTabsToRight: (id: string) => void;
   setDirty: (id: string, isDirty: boolean) => void;
   bumpReload: (id: string) => void;
 }
@@ -55,25 +53,6 @@ export const useTabStore = create<TabState>((set) => ({
       const [moved] = newTabs.splice(fromIndex, 1);
       newTabs.splice(toIndex, 0, moved);
       return { tabs: newTabs };
-    }),
-
-  closeOtherTabs: (id) =>
-    set((state) => ({
-      tabs: state.tabs.filter((t) => t.id === id),
-      activeTabId: id,
-    })),
-
-  closeTabsToRight: (id) =>
-    set((state) => {
-      const idx = state.tabs.findIndex((t) => t.id === id);
-      const newTabs = state.tabs.slice(0, idx + 1);
-      const stillActive =
-        state.activeTabId != null &&
-        newTabs.some((t) => t.id === state.activeTabId);
-      return {
-        tabs: newTabs,
-        activeTabId: stillActive ? state.activeTabId : id,
-      };
     }),
 
   setDirty: (id, isDirty) =>

@@ -16,7 +16,9 @@
     "core:window:allow-set-position",
     "core:window:allow-inner-size",
     "core:window:allow-outer-position",
+    "core:window:allow-destroy",
     "opener:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "dialog:allow-message"
   ]
 }

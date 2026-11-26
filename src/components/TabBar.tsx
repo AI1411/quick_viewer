@@ -2,15 +2,7 @@ import { useCallback, useState } from "react";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { Tab } from "./Tab";
 import { useTabStore } from "../stores";
-
-function closeTabSafely(tabId: string, removeTab: (id: string) => void) {
-  const tab = useTabStore.getState().tabs.find((t) => t.id === tabId);
-  if (tab?.isDirty) {
-    const ok = window.confirm(`「${tab.title}」には未保存の変更があります。閉じますか？`);
-    if (!ok) return;
-  }
-  removeTab(tabId);
-}
+import { closeTab, closeOtherTabs, closeTabsToRight } from "../lib/tabActions";
 
 interface ContextMenuState {
   x: number;
@@ -19,15 +11,7 @@ interface ContextMenuState {
 }
 
 export function TabBar() {
-  const {
-    tabs,
-    activeTabId,
-    setActiveTab,
-    removeTab,
-    reorderTabs,
-    closeOtherTabs,
-    closeTabsToRight,
-  } = useTabStore();
+  const { tabs, activeTabId, setActiveTab, reorderTabs } = useTabStore();
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
@@ -63,13 +47,7 @@ export function TabBar() {
   );
 
   const contextMenuItems: ContextMenuItem[] = contextMenu
-    ? buildContextMenuItems(
-        contextMenu.tabId,
-        tabs,
-        removeTab,
-        closeOtherTabs,
-        closeTabsToRight
-      )
+    ? buildContextMenuItems(contextMenu.tabId, tabs)
     : [];
 
   return (
@@ -94,7 +72,7 @@ export function TabBar() {
             isActive={tab.id === activeTabId}
             index={index}
             onActivate={() => setActiveTab(tab.id)}
-            onClose={() => closeTabSafely(tab.id, removeTab)}
+            onClose={() => void closeTab(tab.id)}
             onContextMenu={handleContextMenu}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
@@ -131,26 +109,23 @@ export function TabBar() {
 
 function buildContextMenuItems(
   tabId: string,
-  tabs: Array<{ id: string }>,
-  removeTab: (id: string) => void,
-  closeOtherTabs: (id: string) => void,
-  closeTabsToRight: (id: string) => void
+  tabs: Array<{ id: string }>
 ): ContextMenuItem[] {
   const tabIndex = tabs.findIndex((t) => t.id === tabId);
   const hasOthers = tabs.length > 1;
   const hasRight = tabIndex < tabs.length - 1;
 
   return [
-    { label: "閉じる", onClick: () => closeTabSafely(tabId, removeTab) },
+    { label: "閉じる", onClick: () => void closeTab(tabId) },
     { separator: true, label: "", onClick: () => {} },
     {
       label: "他を全て閉じる",
-      onClick: () => closeOtherTabs(tabId),
+      onClick: () => void closeOtherTabs(tabId),
       disabled: !hasOthers,
     },
     {
       label: "右側を全て閉じる",
-      onClick: () => closeTabsToRight(tabId),
+      onClick: () => void closeTabsToRight(tabId),
       disabled: !hasRight,
     },
   ];
