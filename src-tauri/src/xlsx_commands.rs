@@ -337,12 +337,31 @@ fn load_sheet_xml(
     parse_sheet_xml(&content)
 }
 
+/// 書式コードから日付トークンと無関係な部分を除く。
+/// `[Red]` `[$-411]` などの角括弧、`"..."` の文字列リテラル、
+/// `\x` (エスケープ) `_x` (幅埋め) `*x` (繰り返し) の次の1文字。
+fn strip_format_literals(fmt: &str) -> String {
+    let mut out = String::with_capacity(fmt.len());
+    let mut chars = fmt.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => chars.by_ref().take_while(|&c| c != '"').for_each(drop),
+            '[' => chars.by_ref().take_while(|&c| c != ']').for_each(drop),
+            '\\' | '_' | '*' => {
+                chars.next();
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// フォーマットコード文字列が日付系かどうかを判定する
 fn is_date_format_code(fmt: &str) -> bool {
-    if fmt.contains('%') || fmt.contains('$') || fmt.contains('¥') || fmt.contains('€') {
+    let f = strip_format_literals(fmt).to_lowercase();
+    if f.contains('%') || f.contains('$') || f.contains('¥') || f.contains('€') {
         return false;
     }
-    let f = fmt.to_lowercase();
     (f.contains('y') || f.contains('d') || f.contains('h'))
         && (f.contains('m') || f.contains('y') || f.contains('d'))
 }
@@ -834,6 +853,37 @@ mod tests {
     }
 
     // convert_cell tests
+
+    #[test]
+    fn number_formats_with_color_or_literals_are_not_dates() {
+        for fmt in [
+            "#,##0 ;(#,##0)",
+            "#,##0 ;[Red](#,##0)",
+            "#,##0.00;[Red](#,##0.00)",
+            "#,##0;[Red]-#,##0",
+            "0\"days\"",
+            "[DBNum1]General",
+            "General",
+            "0.00",
+            "_(* #,##0_);_(* (#,##0);_(* \"-\"_);_(@_)",
+        ] {
+            assert!(!is_date_format_code(fmt), "{fmt} should not be a date format");
+        }
+    }
+
+    #[test]
+    fn date_formats_are_detected_even_with_locale_prefix() {
+        for fmt in ["yyyy/mm/dd", "m/d/yyyy", "d-mmm-yy", "[$-411]ggge\"年\"m\"月\"d\"日\"", "yyyy\"年\"m\"月\"d\"日\""] {
+            assert!(is_date_format_code(fmt), "{fmt} should be a date format");
+        }
+    }
+
+    #[test]
+    fn red_number_format_cell_is_shown_as_number() {
+        let cell = convert_cell(&Data::Float(1234.0), Some("#,##0 ;[Red](#,##0)".to_string()));
+        assert_eq!(cell.cell_type, "number");
+        assert_eq!(cell.value, "1234");
+    }
 
     #[test]
     fn convert_cell_empty() {
