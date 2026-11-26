@@ -354,9 +354,12 @@ pub fn read_pdf_bytes(path: String) -> Result<String, String> {
     if size > MAX_PDF_SIZE {
         return Err(format!("PDF too large: {} bytes (max 512 MB)", size));
     }
-    std::fs::read(&path)
-        .map(|bytes| general_purpose::STANDARD.encode(bytes))
-        .map_err(|e| format!("Failed to read file: {}", e))
+    let bytes = std::fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
+    // 任意のファイルの中身を返さないよう、PDF ヘッダ (先頭 1024 バイト以内の %PDF-) を確認する
+    if !bytes[..bytes.len().min(1024)].windows(5).any(|w| w == b"%PDF-") {
+        return Err(format!("Not a PDF file: {}", path));
+    }
+    Ok(general_purpose::STANDARD.encode(bytes))
 }
 
 // ─── Annotation Persistence ───────────────────────────────────────────────────
@@ -459,6 +462,15 @@ mod tests {
         let items = extract_outlines(&doc);
         let got: Vec<(&str, Option<u32>)> = items.iter().map(|i| (i.title.as_str(), i.page)).collect();
         assert_eq!(got, vec![("Intro", Some(0)), ("Chapter 2", Some(1))]);
+    }
+
+    #[test]
+    fn read_pdf_bytes_rejects_non_pdf_files() {
+        let path = std::env::temp_dir().join(format!("qv_notpdf_{}.pdf", std::process::id()));
+        std::fs::write(&path, b"-----BEGIN OPENSSH PRIVATE KEY-----").unwrap();
+        let r = read_pdf_bytes(path.to_string_lossy().into_owned());
+        std::fs::remove_file(&path).ok();
+        assert!(r.is_err());
     }
 
     #[test]

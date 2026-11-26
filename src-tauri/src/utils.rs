@@ -8,6 +8,14 @@ use std::path::Path;
 /// - 既存ファイルのパーミッションを引き継ぐ (0600 の秘密ファイルが 0644 にならない)
 /// - 一時ファイルは推測しにくい名前で排他的に作る (既存のファイルやリンクを辿らない)
 pub fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    atomic_write_with(path, |file| file.write_all(data))
+}
+
+/// atomic_write と同じ手順で、内容は `write` が一時ファイルへ書き込む (大きな出力をメモリに溜めない)。
+pub fn atomic_write_with(
+    path: &Path,
+    write: impl FnOnce(&mut std::fs::File) -> std::io::Result<()>,
+) -> std::io::Result<()> {
     let target = match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => std::fs::canonicalize(path)?,
         _ => path.to_path_buf(),
@@ -22,7 +30,7 @@ pub fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
 
     let (tmp_path, mut file) = create_temp_file(parent, fname)?;
     let result = (|| {
-        file.write_all(data)?;
+        write(&mut file)?;
         if let Some(perm) = permissions {
             file.set_permissions(perm)?;
         }
@@ -73,6 +81,20 @@ pub fn assert_regular_file(path: &Path) -> Result<u64, String> {
         return Err(format!("Not a regular file: {}", path.display()));
     }
     Ok(meta.len())
+}
+
+/// パスの拡張子が allowed のいずれか (大文字小文字は区別しない) であることを確認する。
+/// webview が乗っ取られても、各コマンドが本来扱う種類のファイルしか読み書きできないようにする。
+pub fn require_extension(path: &Path, allowed: &[&str]) -> Result<(), String> {
+    let ok = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| allowed.iter().any(|a| a.eq_ignore_ascii_case(ext)));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("対応していないファイルです: {} (拡張子 {:?})", path.display(), allowed))
+    }
 }
 
 /// 細工されたファイルで依存クレート (lopdf, calamine, pulldown-cmark など) が

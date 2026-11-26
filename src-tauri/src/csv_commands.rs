@@ -232,7 +232,10 @@ type CacheKey = (std::path::PathBuf, u64, Option<std::time::SystemTime>, Option<
 static CSV_CACHE: std::sync::Mutex<Option<(CacheKey, std::sync::Arc<ParsedCsv>)>> =
     std::sync::Mutex::new(None);
 
+pub(crate) const CSV_EXTENSIONS: &[&str] = &["csv", "tsv"];
+
 fn parse_csv_file(path: &str, delimiter: Option<String>) -> Result<std::sync::Arc<ParsedCsv>, String> {
+    crate::utils::require_extension(std::path::Path::new(path), CSV_EXTENSIONS)?;
     let size = crate::utils::assert_regular_file(std::path::Path::new(path))?;
     if size > MAX_CSV_SIZE {
         return Err(format!("CSV file too large: {} bytes (max 512 MB)", size));
@@ -349,6 +352,23 @@ impl ParsedCsv {
     }
 }
 
+/// エクスポート先は .csv / .tsv に限り、一時ファイルに書いてから置き換える
+/// (書き込み途中で失敗しても既存のファイルを壊さない)。
+pub(crate) fn write_csv_export(
+    output_path: &str,
+    delimiter: u8,
+    write: impl FnOnce(&mut csv::Writer<&mut fs::File>) -> csv::Result<()>,
+) -> Result<(), String> {
+    let path = std::path::Path::new(output_path);
+    crate::utils::require_extension(path, CSV_EXTENSIONS)?;
+    crate::utils::atomic_write_with(path, |file| {
+        let mut wtr = csv::WriterBuilder::new().delimiter(delimiter).from_writer(file);
+        write(&mut wtr).map_err(std::io::Error::other)?;
+        wtr.flush()
+    })
+    .map_err(|e| e.to_string())
+}
+
 // ─── Tauri Commands ───────────────────────────────────────────────────────────
 
 /// ファイルのテキストエンコーディングを検出して返す。
@@ -417,19 +437,14 @@ pub fn export_csv(
         let parsed = parse_csv_file(&path, delimiter)?;
         let headers = parsed.padded_headers();
         let filters = compile_filters(&headers, &conditions);
-
-        let out_file = fs::File::create(&output_path).map_err(|e| e.to_string())?;
-        let mut wtr = csv::WriterBuilder::new()
-            .delimiter(parsed.delimiter)
-            .from_writer(out_file);
-        wtr.write_record(&headers).map_err(|e| e.to_string())?;
-        for row in parsed.all_rows()? {
-            if row_matches_all(&filters, &row) {
-                wtr.write_record(&row).map_err(|e| e.to_string())?;
+        let rows = parsed.all_rows()?;
+        write_csv_export(&output_path, parsed.delimiter, |wtr| {
+            wtr.write_record(&headers)?;
+            for row in rows.iter().filter(|row| row_matches_all(&filters, row)) {
+                wtr.write_record(row)?;
             }
-        }
-        wtr.flush().map_err(|e| e.to_string())?;
-        Ok(())
+            Ok(())
+        })
     })
 }
 
@@ -663,6 +678,22 @@ mod tests {
         std::fs::remove_file(&path).ok();
         std::fs::remove_file(&out).ok();
         assert_eq!(written, "name,age\nAlice,30\nCarol,35\n");
+    }
+
+    #[test]
+    fn csv_commands_reject_other_file_types() {
+        let secret = std::env::temp_dir().join(format!("qv_csvguard_{}.key", std::process::id()));
+        std::fs::write(&secret, "a,b\n1,2\n").unwrap();
+        let src = temp_csv("guard_src", "a\n1\n");
+        let read = read_csv(secret.to_string_lossy().into_owned(), None, None);
+        let out = std::env::temp_dir().join(format!("qv_csvguard_{}.plist", std::process::id()));
+        let export = export_csv(src.clone(), None, out.to_string_lossy().into_owned(), vec![]);
+        let wrote = out.exists();
+        std::fs::remove_file(&secret).ok();
+        std::fs::remove_file(&src).ok();
+        assert!(read.is_err());
+        assert!(export.is_err());
+        assert!(!wrote);
     }
 
     #[test]
