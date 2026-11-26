@@ -19,30 +19,29 @@ export function computeStats(
   const maxCol = Math.max(anchor.col, focus.col);
 
   const count = (maxRow - minRow + 1) * (maxCol - minCol + 1);
-  const values: number[] = [];
-
-  for (let r = minRow; r <= maxRow; r++) {
+  // 値を配列に溜めて Math.min(...values) すると、数十万セルの選択で
+  // 引数の上限を超えて RangeError になるため 1 パスで集計する
+  let n = 0;
+  let sum = 0;
+  let min = Infinity;
+  let max = -Infinity;
+  for (let r = minRow; r <= Math.min(maxRow, rows.length - 1); r++) {
     for (let c = minCol; c <= maxCol; c++) {
       const v = rows[r]?.[c];
-      if (v !== undefined && v !== "") {
-        const n = parseFloat(v);
-        if (!isNaN(n)) values.push(n);
-      }
+      if (v === undefined || v === "") continue;
+      const x = parseFloat(v);
+      if (isNaN(x)) continue;
+      n++;
+      sum += x;
+      if (x < min) min = x;
+      if (x > max) max = x;
     }
   }
 
-  if (values.length === 0) {
+  if (n === 0) {
     return { count, sum: null, avg: null, min: null, max: null };
   }
-
-  const sum = values.reduce((a, b) => a + b, 0);
-  return {
-    count,
-    sum,
-    avg: sum / values.length,
-    min: Math.min(...values),
-    max: Math.max(...values),
-  };
+  return { count, sum, avg: sum / n, min, max };
 }
 
 interface StatusBarProps {

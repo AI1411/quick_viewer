@@ -54,4 +54,12 @@ describe("computeStats", () => {
     expect(stats.min).toBeNull();
     expect(stats.max).toBeNull();
   });
+
+  it("数十万セルの選択でも RangeError にならない", () => {
+    const big = Array.from({ length: 300_000 }, (_, i) => [String(i)]);
+    const stats = computeStats(big, { row: 0, col: 0 }, { row: 299_999, col: 0 });
+    expect(stats.count).toBe(300_000);
+    expect(stats.min).toBe(0);
+    expect(stats.max).toBe(299_999);
+  });
 });
