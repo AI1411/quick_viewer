@@ -277,12 +277,12 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   }, [tabId]);
 
   const handleExport = useCallback(async () => {
-    const outputPath = await save({
-      filters: [{ name: "CSV", extensions: ["csv"] }],
-      defaultPath: "export.csv",
-    });
-    if (!outputPath) return;
     try {
+      const outputPath = await save({
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+        defaultPath: "export.csv",
+      });
+      if (!outputPath) return;
       await invoke("export_xlsx_sheet_as_csv", {
         path: filePath,
         sheetName: tab?.activeSheetName ?? "",
