@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, availableMonitors } from "@tauri-apps/api/window";
 import { LogicalSize, LogicalPosition } from "@tauri-apps/api/dpi";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -15,6 +15,7 @@ import { RecentFilesMenu } from "./components/RecentFilesMenu";
 import { showOpenDialog } from "./lib/fileCommands";
 import { openPathInTab } from "./lib/openPathInTab";
 import { reloadTabFromDisk, closeTab, confirmCloseAllTabs } from "./lib/tabActions";
+import { parseSavedWindowState, toRestoreBounds, type SavedWindowState } from "./lib/windowState";
 import { useTabStore, useSettingsStore, useSearchStore, useRecentFilesStore, showError } from "./stores";
 import { Toast } from "./components/Toast";
 import { errorMessage } from "./lib/errorUtils";
@@ -22,14 +23,6 @@ import { useShortcuts } from "./hooks/useShortcuts";
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { FileChangedDialog } from "./components/FileChangedDialog";
 import "./App.css";
-
-interface WindowState {
-  width: number;
-  height: number;
-  x: number;
-  y: number;
-  isMaximized: boolean;
-}
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -77,19 +70,25 @@ function App() {
     (async () => {
       try {
         const raw = await invoke<string | null>("load_app_data", { key: "window_state" });
-        if (raw) {
-          const state = JSON.parse(raw) as WindowState;
-          const win = getCurrentWindow();
-          if (state.isMaximized) {
-            await win.maximize();
-          } else {
-            const safeWidth = Math.max(400, Math.min(state.width, 7680));
-            const safeHeight = Math.max(300, Math.min(state.height, 4320));
-            const safeX = Math.max(-200, state.x);
-            const safeY = Math.max(0, state.y);
-            await win.setSize(new LogicalSize(safeWidth, safeHeight));
-            await win.setPosition(new LogicalPosition(safeX, safeY));
-          }
+        const saved = raw ? parseSavedWindowState(raw) : null;
+        if (!saved) return;
+        const win = getCurrentWindow();
+        if (saved.isMaximized) {
+          await win.maximize();
+          return;
+        }
+        const monitors = await availableMonitors().catch(() => []);
+        const bounds = toRestoreBounds(
+          saved,
+          await win.scaleFactor(),
+          monitors.map((m) => ({
+            ...m.position.toLogical(m.scaleFactor),
+            ...m.size.toLogical(m.scaleFactor),
+          }))
+        );
+        await win.setSize(new LogicalSize(bounds.width, bounds.height));
+        if (bounds.position) {
+          await win.setPosition(new LogicalPosition(bounds.position.x, bounds.position.y));
         }
       } catch {
         // 初回起動 or エラー時はデフォルト
@@ -103,13 +102,19 @@ function App() {
     let saveTimer: ReturnType<typeof setTimeout>;
     const save = async () => {
       try {
-        const size = await win.innerSize();
-        const pos = await win.outerPosition();
+        const factor = await win.scaleFactor();
+        const size = (await win.innerSize()).toLogical(factor);
+        const pos = (await win.outerPosition()).toLogical(factor);
         const isMaximized = await win.isMaximized();
-        await invoke("save_app_data", {
-          key: "window_state",
-          value: JSON.stringify({ width: size.width, height: size.height, x: pos.x, y: pos.y, isMaximized }),
-        });
+        const state: SavedWindowState = {
+          width: size.width,
+          height: size.height,
+          x: pos.x,
+          y: pos.y,
+          isMaximized,
+          unit: "logical",
+        };
+        await invoke("save_app_data", { key: "window_state", value: JSON.stringify(state) });
       } catch {
         // サイレント
       }
