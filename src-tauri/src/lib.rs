@@ -1,6 +1,10 @@
 pub mod csv_commands;
 pub mod utils;
 pub mod file_watcher_commands;
+#[cfg(target_os = "macos")]
+pub mod image_commands;
+#[cfg(target_os = "macos")]
+mod image_engine;
 pub mod markdown_commands;
 pub mod pdf_commands;
 pub mod persistence_commands;
@@ -18,6 +22,13 @@ pub struct FileInfo {
     pub format: String,
     pub size: u64,
 }
+
+/// 画像として開く拡張子 (小文字)。HEIC や RAW の展開は OS の ImageIO に任せる。
+pub(crate) const IMAGE_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff", "heic", "heif", "avif", "jxl",
+    "jp2", "psd", "ico", "tga", "dng", "cr2", "cr3", "nef", "arw", "raf", "orf", "rw2", "pef",
+    "srw",
+];
 
 fn detect_format(path: &Path, bytes: &[u8]) -> Result<String, String> {
     // マジックバイト優先判定
@@ -43,6 +54,7 @@ fn detect_format(path: &Path, bytes: &[u8]) -> Result<String, String> {
         Some("md") | Some("markdown") => Ok("markdown".to_string()),
         Some("pdf") => Ok("pdf".to_string()),
         Some("xlsx") => Ok("xlsx".to_string()),
+        Some(ext) if IMAGE_EXTENSIONS.contains(&ext) => Ok("image".to_string()),
         Some(ext) => Err(format!("Unsupported format: {ext}")),
         None => Err("Cannot determine file format".to_string()),
     }
@@ -111,9 +123,16 @@ mod tests {
     }
 
     #[test]
+    fn detect_images_by_extension() {
+        for name in ["photo.jpg", "IMG_0001.HEIC", "scan.tiff", "shot.webp", "raw.dng"] {
+            assert_eq!(detect_format(Path::new(name), b"").unwrap(), "image", "{name}");
+        }
+    }
+
+    #[test]
     fn unsupported_format_returns_err() {
-        let p = Path::new("photo.jpg");
-        assert!(detect_format(p, b"\xFF\xD8\xFF").is_err());
+        let p = Path::new("movie.mp4");
+        assert!(detect_format(p, b"\x00\x00\x00\x18").is_err());
     }
 
     /// 同期コマンドは macOS のメインスレッドで実行され、大きなファイルの処理中は UI が固まる。
@@ -128,6 +147,7 @@ mod tests {
             ("markdown_commands.rs", include_str!("markdown_commands.rs")),
             ("xlsx_commands.rs", include_str!("xlsx_commands.rs")),
             ("persistence_commands.rs", include_str!("persistence_commands.rs")),
+            ("image_commands.rs", include_str!("image_commands.rs")),
         ] {
             assert!(!src.contains(sync_command), "{name} に同期コマンドがある");
         }
@@ -282,6 +302,18 @@ pub fn run() {
             file_watcher_commands::unwatch_file,
             persistence_commands::save_app_data,
             persistence_commands::load_app_data,
+            #[cfg(target_os = "macos")]
+            image_commands::list_image_formats,
+            #[cfg(target_os = "macos")]
+            image_commands::read_image_info,
+            #[cfg(target_os = "macos")]
+            image_commands::read_image_preview,
+            #[cfg(target_os = "macos")]
+            image_commands::estimate_image,
+            #[cfg(target_os = "macos")]
+            image_commands::convert_image,
+            #[cfg(target_os = "macos")]
+            image_commands::convert_images,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
