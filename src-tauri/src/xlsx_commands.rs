@@ -215,11 +215,15 @@ fn load_styles(xlsx_path: &str) -> Result<HashMap<u32, String>, String> {
     parse_styles_xml(&content)
 }
 
-/// Excel 列文字列 (A, B, ..., Z, AA, ...) → 0 始まりのインデックス
-pub(crate) fn col_str_to_index(col: &str) -> u32 {
-    col.chars()
-        .fold(0u32, |acc, c| acc * 26 + (c as u32 - b'A' as u32 + 1))
-        - 1
+/// Excel 列文字列 (A, B, ..., Z, AA, ...) → 0 始まりのインデックス。
+/// Excel の最大列 XFD (16384 列) を超える列名は None。
+pub(crate) fn col_str_to_index(col: &str) -> Option<u32> {
+    const MAX_COLS: u32 = 16_384;
+    if col.is_empty() || col.len() > 3 || !col.bytes().all(|b| b.is_ascii_uppercase()) {
+        return None;
+    }
+    let n = col.bytes().fold(0u32, |acc, b| acc * 26 + u32::from(b - b'A' + 1));
+    (n <= MAX_COLS).then(|| n - 1)
 }
 
 /// "A1" → (row=0, col=0) のタプル
@@ -229,7 +233,7 @@ pub(crate) fn parse_cell_ref(r: &str) -> Option<(u32, u32)> {
     if col_str.is_empty() || row_str.is_empty() {
         return None;
     }
-    let col = col_str_to_index(&col_str);
+    let col = col_str_to_index(&col_str)?;
     // row は 1-based。0 は無効 → filter で弾いて underflow を防ぐ
     let row_num: u32 = row_str.parse::<u32>().ok().filter(|&r| r >= 1)?;
     Some((row_num - 1, col))
@@ -809,10 +813,18 @@ mod tests {
 
     #[test]
     fn col_str_to_index_basic() {
-        assert_eq!(col_str_to_index("A"), 0);
-        assert_eq!(col_str_to_index("Z"), 25);
-        assert_eq!(col_str_to_index("AA"), 26);
-        assert_eq!(col_str_to_index("AB"), 27);
+        assert_eq!(col_str_to_index("A"), Some(0));
+        assert_eq!(col_str_to_index("Z"), Some(25));
+        assert_eq!(col_str_to_index("AA"), Some(26));
+        assert_eq!(col_str_to_index("AB"), Some(27));
+        assert_eq!(col_str_to_index("XFD"), Some(16_383));
+    }
+
+    #[test]
+    fn col_str_to_index_rejects_columns_beyond_excel_limit() {
+        assert_eq!(col_str_to_index("XFE"), None);
+        assert_eq!(col_str_to_index("AAAAAAAAAA"), None);
+        assert_eq!(parse_cell_ref("AAAAAAAAAA1"), None);
     }
 
     #[test]
