@@ -40,9 +40,11 @@ pub struct FilterCondition {
 // ─── Helper Functions ─────────────────────────────────────────────────────────
 
 /// ファイルバイト列をエンコーディング自動検出してデコードし、(テキスト, エンコーディング名) を返す。
+const UTF8_BOM: &[u8] = b"\xef\xbb\xbf";
+
 pub(crate) fn decode_file(raw: &[u8]) -> (String, String) {
     // UTF-8 BOM を除去してからデコード
-    let raw = raw.strip_prefix(b"\xef\xbb\xbf").unwrap_or(raw);
+    let raw = raw.strip_prefix(UTF8_BOM).unwrap_or(raw);
 
     let mut detector = EncodingDetector::new();
     detector.feed(raw, true);
@@ -217,6 +219,8 @@ const CHECKPOINT_INTERVAL: usize = 1_000;
 struct ParsedCsv {
     content: String,
     encoding: String,
+    /// 元ファイルが UTF-8 の BOM 付きか (エクスポートで引き継ぐ)
+    has_bom: bool,
     delimiter: u8,
     headers: Vec<String>,
     total_rows: usize,
@@ -251,6 +255,7 @@ fn parse_csv_file(path: &str, delimiter: Option<String>) -> Result<std::sync::Ar
     }
 
     let raw = fs::read(path).map_err(|e| e.to_string())?;
+    let has_bom = raw.starts_with(UTF8_BOM);
     let (content, encoding) = decode_file(&raw);
     drop(raw);
     let delim = parse_delimiter(delimiter, &content);
@@ -286,6 +291,7 @@ fn parse_csv_file(path: &str, delimiter: Option<String>) -> Result<std::sync::Ar
     let parsed = std::sync::Arc::new(ParsedCsv {
         content,
         encoding,
+        has_bom,
         delimiter: delim,
         headers,
         total_rows,
@@ -352,21 +358,52 @@ impl ParsedCsv {
     }
 }
 
+/// エクスポートする CSV のバイト表現
+pub(crate) struct ExportEncoding {
+    pub encoding: &'static encoding_rs::Encoding,
+    pub bom: bool,
+}
+
+impl ExportEncoding {
+    /// Excel で文字化けしない BOM 付き UTF-8
+    pub(crate) const EXCEL_UTF8: ExportEncoding = ExportEncoding { encoding: encoding_rs::UTF_8, bom: true };
+
+    fn encode(&self, utf8: Vec<u8>) -> Result<Vec<u8>, String> {
+        let mut out = Vec::with_capacity(utf8.len() + 3);
+        if self.encoding == encoding_rs::UTF_8 {
+            if self.bom {
+                out.extend_from_slice(UTF8_BOM);
+            }
+            out.extend_from_slice(&utf8);
+            return Ok(out);
+        }
+        let text = String::from_utf8(utf8).map_err(|e| e.to_string())?;
+        let (bytes, _, had_errors) = self.encoding.encode(&text);
+        if had_errors {
+            return Err(format!("{} で表せない文字が含まれています", self.encoding.name()));
+        }
+        Ok(bytes.into_owned())
+    }
+}
+
 /// エクスポート先は .csv / .tsv に限り、一時ファイルに書いてから置き換える
 /// (書き込み途中で失敗しても既存のファイルを壊さない)。
 pub(crate) fn write_csv_export(
     output_path: &str,
     delimiter: u8,
-    write: impl FnOnce(&mut csv::Writer<&mut fs::File>) -> csv::Result<()>,
+    encoding: &ExportEncoding,
+    write: impl FnOnce(&mut csv::Writer<&mut Vec<u8>>) -> csv::Result<()>,
 ) -> Result<(), String> {
     let path = std::path::Path::new(output_path);
     crate::utils::require_extension(path, CSV_EXTENSIONS)?;
-    crate::utils::atomic_write_with(path, |file| {
-        let mut wtr = csv::WriterBuilder::new().delimiter(delimiter).from_writer(file);
-        write(&mut wtr).map_err(std::io::Error::other)?;
-        wtr.flush()
-    })
-    .map_err(|e| e.to_string())
+    let mut buf = Vec::new();
+    {
+        let mut wtr = csv::WriterBuilder::new().delimiter(delimiter).from_writer(&mut buf);
+        write(&mut wtr).map_err(|e| e.to_string())?;
+        wtr.flush().map_err(|e| e.to_string())?;
+    }
+    let bytes = encoding.encode(buf)?;
+    crate::utils::atomic_write(path, &bytes).map_err(|e| e.to_string())
 }
 
 // ─── Tauri Commands ───────────────────────────────────────────────────────────
@@ -438,7 +475,12 @@ pub fn export_csv(
         let headers = parsed.padded_headers();
         let filters = compile_filters(&headers, &conditions);
         let rows = parsed.all_rows()?;
-        write_csv_export(&output_path, parsed.delimiter, |wtr| {
+        // 元ファイルと同じ文字コード・BOM の有無で書き出す
+        let encoding = ExportEncoding {
+            encoding: encoding_rs::Encoding::for_label(parsed.encoding.as_bytes()).unwrap_or(encoding_rs::UTF_8),
+            bom: parsed.has_bom,
+        };
+        write_csv_export(&output_path, parsed.delimiter, &encoding, |wtr| {
             wtr.write_record(&headers)?;
             for row in rows.iter().filter(|row| row_matches_all(&filters, row)) {
                 wtr.write_record(row)?;
@@ -678,6 +720,29 @@ mod tests {
         std::fs::remove_file(&path).ok();
         std::fs::remove_file(&out).ok();
         assert_eq!(written, "name,age\nAlice,30\nCarol,35\n");
+    }
+
+    #[test]
+    fn export_keeps_the_source_encoding_and_bom() {
+        let out = std::env::temp_dir().join(format!("qv_csv_enc_{}.csv", std::process::id()));
+        let out_s = out.to_string_lossy().into_owned();
+
+        let (sjis, _, _) = encoding_rs::SHIFT_JIS.encode("名前,都市\n山田,東京\n佐藤,大阪\n");
+        let sjis_src = std::env::temp_dir().join(format!("qv_csv_sjis_{}.csv", std::process::id()));
+        std::fs::write(&sjis_src, &sjis).unwrap();
+        export_csv(sjis_src.to_string_lossy().into_owned(), None, out_s.clone(), vec![]).unwrap();
+        let sjis_out = std::fs::read(&out).unwrap();
+
+        let bom_src = temp_csv("bom_src", "\u{FEFF}a,b\n1,2\n");
+        export_csv(bom_src.clone(), None, out_s, vec![]).unwrap();
+        let bom_out = std::fs::read(&out).unwrap();
+
+        std::fs::remove_file(&sjis_src).ok();
+        std::fs::remove_file(&bom_src).ok();
+        std::fs::remove_file(&out).ok();
+        assert_eq!(sjis_out, sjis.into_owned());
+        assert!(bom_out.starts_with(UTF8_BOM));
+        assert_eq!(&bom_out[3..], b"a,b\n1,2\n");
     }
 
     #[test]

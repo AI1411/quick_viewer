@@ -756,7 +756,8 @@ pub fn export_xlsx_sheet_as_csv(
 
         let headers: Vec<String> = (0..b.cols()).map(column_letters).collect();
         let filters = crate::csv_commands::compile_filters(&headers, &conditions);
-        crate::csv_commands::write_csv_export(&output_path, b',', |wtr| {
+        let encoding = crate::csv_commands::ExportEncoding::EXCEL_UTF8;
+        crate::csv_commands::write_csv_export(&output_path, b',', &encoding, |wtr| {
             wtr.write_record(&headers)?;
             let mut cells = cells.into_iter().peekable();
             for row_index in b.row_start..=b.row_end {
@@ -1007,8 +1008,9 @@ mod tests {
         let filtered = std::fs::read_to_string(&out).unwrap();
         std::fs::remove_file(&path).ok();
         std::fs::remove_file(&out).ok();
-        assert_eq!(all, "A,B\napple,3\nbanana,\n,\n,7\n");
-        assert_eq!(filtered, "A,B\n,7\n");
+        // Excel で文字化けしないよう BOM 付き UTF-8 で書く
+        assert_eq!(all, "\u{FEFF}A,B\napple,3\nbanana,\n,\n,7\n");
+        assert_eq!(filtered, "\u{FEFF}A,B\n,7\n");
     }
 
     #[test]
