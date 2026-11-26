@@ -1,4 +1,5 @@
 import type React from "react";
+import { useId } from "react";
 import type {
   ImageConvertOptions,
   ImageFormatSpec,
@@ -63,6 +64,8 @@ function Note({ children }: { children: React.ReactNode }) {
 export function ConvertOptionsForm({ formats, value, onChange, sourceHasGps, sourceHasAlpha }: Props) {
   const spec = formats.find((f) => f.id === value.format);
   const byTarget = value.target_bytes !== null;
+  // 同じ name のラジオボタンは画面全体で 1 グループになるため、フォームごとに別の名前にする
+  const modeGroup = useId();
   const set = (patch: Partial<ImageConvertOptions>) => onChange({ ...value, ...patch });
 
   return (
@@ -88,7 +91,7 @@ export function ConvertOptionsForm({ formats, value, onChange, sourceHasGps, sou
         <label className="flex items-center gap-2">
           <input
             type="radio"
-            name="compress-mode"
+            name={modeGroup}
             checked={!byTarget}
             onChange={() => set({ target_bytes: null })}
           />
@@ -114,7 +117,7 @@ export function ConvertOptionsForm({ formats, value, onChange, sourceHasGps, sou
         <label className="flex items-center gap-2">
           <input
             type="radio"
-            name="compress-mode"
+            name={modeGroup}
             checked={byTarget}
             onChange={() => set({ target_bytes: value.target_bytes ?? DEFAULT_TARGET_BYTES })}
           />

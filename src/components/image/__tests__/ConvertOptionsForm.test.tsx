@@ -99,3 +99,26 @@ describe("ConvertOptionsForm", () => {
     expect(screen.getByText(/白背景になります/)).toBeTruthy();
   });
 });
+
+describe("ConvertOptionsForm を同じ画面に 2 つ出したとき", () => {
+  it("片方の圧縮方法を切り替えても、もう片方の選択表示は変わらない", () => {
+    // ビューアのパネルを開いたまま一括変換ダイアログを開くと 2 つ並ぶ
+    render(
+      <>
+        <div data-testid="viewer">
+          <ConvertOptionsForm formats={FORMATS} value={DEFAULT_IMAGE_OPTIONS} onChange={() => {}} />
+        </div>
+        <div data-testid="dialog">
+          <ConvertOptionsForm formats={FORMATS} value={DEFAULT_IMAGE_OPTIONS} onChange={() => {}} />
+        </div>
+      </>
+    );
+    const radio = (testId: string, label: string) =>
+      Array.from(screen.getByTestId(testId).querySelectorAll("label"))
+        .find((l) => l.textContent === label)!
+        .querySelector("input") as HTMLInputElement;
+
+    fireEvent.click(radio("dialog", "目標サイズで指定"));
+    expect(radio("viewer", "品質で指定").checked).toBe(true);
+  });
+});
