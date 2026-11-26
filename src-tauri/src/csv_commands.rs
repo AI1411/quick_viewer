@@ -240,11 +240,29 @@ struct ParsedCsv {
     checkpoints: Vec<usize>,
 }
 
-type CacheKey = (std::path::PathBuf, u64, Option<std::time::SystemTime>, Option<String>);
+/// ファイルの同一性 (パス・サイズ・更新日時)
+type FileKey = (std::path::PathBuf, u64, Option<std::time::SystemTime>);
 
-/// 直近に開いた 1 ファイル分だけ保持する
-static CSV_CACHE: std::sync::Mutex<Option<(CacheKey, std::sync::Arc<ParsedCsv>)>> =
-    std::sync::Mutex::new(None);
+struct CacheEntry {
+    file: FileKey,
+    /// 解析時に指定された区切り文字 (None = 自動判定)
+    requested: Option<String>,
+    parsed: std::sync::Arc<ParsedCsv>,
+}
+
+/// タブを行き来しても再解析しないよう、直近のいくつかのファイルを保持する
+const CSV_CACHE_ENTRIES: usize = 3;
+const CSV_CACHE_BYTES: usize = 512 * 1024 * 1024;
+static CSV_CACHE: std::sync::Mutex<Vec<CacheEntry>> = std::sync::Mutex::new(Vec::new());
+
+/// 自動判定で読んだ後は、フロントが判定結果の区切り文字 (meta.delimiter) を指定してくるため、
+/// 指定が同じか、指定した文字が解析済みの区切り文字と一致すれば同じ解析結果を使う
+fn cache_entry_matches(entry_requested: &Option<String>, entry_delimiter: u8, requested: &Option<String>) -> bool {
+    entry_requested == requested
+        || requested
+            .as_deref()
+            .is_some_and(|d| parse_delimiter(Some(d.to_string()), "") == entry_delimiter)
+}
 
 pub(crate) const CSV_EXTENSIONS: &[&str] = &["csv", "tsv"];
 
@@ -255,14 +273,16 @@ fn parse_csv_file(path: &str, delimiter: Option<String>) -> Result<std::sync::Ar
         return Err(format!("CSV file too large: {} bytes (max 512 MB)", size));
     }
     let modified = fs::metadata(path).ok().and_then(|m| m.modified().ok());
-    let key: CacheKey = (std::path::PathBuf::from(path), size, modified, delimiter.clone());
+    let file: FileKey = (std::path::PathBuf::from(path), size, modified);
     if let Ok(cache) = CSV_CACHE.lock() {
-        if let Some((k, parsed)) = cache.as_ref() {
-            if *k == key {
-                return Ok(parsed.clone());
-            }
+        let hit = cache.iter().find(|e| {
+            e.file == file && cache_entry_matches(&e.requested, e.parsed.delimiter, &delimiter)
+        });
+        if let Some(entry) = hit {
+            return Ok(entry.parsed.clone());
         }
     }
+    let requested = delimiter.clone();
 
     let raw = fs::read(path).map_err(|e| e.to_string())?;
     let has_bom = raw.starts_with(UTF8_BOM);
@@ -309,7 +329,13 @@ fn parse_csv_file(path: &str, delimiter: Option<String>) -> Result<std::sync::Ar
         checkpoints,
     });
     if let Ok(mut cache) = CSV_CACHE.lock() {
-        *cache = Some((key, parsed.clone()));
+        cache.retain(|e| e.file.0 != file.0);
+        cache.insert(0, CacheEntry { file, requested, parsed: parsed.clone() });
+        cache.truncate(CSV_CACHE_ENTRIES);
+        // 大きなファイルを複数抱え込まないよう、合計サイズの上限を超えたら古いものから捨てる
+        while cache.len() > 1 && cache.iter().map(|e| e.parsed.content.len()).sum::<usize>() > CSV_CACHE_BYTES {
+            cache.pop();
+        }
     }
     Ok(parsed)
 }
@@ -725,6 +751,18 @@ mod tests {
         assert_eq!(first.headers, vec!["a", "b", "Column 3", "Column 4"]);
         assert!(first.rows.iter().all(|r| r.len() == 4));
         assert_eq!(tail.rows[0], vec!["1", "2", "3", "4"]);
+    }
+
+    #[test]
+    fn resolved_delimiter_reuses_the_auto_detected_parse() {
+        // 自動判定 (None) で "," と判定した解析結果は、"," 指定の呼び出しでも使い回す
+        assert!(cache_entry_matches(&None, b',', &Some(",".into())));
+        assert!(cache_entry_matches(&None, b'\t', &Some("\t".into())));
+        assert!(cache_entry_matches(&None, b',', &None));
+        // 違う区切り文字を指定されたら解析し直す
+        assert!(!cache_entry_matches(&None, b',', &Some(";".into())));
+        // 明示指定で解析したものを自動判定の要求には使わない
+        assert!(!cache_entry_matches(&Some(";".into()), b';', &None));
     }
 
     #[test]
