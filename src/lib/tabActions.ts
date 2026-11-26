@@ -35,7 +35,11 @@ async function closeTabsWithConfirm(select: (tabs: Tab[]) => Tab[]): Promise<boo
   if (targets.length === 0) return true;
   if (!(await confirmDiscardUnsaved(targets))) return false;
   const { removeTab } = useTabStore.getState();
-  for (const t of targets) removeTab(t.id);
+  for (const t of targets) {
+    removeTab(t.id);
+    // Markdown の編集状態はタブ切替をまたいで保持するため、タブを閉じたときに捨てる
+    useMarkdownStore.getState().removeTab(t.id);
+  }
   return true;
 }
 

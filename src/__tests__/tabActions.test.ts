@@ -61,6 +61,15 @@ describe("タブを閉じる前の未保存確認", () => {
     expect(ids()).toEqual(["a", "c"]);
   });
 
+  it("閉じたタブの Markdown の編集状態も破棄する", async () => {
+    vi.mocked(confirm).mockResolvedValue(true);
+    useMarkdownStore.setState({
+      tabs: { b: { data: null, isLoading: false, error: null, viewMode: "source", editContent: "x", isDirty: true } },
+    });
+    await closeTab("b");
+    expect(useMarkdownStore.getState().tabs.b).toBeUndefined();
+  });
+
   it("保存済みのタブは確認せずに閉じる", async () => {
     await closeTab("c");
     expect(confirm).not.toHaveBeenCalled();
