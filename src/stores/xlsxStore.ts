@@ -80,6 +80,7 @@ export const useXlsxStore = create<XlsxStore>((set) => ({
           sheetData,
           activeSheetName: sheetName,
           isLoading: false,
+          error: null,
           columnWidths: {},
           sort: null,
           filters: [],

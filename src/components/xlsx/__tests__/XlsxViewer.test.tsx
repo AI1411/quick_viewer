@@ -1,14 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, act } from "@testing-library/react";
+import { render, act, fireEvent, screen } from "@testing-library/react";
 import { XlsxViewer } from "../XlsxViewer";
 import { useXlsxStore } from "../../../stores/xlsxStore";
 
 const cell = (v: string) => ({ value: v, raw: v, cell_type: "string", format_code: null });
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
+let brokenSheet: string | null = null;
 vi.mock("@tauri-apps/api/core", () => ({
-  invoke: vi.fn((cmd: string) => {
-    if (cmd === "read_xlsx") return Promise.resolve({ sheets: [{ name: "Sheet1", index: 0 }], active_sheet_index: 0 });
+  invoke: vi.fn((cmd: string, args: { sheetName?: string }) => {
+    if (cmd === "read_xlsx")
+      return Promise.resolve({
+        sheets: [
+          { name: "Sheet1", index: 0 },
+          { name: "Broken", index: 1 },
+        ],
+        active_sheet_index: 0,
+      });
+    if (cmd === "read_xlsx_sheet" && args.sheetName === brokenSheet) return Promise.reject("sheet is corrupted");
     if (cmd === "read_xlsx_sheet")
       return Promise.resolve({
         name: "Sheet1",
@@ -43,5 +52,21 @@ describe("XlsxViewer", () => {
     view?.unmount();
     expect(removeCalls).toBe(1);
     expect(useXlsxStore.getState().tabs.t1).toBeUndefined();
+  });
+});
+
+describe("XlsxViewer のシート切り替え", () => {
+  it("読み込みに失敗したシートから、シートタブで別のシートに戻れる", async () => {
+    brokenSheet = "Broken";
+    render(<XlsxViewer tabId="t2" filePath="/book.xlsx" />);
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+
+    await act(async () => { fireEvent.click(screen.getByText("Broken")); });
+    expect(useXlsxStore.getState().tabs.t2.error).toContain("sheet is corrupted");
+
+    await act(async () => { fireEvent.click(screen.getByText("Sheet1")); });
+    expect(useXlsxStore.getState().tabs.t2.error).toBeNull();
+    expect(useXlsxStore.getState().tabs.t2.activeSheetName).toBe("Sheet1");
+    brokenSheet = null;
   });
 });

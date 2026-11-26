@@ -91,7 +91,8 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
 
   const handleSheetSelect = useCallback(
     (sheetName: string) => {
-      if (sheetName === tab?.activeSheetName) return;
+      // 読み込みに失敗した後は、同じシートを選び直して再試行できるようにする
+      if (sheetName === tab?.activeSheetName && !tab?.error) return;
       store.setLoading(tabId, true);
       const seq = ++sheetRequestSeqRef.current;
       invoke<XlsxSheetData>("read_xlsx_sheet", { path: filePath, sheetName })
@@ -104,7 +105,7 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
           store.setError(tabId, String(e));
         });
     },
-    [tabId, filePath, tab?.activeSheetName]
+    [tabId, filePath, tab?.activeSheetName, tab?.error]
   );
 
   const headers = useMemo((): string[] => {
@@ -306,12 +307,19 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   }
 
   if (tab.error) {
+    // シートの読み込みだけ失敗した場合も、シートタブから別のシートへ移れるようにする
     return (
-      <div
-        className="flex-1 flex items-center justify-center text-sm"
-        style={{ color: "#ef4444", backgroundColor: "var(--viewer-bg)" }}
-      >
-        エラー: {tab.error}
+      <div className="flex flex-col flex-1 overflow-hidden" style={{ backgroundColor: "var(--viewer-bg)" }}>
+        <div className="flex-1 flex items-center justify-center text-sm" style={{ color: "#ef4444" }}>
+          エラー: {tab.error}
+        </div>
+        {(tab.info?.sheets.length ?? 0) > 0 && (
+          <SheetTabs
+            sheets={tab.info?.sheets ?? []}
+            activeSheetName={tab.activeSheetName}
+            onSheetSelect={handleSheetSelect}
+          />
+        )}
       </div>
     );
   }
