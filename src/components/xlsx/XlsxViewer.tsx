@@ -45,7 +45,7 @@ function matchesFilter(value: string, cond: FilterCondition): boolean {
 }
 
 export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
-  const store = useXlsxStore();
+  const store = useXlsxStore.getState();
   const tab = useXlsxStore((s) => s.tabs[tabId]);
   const [filterPopover, setFilterPopover] = useState<{
     column: string;
@@ -81,9 +81,9 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   // アンマウント時にストア状態をクリーンアップ
   useEffect(() => {
     return () => {
-      store.removeTab(tabId);
+      useXlsxStore.getState().removeTab(tabId);
     };
-  }, [tabId, store]);
+  }, [tabId]);
 
   const sheetRequestSeqRef = useRef(0);
 
