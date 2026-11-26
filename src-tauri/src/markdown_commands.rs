@@ -137,18 +137,42 @@ pub(crate) fn render_markdown(content: &str) -> (String, Vec<TocItem>) {
     (sanitized, toc)
 }
 
+/// コードブロックの class は Shiki / Mermaid が使う language-xxx だけ残す。
+/// 任意の class を許すと、アプリの Tailwind クラス (fixed inset-0 z-50 など) で
+/// 画面全体を覆う偽のダイアログを描けてしまう。
+fn keep_language_classes(value: &str) -> Option<String> {
+    let kept: Vec<&str> = value
+        .split_whitespace()
+        .filter(|c| {
+            c.strip_prefix("language-").is_some_and(|lang| {
+                !lang.is_empty() && lang.chars().all(|ch| ch.is_ascii_alphanumeric() || "-_+#.".contains(ch))
+            })
+        })
+        .collect();
+    (!kept.is_empty()).then(|| kept.join(" "))
+}
+
 fn sanitize_markdown_html(html: &str) -> String {
     let mut b = AmmoniaBuilder::default();
     // task list チェックボックス・Mermaid 用 div を許可
     b.add_tags(["input", "div"]);
-    b.add_tag_attributes("input", ["type", "disabled", "checked"]);
+    b.add_tag_attributes("input", ["checked"]);
+    // input は常に無効化したチェックボックスにする (テキスト入力欄などで UI を偽装させない)
+    b.set_tag_attribute_value("input", "type", "checkbox");
+    b.set_tag_attribute_value("input", "disabled", "");
     // 見出し id 属性 (ToC アンカー)
     for tag in &["h1", "h2", "h3", "h4", "h5", "h6"] {
         b.add_tag_attributes(tag, ["id"]);
     }
+    // 脚注の定義 (<div id="1">) へのリンク先
+    b.add_tag_attributes("div", ["id"]);
     // コードブロック言語クラス (Shiki 用)
     b.add_tag_attributes("code", ["class"]);
     b.add_tag_attributes("pre", ["class"]);
+    b.attribute_filter(|element, attribute, value| match (element, attribute) {
+        ("code" | "pre", "class") => keep_language_classes(value).map(Into::into),
+        _ => Some(value.into()),
+    });
     // リンク・画像
     b.add_tag_attributes("a", ["href", "title", "id", "name"]);
     b.add_tag_attributes("img", ["src", "alt", "title", "width", "height"]);
@@ -259,6 +283,32 @@ pub fn render_markdown_string(content: String) -> Result<MarkdownResult, String>
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn code_blocks_keep_only_language_classes() {
+        let (html, _) = render_markdown("```rust\nfn main() {}\n```\n\n<pre class=\"fixed inset-0 z-50\"><a href=\"https://evil.example\">click</a></pre>");
+        assert!(html.contains(r#"class="language-rust""#), "{html}");
+        assert!(!html.contains("inset-0"), "{html}");
+        assert!(!html.contains("z-50"), "{html}");
+    }
+
+    #[test]
+    fn inputs_are_always_disabled_checkboxes() {
+        let (html, _) = render_markdown("- [x] done\n- [ ] todo\n\n<input type=\"password\" placeholder=\"Password\">");
+        assert!(!html.contains("password"), "{html}");
+        let inputs = html.matches("<input").count();
+        let checkboxes = html.matches(r#"type="checkbox""#).count();
+        let disabled = html.matches("disabled").count();
+        assert_eq!((inputs, checkboxes, disabled), (3, 3, 3), "{html}");
+        assert!(html.contains("checked"), "{html}");
+    }
+
+    #[test]
+    fn footnote_links_have_a_target() {
+        let (html, _) = render_markdown("本文[^1]\n\n[^1]: 脚注です\n");
+        assert!(html.contains(r##"href="#1""##), "{html}");
+        assert!(html.contains(r#"id="1""#), "{html}");
+    }
+
     #[test]
     fn shift_jis_markdown_is_readable_and_saved_back_in_shift_jis() {
         let path = std::env::temp_dir().join(format!("qv_sjis_{}.md", std::process::id()));
