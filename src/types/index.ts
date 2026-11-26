@@ -129,6 +129,8 @@ export interface MarkdownResult {
   toc: TocItem[];
   frontmatter: Record<string, unknown> | null;
   raw: string;
+  /** 元ファイルの文字コード。保存時はこの文字コードに戻す */
+  encoding: string;
 }
 
 // ─── XLSX Types ───────────────────────────────────────────────────────────────

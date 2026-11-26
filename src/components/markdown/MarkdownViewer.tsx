@@ -111,7 +111,7 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
       if (!state?.isDirty || state.editContent === null) return;
       const content = state.editContent;
       try {
-        await saveMarkdown(filePath, content);
+        await saveMarkdown(filePath, content, state.data?.encoding);
       } catch (err) {
         showError(`保存に失敗しました: ${errorMessage(err)}`);
         return;

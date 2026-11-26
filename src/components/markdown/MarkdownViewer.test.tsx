@@ -68,6 +68,7 @@ describe("MarkdownViewer", () => {
       toc: [{ level: 1, text: "Hello", anchor: "hello" }],
       frontmatter: null,
       raw: "# Hello",
+      encoding: "UTF-8",
     });
     render(<MarkdownViewer tabId="t1" filePath="/test.md" />);
     await waitFor(() => {
@@ -83,6 +84,7 @@ describe("MarkdownViewer", () => {
       toc: [],
       frontmatter: null,
       raw: "No headings",
+      encoding: "UTF-8",
     });
     render(<MarkdownViewer tabId="t1" filePath="/test.md" />);
     await waitFor(() => {
@@ -93,7 +95,7 @@ describe("MarkdownViewer", () => {
 });
 
 describe("MarkdownViewer の再マウント (タブ切替・再読み込み)", () => {
-  const md = (raw: string) => ({ html: "", toc: [], frontmatter: null, raw });
+  const md = (raw: string) => ({ html: "", toc: [], frontmatter: null, raw, encoding: "UTF-8" });
 
   beforeEach(() => {
     useMarkdownStore.setState({ tabs: {} });
@@ -117,7 +119,7 @@ describe("MarkdownViewer の再マウント (タブ切替・再読み込み)", (
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", metaKey: true }));
     });
-    expect(vi.mocked(cmds.saveMarkdown)).toHaveBeenCalledWith("/note.md", "v2 changed elsewhere!");
+    expect(vi.mocked(cmds.saveMarkdown)).toHaveBeenCalledWith("/note.md", "v2 changed elsewhere!", "UTF-8");
   });
 
   it("未保存の編集はタブを切り替えて戻っても残る", async () => {
@@ -149,7 +151,7 @@ describe("MarkdownViewer の再マウント (タブ切替・再読み込み)", (
 });
 
 describe("MarkdownViewer の保存 (Cmd+S)", () => {
-  const md = (raw: string) => ({ html: "", toc: [], frontmatter: null, raw });
+  const md = (raw: string) => ({ html: "", toc: [], frontmatter: null, raw, encoding: "UTF-8" });
   const pressSave = () =>
     act(async () => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", metaKey: true }));

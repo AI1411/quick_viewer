@@ -6,9 +6,9 @@ export async function readMarkdown(path: string): Promise<MarkdownResult> {
   return invoke<MarkdownResult>("read_markdown", { path });
 }
 
-export async function saveMarkdown(path: string, content: string): Promise<void> {
+export async function saveMarkdown(path: string, content: string, encoding?: string): Promise<void> {
   markSelfWrite(path);
-  return invoke<void>("save_markdown", { path, content });
+  return invoke<void>("save_markdown", { path, content, encoding });
 }
 
 export async function renderMarkdownString(content: string): Promise<MarkdownResult> {

@@ -6,6 +6,7 @@ const MOCK: import("../types").MarkdownResult = {
   toc: [{ level: 1, text: "Hello", anchor: "hello" }],
   frontmatter: null,
   raw: "# Hello",
+  encoding: "UTF-8",
 };
 
 describe("markdownStore", () => {

@@ -17,6 +17,8 @@ pub struct MarkdownResult {
     pub toc: Vec<TocItem>,
     pub frontmatter: Option<serde_json::Value>,
     pub raw: String,
+    /// 元ファイルの文字コード。保存時はこの文字コードに戻して書き込む
+    pub encoding: String,
 }
 
 pub(crate) fn slugify(text: &str) -> String {
@@ -153,20 +155,50 @@ fn sanitize_markdown_html(html: &str) -> String {
     b.clean(html).to_string()
 }
 
+const MAX_MARKDOWN_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+
+/// UTF-8 ならそのまま (BOM も保つ)、それ以外は文字コードを推定してデコードする。
+fn decode_markdown(bytes: Vec<u8>) -> (String, String) {
+    match String::from_utf8(bytes) {
+        Ok(text) => (text, "UTF-8".to_string()),
+        Err(e) => crate::csv_commands::decode_file(e.as_bytes()),
+    }
+}
+
+/// 読み込んだときの文字コードに戻す。表せない文字がある場合は書き込まずにエラーにする。
+fn encode_markdown(content: &str, encoding: Option<&str>) -> Result<Vec<u8>, String> {
+    let enc = match encoding.and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes())) {
+        Some(enc) if enc != encoding_rs::UTF_8 => enc,
+        _ => return Ok(content.as_bytes().to_vec()),
+    };
+    let (bytes, _, had_errors) = enc.encode(content);
+    if had_errors {
+        return Err(format!(
+            "{} で表せない文字が含まれているため保存できません",
+            enc.name()
+        ));
+    }
+    Ok(bytes.into_owned())
+}
+
 #[tauri::command(async)]
 pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
     crate::utils::catch_panic(move || {
-        let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let size = crate::utils::assert_regular_file(std::path::Path::new(&path))?;
+        if size > MAX_MARKDOWN_SIZE {
+            return Err(format!("Markdown file too large: {} bytes (max 50 MB)", size));
+        }
+        let (raw, encoding) = decode_markdown(fs::read(&path).map_err(|e| e.to_string())?);
         let (frontmatter, content) = parse_frontmatter(&raw);
         let (html, toc) = render_markdown(content);
-        Ok(MarkdownResult { html, toc, frontmatter, raw })
+        Ok(MarkdownResult { html, toc, frontmatter, raw, encoding })
     })
 }
 
 #[tauri::command(async)]
-pub fn save_markdown(path: String, content: String) -> Result<(), String> {
-    crate::utils::atomic_write(std::path::Path::new(&path), content.as_bytes())
-        .map_err(|e| e.to_string())
+pub fn save_markdown(path: String, content: String, encoding: Option<String>) -> Result<(), String> {
+    let bytes = encode_markdown(&content, encoding.as_deref())?;
+    crate::utils::atomic_write(std::path::Path::new(&path), &bytes).map_err(|e| e.to_string())
 }
 
 const MAX_IMAGE_SIZE: u64 = 20 * 1024 * 1024; // 20 MB
@@ -215,12 +247,42 @@ pub fn render_markdown_string(content: String) -> Result<MarkdownResult, String>
     crate::utils::catch_panic(move || {
         let (frontmatter, body) = parse_frontmatter(&content);
         let (html, toc) = render_markdown(body);
-        Ok(MarkdownResult { html, toc, frontmatter, raw: content })
+        Ok(MarkdownResult { html, toc, frontmatter, raw: content, encoding: "UTF-8".to_string() })
     })
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shift_jis_markdown_is_readable_and_saved_back_in_shift_jis() {
+        let path = std::env::temp_dir().join(format!("qv_sjis_{}.md", std::process::id()));
+        let (original, _, _) = encoding_rs::SHIFT_JIS.encode("# 見出し\n\n本文です。日本語の文章をここに書きます。\n");
+        std::fs::write(&path, &original).unwrap();
+        let p = path.to_string_lossy().into_owned();
+
+        let read = read_markdown(p.clone()).unwrap();
+        assert!(read.raw.contains("本文です"));
+        assert_eq!(read.encoding, "Shift_JIS");
+
+        save_markdown(p.clone(), read.raw.clone(), Some(read.encoding.clone())).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original.into_owned());
+
+        let unrepresentable = save_markdown(p, "絵文字 😀".into(), Some(read.encoding));
+        std::fs::remove_file(&path).ok();
+        assert!(unrepresentable.is_err());
+    }
+
+    #[test]
+    fn utf8_bom_is_kept_and_non_regular_files_are_rejected() {
+        let path = std::env::temp_dir().join(format!("qv_bom_{}.md", std::process::id()));
+        std::fs::write(&path, "\u{FEFF}# Title\n").unwrap();
+        let read = read_markdown(path.to_string_lossy().into_owned()).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert!(read.raw.starts_with('\u{FEFF}'));
+        assert_eq!(read.encoding, "UTF-8");
+        assert!(read_markdown(std::env::temp_dir().to_string_lossy().into_owned()).is_err());
+    }
+
     #[test]
     fn read_local_image_returns_data_url_only_for_images() {
         let dir = std::env::temp_dir();
@@ -417,7 +479,7 @@ mod tests {
         let path_str = path.to_string_lossy().to_string();
         let content = "---\ntitle: Test\nauthor: Alice\n---\n# Hello\n\nBody text.";
 
-        save_markdown(path_str.clone(), content.to_string()).unwrap();
+        save_markdown(path_str.clone(), content.to_string(), None).unwrap();
         let result = read_markdown(path_str).unwrap();
 
         assert_eq!(result.raw, content);
