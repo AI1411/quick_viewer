@@ -39,6 +39,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
+      "frameworks": ["./pdfium/lib/libpdfium.dylib"],
       "entitlements": "./entitlements.plist",
       "signingIdentity": null,
       "dmg": {

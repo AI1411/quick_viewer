@@ -184,26 +184,41 @@ fn page_ref_to_number(doc: &Document, obj: &lopdf::Object) -> Option<u32> {
 
 // ─── pdfium-render Loader ─────────────────────────────────────────────────────
 
-fn get_pdfium() -> Result<Pdfium, String> {
-    // Try dev path: src-tauri/pdfium/lib/libpdfium.dylib
-    let dev_lib = std::env::current_dir()
-        .ok()
-        .map(|d| d.join("pdfium").join("lib"))
-        .map(|p| Pdfium::pdfium_platform_library_name_at_path(p.to_string_lossy().as_ref()));
-
-    if let Some(lib_path) = dev_lib {
-        if let Ok(bindings) = Pdfium::bind_to_library(lib_path) {
-            return Ok(Pdfium::new(bindings));
-        }
+/// libpdfium を探す場所。カレントディレクトリやシステムの検索パスは使わない
+/// (ターミナルから細工したディレクトリで起動すると、そこの dylib を読み込んでしまうため)。
+fn pdfium_library_candidates() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
+        // macOS の .app では bundle.macOS.frameworks により Contents/Frameworks に入る
+        dirs.push(exe_dir.join("../Frameworks"));
+        dirs.push(exe_dir.clone());
     }
+    if cfg!(debug_assertions) {
+        dirs.push(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("pdfium/lib"));
+    }
+    dirs.into_iter()
+        .map(|d| std::path::PathBuf::from(Pdfium::pdfium_platform_library_name_at_path(&d)))
+        .collect()
+}
 
-    // Fallback: system library
-    Pdfium::bind_to_system_library()
+/// thread_safe 機能では Pdfium インスタンスの生存中ずっとグローバルロックを握るため、
+/// インスタンスは呼び出しごとに作る。探索結果のライブラリパスだけを使い回す。
+fn get_pdfium() -> Result<Pdfium, String> {
+    static LIBRARY: std::sync::OnceLock<Result<std::path::PathBuf, String>> = std::sync::OnceLock::new();
+    let library = LIBRARY
+        .get_or_init(|| {
+            let candidates = pdfium_library_candidates();
+            candidates
+                .iter()
+                .find(|p| p.is_file())
+                .cloned()
+                .ok_or_else(|| format!("pdfium library not found (searched: {:?})", candidates))
+        })
+        .as_ref()
+        .map_err(|e| e.clone())?;
+    Pdfium::bind_to_library(library)
         .map(Pdfium::new)
-        .map_err(|e| format!(
-            "pdfium library not found: {}. Place libpdfium.dylib in src-tauri/pdfium/lib/",
-            e
-        ))
+        .map_err(|e| format!("failed to load pdfium: {}", e))
 }
 
 // ─── Commands ─────────────────────────────────────────────────────────────────
@@ -394,6 +409,27 @@ pub fn load_annotations(app: tauri::AppHandle, pdf_path: String) -> Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pdfium_is_searched_only_at_absolute_paths() {
+        let candidates = pdfium_library_candidates();
+        assert!(!candidates.is_empty());
+        assert!(candidates.iter().all(|p| p.is_absolute()), "{:?}", candidates);
+    }
+
+    #[test]
+    fn read_pdf_page_renders_with_bundled_pdfium() {
+        let path = std::env::temp_dir().join(format!("qv_render_{}.pdf", std::process::id()));
+        std::fs::write(
+            &path,
+            b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 300]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n",
+        )
+        .unwrap();
+        let page = read_pdf_page(path.to_string_lossy().into_owned(), 0, Some(0.5));
+        std::fs::remove_file(&path).ok();
+        let page = page.expect("page renders");
+        assert!(page.width > 0 && page.height > page.width);
+    }
 
     #[test]
     fn test_read_pdf_info_invalid_path() {
