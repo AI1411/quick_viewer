@@ -209,7 +209,7 @@ export function VirtualTable({
         {renderColumns((i) => {
           const header = headers[i];
           const isPinned = i < pinnedCount;
-          const hasFilter = filters?.some((f) => f.column === header) ?? false;
+          const hasFilter = filters?.some((f) => f.column_index === i) ?? false;
           return (
             <div
               key={i}

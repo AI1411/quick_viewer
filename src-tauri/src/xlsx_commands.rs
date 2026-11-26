@@ -1004,6 +1004,7 @@ mod tests {
         let all = std::fs::read_to_string(&out).unwrap();
         let cond = crate::csv_commands::FilterCondition {
             column: "B".into(),
+            column_index: None,
             filter_type: "gt".into(),
             value: "5".into(),
         };

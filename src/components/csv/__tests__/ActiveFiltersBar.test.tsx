@@ -15,7 +15,7 @@ describe("ActiveFiltersBar のエクスポート", () => {
     vi.mocked(save).mockRejectedValue("dialog.save not allowed");
     render(
       <ActiveFiltersBar
-        filters={[{ column: "a", filter_type: "contains", value: "x" }]}
+        filters={[{ column: "a", column_index: 0, filter_type: "contains", value: "x" }]}
         filePath="/data.csv"
         onClearFilter={() => {}}
         onClearAll={() => {}}

@@ -18,7 +18,7 @@ const FILTER_TYPE_LABELS: Record<FilterCondition["filter_type"], string> = {
 interface ActiveFiltersBarProps {
   filters: FilterCondition[];
   filePath: string;
-  onClearFilter: (column: string) => void;
+  onClearFilter: (columnIndex: number) => void;
   onClearAll: () => void;
   onExport?: () => Promise<void>;
 }
@@ -69,7 +69,7 @@ export function ActiveFiltersBar({
       </span>
       {filters.map((f) => (
         <div
-          key={f.column}
+          key={f.column_index}
           className="flex items-center gap-1 text-xs rounded px-2 py-0.5"
           style={{
             border: "1px solid #3b82f6",
@@ -83,7 +83,7 @@ export function ActiveFiltersBar({
           </span>
           <button
             className="ml-0.5 hover:opacity-60"
-            onClick={() => onClearFilter(f.column)}
+            onClick={() => onClearFilter(f.column_index)}
             aria-label={`${f.column} フィルタを削除`}
           >
             ×

@@ -135,7 +135,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       const { setFiltering, setFilters } = useCsvStore.getState();
 
       const newFilters = tab.filters
-        .filter((f) => f.column !== cond.column)
+        .filter((f) => f.column_index !== cond.column_index)
         .concat(cond);
 
       setFiltering(tabId, true);
@@ -155,12 +155,12 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
 
   // 単一列フィルタのクリア
   const handleFilterClearColumn = useCallback(
-    async (column: string) => {
+    async (columnIndex: number) => {
       const tab = useCsvStore.getState().tabs[tabId];
       if (!tab) return;
       const { setFiltering, setFilters, clearFilters } = useCsvStore.getState();
 
-      const newFilters = tab.filters.filter((f) => f.column !== column);
+      const newFilters = tab.filters.filter((f) => f.column_index !== columnIndex);
       if (newFilters.length === 0) {
         clearFilters(tabId);
         return;
@@ -312,7 +312,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
   // フィルタポップオーバーで表示する既存条件
   const existingFilter =
     filterColIndex !== null
-      ? (tabState.filters.find((f) => f.column === headers[filterColIndex]) ?? null)
+      ? (tabState.filters.find((f) => f.column_index === filterColIndex) ?? null)
       : null;
 
   return (
@@ -374,10 +374,11 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       {filterColIndex !== null && filterAnchorRect !== null && (
         <FilterPopover
           column={headers[filterColIndex]}
+          columnIndex={filterColIndex}
           anchorRect={filterAnchorRect}
           existing={existingFilter}
           onApply={handleFilterApply}
-          onClear={() => handleFilterClearColumn(headers[filterColIndex])}
+          onClear={() => handleFilterClearColumn(filterColIndex)}
           onClose={() => {
             setFilterColIndex(null);
             setFilterAnchorRect(null);

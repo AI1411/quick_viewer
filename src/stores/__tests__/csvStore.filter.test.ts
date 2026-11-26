@@ -10,7 +10,7 @@ describe("csvStore filter actions", () => {
     useCsvStore.getState().initTab("t1");
     useCsvStore.getState().setFilters(
       "t1",
-      [{ column: "name", filter_type: "contains", value: "foo" }],
+      [{ column: "name", column_index: 0, filter_type: "contains", value: "foo" }],
       [["foo"]]
     );
     const tab = useCsvStore.getState().tabs["t1"];
@@ -23,7 +23,7 @@ describe("csvStore filter actions", () => {
     useCsvStore.getState().initTab("t2");
     useCsvStore.getState().setFilters(
       "t2",
-      [{ column: "x", filter_type: "exact", value: "bar" }],
+      [{ column: "x", column_index: 0, filter_type: "exact", value: "bar" }],
       [["bar"]]
     );
     useCsvStore.getState().clearFilters("t2");

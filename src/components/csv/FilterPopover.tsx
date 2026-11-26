@@ -15,6 +15,7 @@ const FILTER_TYPES: Array<{ value: FilterCondition["filter_type"]; label: string
 
 interface FilterPopoverProps {
   column: string;
+  columnIndex: number;
   anchorRect: DOMRect;
   existing: FilterCondition | null;
   onApply: (cond: FilterCondition) => void;
@@ -24,6 +25,7 @@ interface FilterPopoverProps {
 
 export function FilterPopover({
   column,
+  columnIndex,
   anchorRect,
   existing,
   onApply,
@@ -50,7 +52,7 @@ export function FilterPopover({
     if (value.trim() === "") {
       onClear();
     } else {
-      onApply({ column, filter_type: filterType, value: value.trim() });
+      onApply({ column, column_index: columnIndex, filter_type: filterType, value: value.trim() });
     }
     onClose();
   };

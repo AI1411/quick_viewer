@@ -31,7 +31,10 @@ pub struct CsvChunk {
 
 #[derive(Debug, Deserialize)]
 pub struct FilterCondition {
+    /// 表示用の列名。同じ名前の列があり得るため、列の特定には column_index を優先する
     pub column: String,
+    #[serde(default)]
+    pub column_index: Option<usize>,
     /// "exact" | "contains" | "starts_with" | "regex" | "gt" | "lt" | "gte" | "lte" | "eq_num"
     pub filter_type: String,
     pub value: String,
@@ -171,7 +174,10 @@ pub(crate) fn compile_filters(
     conditions
         .iter()
         .map(|cond| CompiledFilter {
-            column: headers.iter().position(|h| h == &cond.column),
+            column: cond
+                .column_index
+                .filter(|&i| i < headers.len())
+                .or_else(|| headers.iter().position(|h| h == &cond.column)),
             matcher: Matcher::new(cond),
         })
         .collect()
@@ -536,6 +542,7 @@ mod tests {
     fn row_matches_exact() {
         let cond = FilterCondition {
             column: "c".into(),
+            column_index: None,
             filter_type: "exact".into(),
             value: "Tokyo".into(),
         };
@@ -547,6 +554,7 @@ mod tests {
     fn row_matches_contains() {
         let cond = FilterCondition {
             column: "c".into(),
+            column_index: None,
             filter_type: "contains".into(),
             value: "ky".into(),
         };
@@ -558,6 +566,7 @@ mod tests {
     fn row_matches_starts_with() {
         let cond = FilterCondition {
             column: "c".into(),
+            column_index: None,
             filter_type: "starts_with".into(),
             value: "To".into(),
         };
@@ -569,6 +578,7 @@ mod tests {
     fn row_matches_regex() {
         let cond = FilterCondition {
             column: "c".into(),
+            column_index: None,
             filter_type: "regex".into(),
             value: "^T.*o$".into(),
         };
@@ -580,6 +590,7 @@ mod tests {
     fn row_matches_gt() {
         let cond = FilterCondition {
             column: "a".into(),
+            column_index: None,
             filter_type: "gt".into(),
             value: "28".into(),
         };
@@ -591,6 +602,7 @@ mod tests {
     fn row_matches_lt() {
         let cond = FilterCondition {
             column: "a".into(),
+            column_index: None,
             filter_type: "lt".into(),
             value: "30".into(),
         };
@@ -602,6 +614,7 @@ mod tests {
     fn row_matches_gte() {
         let cond = FilterCondition {
             column: "a".into(),
+            column_index: None,
             filter_type: "gte".into(),
             value: "30".into(),
         };
@@ -614,6 +627,7 @@ mod tests {
     fn row_matches_lte() {
         let cond = FilterCondition {
             column: "a".into(),
+            column_index: None,
             filter_type: "lte".into(),
             value: "30".into(),
         };
@@ -633,11 +647,13 @@ mod tests {
         let conditions = vec![
             FilterCondition {
                 column: "city".into(),
+                column_index: None,
                 filter_type: "exact".into(),
                 value: "Tokyo".into(),
             },
             FilterCondition {
                 column: "age".into(),
+                column_index: None,
                 filter_type: "gt".into(),
                 value: "28".into(),
             },
@@ -714,7 +730,7 @@ mod tests {
     fn export_writes_only_matching_rows() {
         let path = temp_csv("export_src", "name,age\nAlice,30\nBob,25\nCarol,35\n");
         let out = std::env::temp_dir().join(format!("qv_csv_export_{}.csv", std::process::id()));
-        let cond = FilterCondition { column: "age".into(), filter_type: "gte".into(), value: "30".into() };
+        let cond = FilterCondition { column: "age".into(), column_index: None, filter_type: "gte".into(), value: "30".into() };
         export_csv(path.clone(), None, out.to_string_lossy().into_owned(), vec![cond]).unwrap();
         let written = std::fs::read_to_string(&out).unwrap();
         std::fs::remove_file(&path).ok();
@@ -759,6 +775,23 @@ mod tests {
         assert!(read.is_err());
         assert!(export.is_err());
         assert!(!wrote);
+    }
+
+    #[test]
+    fn filters_target_the_column_index_when_header_names_repeat() {
+        let headers = vec!["name".to_string(), "value".to_string(), "value".to_string()];
+        let rows = vec![
+            vec!["a".to_string(), "1".to_string(), "100".to_string()],
+            vec!["b".to_string(), "100".to_string(), "1".to_string()],
+        ];
+        let second_value_column = FilterCondition {
+            column: "value".into(),
+            column_index: Some(2),
+            filter_type: "exact".into(),
+            value: "100".into(),
+        };
+        let result = apply_filters(&headers, &rows, &[second_value_column]);
+        assert_eq!(result, vec![rows[0].clone()]);
     }
 
     #[test]

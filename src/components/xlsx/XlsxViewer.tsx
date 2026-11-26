@@ -50,6 +50,7 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   const tab = useXlsxStore((s) => s.tabs[tabId]);
   const [filterPopover, setFilterPopover] = useState<{
     column: string;
+    columnIndex: number;
     anchorRect: DOMRect;
   } | null>(null);
 
@@ -121,9 +122,7 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
     if (filters.length > 0) {
       rows = rows.filter((row) =>
         filters.every((cond) => {
-          const colIdx = headers.indexOf(cond.column);
-          if (colIdx === -1) return false;
-          return matchesFilter(row[colIdx]?.value ?? "", cond);
+          return matchesFilter(row[cond.column_index]?.value ?? "", cond);
         })
       );
     }
@@ -243,7 +242,7 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
 
   const handleFilterClick = useCallback(
     (colIndex: number, anchorRect: DOMRect) => {
-      setFilterPopover({ column: headers[colIndex], anchorRect });
+      setFilterPopover({ column: headers[colIndex], columnIndex: colIndex, anchorRect });
     },
     [headers]
   );
@@ -251,7 +250,7 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   const handleFilterApply = useCallback(
     (cond: FilterCondition) => {
       const newFilters = [
-        ...(tab?.filters ?? []).filter((f) => f.column !== cond.column),
+        ...(tab?.filters ?? []).filter((f) => f.column_index !== cond.column_index),
         cond,
       ];
       store.setFilters(tabId, newFilters);
@@ -261,8 +260,8 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   );
 
   const handleFilterClear = useCallback(
-    (column: string) => {
-      store.setFilters(tabId, (tab?.filters ?? []).filter((f) => f.column !== column));
+    (columnIndex: number) => {
+      store.setFilters(tabId, (tab?.filters ?? []).filter((f) => f.column_index !== columnIndex));
       setFilterPopover(null);
     },
     [tabId, tab?.filters]
@@ -367,10 +366,11 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
       {filterPopover && (
         <FilterPopover
           column={filterPopover.column}
+          columnIndex={filterPopover.columnIndex}
           anchorRect={filterPopover.anchorRect}
-          existing={filters.find((f) => f.column === filterPopover.column) ?? null}
+          existing={filters.find((f) => f.column_index === filterPopover.columnIndex) ?? null}
           onApply={handleFilterApply}
-          onClear={() => handleFilterClear(filterPopover.column)}
+          onClear={() => handleFilterClear(filterPopover.columnIndex)}
           onClose={() => setFilterPopover(null)}
         />
       )}
