@@ -19,6 +19,9 @@ pub struct CsvData {
     pub headers: Vec<String>,
     pub rows: Vec<Vec<String>>,
     pub meta: CsvMeta,
+    /// filter_csv の結果で、各行が元ファイルの何行目 (0 始まりのデータ行) か
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_rows: Option<Vec<usize>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -353,6 +356,7 @@ impl ParsedCsv {
         CsvData {
             headers: headers.clone(),
             rows,
+            source_rows: None,
             meta: CsvMeta {
                 total_rows,
                 columns: headers.len(),
@@ -462,9 +466,15 @@ pub fn filter_csv(
 ) -> Result<CsvData, String> {
     crate::utils::catch_panic(move || {
         let parsed = parse_csv_file(&path, delimiter)?;
-        let rows = apply_filters(&parsed.padded_headers(), &parsed.all_rows()?, &conditions);
+        let filters = compile_filters(&parsed.padded_headers(), &conditions);
+        let (source_rows, rows): (Vec<usize>, Vec<Vec<String>>) = parsed
+            .all_rows()?
+            .into_iter()
+            .enumerate()
+            .filter(|(_, row)| row_matches_all(&filters, row))
+            .unzip();
         let total = rows.len();
-        Ok(parsed.data(rows, total))
+        Ok(CsvData { source_rows: Some(source_rows), ..parsed.data(rows, total) })
     })
 }
 
@@ -775,6 +785,16 @@ mod tests {
         assert!(read.is_err());
         assert!(export.is_err());
         assert!(!wrote);
+    }
+
+    #[test]
+    fn filter_csv_reports_source_row_numbers() {
+        let path = temp_csv("source_rows", "name,age\nAlice,30\nBob,25\nCarol,35\n");
+        let cond = FilterCondition { column: "age".into(), column_index: None, filter_type: "gt".into(), value: "28".into() };
+        let data = filter_csv(path.clone(), None, vec![cond]).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(data.source_rows, Some(vec![0, 2]));
+        assert_eq!(data.rows.len(), 2);
     }
 
     #[test]

@@ -21,6 +21,8 @@ export interface CsvData {
   headers: string[];
   rows: string[][];
   meta: CsvMeta;
+  /** filter_csv の結果で、各行が元ファイルの何行目 (0 始まりのデータ行) か */
+  source_rows?: number[];
 }
 
 // Rust の CsvChunk に対応

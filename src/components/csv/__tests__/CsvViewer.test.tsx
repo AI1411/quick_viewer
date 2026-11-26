@@ -45,3 +45,24 @@ describe("CsvViewer の並べ替え", () => {
     expect(useCsvStore.getState().tabs.t1.loadedRows).toBe(TOTAL);
   });
 });
+
+describe("CsvViewer の行番号", () => {
+  it("並べ替えても各行に元ファイルの行番号を表示する", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 1200, bottom: 600, width: 1200, height: 600, toJSON: () => ({}),
+    } as DOMRect);
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(1200);
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(600);
+
+    const { container } = render(<CsvViewer tabId="t2" filePath="/data.csv" />);
+    await act(async () => {});
+    await act(async () => {
+      useCsvStore.getState().setSort("t2", { columnIndex: 0, direction: "asc" });
+    });
+
+    // 値は 250, 249, ..., 1 の順に並んでいるので、昇順の先頭 "1" は元の 250 行目
+    const firstRowNumber = container.querySelector(".absolute.top-0.left-0 > div:first-child")?.textContent;
+    expect(firstRowNumber).toBe("250");
+    vi.restoreAllMocks();
+  });
+});

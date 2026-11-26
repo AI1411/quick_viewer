@@ -46,6 +46,29 @@ describe("VirtualTable の列の仮想化", () => {
     expect(header.style.minWidth).toBe(`${52 + 20_000 * 120}px`);
   });
 
+  it("rowNumbers を渡すと並べ替え後も元の行番号を表示する", () => {
+    const { container } = render(
+      <VirtualTable
+        headers={["n"]}
+        rows={[["c"], ["a"], ["b"]]}
+        rowNumbers={[3, 1, 2]}
+        totalRows={3}
+        columnWidths={{}}
+        sort={null}
+        pinnedCount={0}
+        selectedAnchor={null}
+        selectedFocus={null}
+        onSort={noop}
+        onColumnResize={noop}
+        onCellClick={noop}
+      />
+    );
+    const numbers = Array.from(container.querySelectorAll(".absolute.top-0.left-0 > div:first-child")).map(
+      (el) => el.textContent
+    );
+    expect(numbers).toEqual(["3", "1", "2"]);
+  });
+
   it("ピン留め列は表示範囲に関係なく描画する", () => {
     const { container } = renderTable(20_000, 2);
     const text = container.textContent ?? "";

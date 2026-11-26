@@ -144,7 +144,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
           path: filePath,
           conditions: newFilters,
         });
-        setFilters(tabId, newFilters, data.rows);
+        setFilters(tabId, newFilters, data.rows, data.source_rows);
       } catch (err) {
         setFiltering(tabId, false);
         showError(`フィルタの適用に失敗しました: ${String(err)}`);
@@ -172,7 +172,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
           path: filePath,
           conditions: newFilters,
         });
-        setFilters(tabId, newFilters, data.rows);
+        setFilters(tabId, newFilters, data.rows, data.source_rows);
       } catch (err) {
         setFiltering(tabId, false);
         showError(`フィルタのクリアに失敗しました: ${String(err)}`);
@@ -214,15 +214,21 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       });
   }, [tabId, filePath, sortActive, searchActive, isLoadingChunk]);
 
-  // 表示行（フィルタ結果優先 → クライアントサイドソート）
-  const displayRows = useMemo(() => {
-    if (!tabState?.data) return [];
-    const rows = tabState.filteredRows ?? tabState.data.rows;
+  // 表示行（フィルタ結果優先 → クライアントサイドソート）と、各行の元ファイルでの行番号
+  const { displayRows, rowNumbers } = useMemo(() => {
+    if (!tabState?.data) return { displayRows: [], rowNumbers: [] };
+    const filtered = tabState.filteredRows;
+    const rows = filtered ?? tabState.data.rows;
+    const sources = (filtered && tabState.filteredSourceRows) || rows.map((_, i) => i);
     const sort = tabState.sort;
-    if (!sort) return rows;
-    const { columnIndex, direction } = sort;
-    return sortByColumn(rows, (row) => row[columnIndex] ?? "", direction);
-  }, [tabState?.data, tabState?.filteredRows, tabState?.sort]);
+    const order = sort
+      ? sortByColumn(rows.map((_, i) => i), (i) => rows[i][sort.columnIndex] ?? "", sort.direction)
+      : rows.map((_, i) => i);
+    return {
+      displayRows: order.map((i) => rows[i]),
+      rowNumbers: order.map((i) => sources[i] + 1),
+    };
+  }, [tabState?.data, tabState?.filteredRows, tabState?.filteredSourceRows, tabState?.sort]);
 
   // 検索ハイライト
   const searchIsOpen = useSearchStore((s) => s.isOpen);
@@ -338,6 +344,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       <VirtualTable
         headers={headers}
         rows={displayRows}
+        rowNumbers={rowNumbers}
         totalRows={meta.total_rows}
         columnWidths={tabState.columnWidths}
         sort={tabState.sort}

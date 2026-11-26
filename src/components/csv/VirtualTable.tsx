@@ -11,6 +11,8 @@ const MIN_COL_WIDTH = 40;
 interface VirtualTableProps {
   headers: string[];
   rows: string[][];
+  /** 各行に表示する行番号 (並べ替え・絞り込み後も元の行番号を出す)。省略時は表示順 */
+  rowNumbers?: number[];
   totalRows: number;
   columnWidths: Record<number, number>;
   sort: SortState | null;
@@ -48,6 +50,7 @@ function isCellSelected(
 export function VirtualTable({
   headers,
   rows,
+  rowNumbers,
   totalRows,
   columnWidths,
   sort,
@@ -362,7 +365,7 @@ export function VirtualTable({
                   backgroundColor: "var(--tabbar-bg)",
                 }}
               >
-                {virtualRow.index + 1 + (frozenRowCount ?? 0)}
+                {rowNumbers?.[virtualRow.index] ?? virtualRow.index + 1 + (frozenRowCount ?? 0)}
               </div>
 
               {/* Cells */}

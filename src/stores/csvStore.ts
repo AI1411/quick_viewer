@@ -32,6 +32,8 @@ interface CsvTabState {
   // フィルタ状態
   filters: FilterCondition[];
   filteredRows: string[][] | null;
+  /** filteredRows の各行が元ファイルの何行目 (0 始まり) か */
+  filteredSourceRows: number[] | null;
   isFiltering: boolean;
 }
 
@@ -53,7 +55,12 @@ interface CsvStore {
   setLoadingChunk: (tabId: string, v: boolean) => void;
   removeTab: (tabId: string) => void;
   // フィルタ操作
-  setFilters: (tabId: string, filters: FilterCondition[], filteredRows: string[][] | null) => void;
+  setFilters: (
+    tabId: string,
+    filters: FilterCondition[],
+    filteredRows: string[][] | null,
+    filteredSourceRows?: number[] | null
+  ) => void;
   setFiltering: (tabId: string, v: boolean) => void;
   clearFilters: (tabId: string) => void;
 }
@@ -71,6 +78,7 @@ const defaultTabState = (): CsvTabState => ({
   isLoadingChunk: false,
   filters: [],
   filteredRows: null,
+  filteredSourceRows: null,
   isFiltering: false,
 });
 
@@ -183,7 +191,7 @@ export const useCsvStore = create<CsvStore>((set) => ({
       return { tabs: next };
     }),
 
-  setFilters: (tabId, filters, filteredRows) =>
+  setFilters: (tabId, filters, filteredRows, filteredSourceRows = null) =>
     set((state) => ({
       tabs: {
         ...state.tabs,
@@ -191,6 +199,7 @@ export const useCsvStore = create<CsvStore>((set) => ({
           ...state.tabs[tabId],
           filters,
           filteredRows,
+          filteredSourceRows,
           isFiltering: false,
         },
       },
@@ -212,6 +221,7 @@ export const useCsvStore = create<CsvStore>((set) => ({
           ...state.tabs[tabId],
           filters: [],
           filteredRows: null,
+          filteredSourceRows: null,
           isFiltering: false,
         },
       },

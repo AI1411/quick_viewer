@@ -114,23 +114,26 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
 
   const filters = tab?.filters ?? [];
 
-  const filteredSortedRows = useMemo((): XlsxCell[][] => {
-    if (!tab?.sheetData) return [];
+  // 固定行より下の行を絞り込み・並べ替えし、各行のシート上の行番号も求める
+  const { filteredSortedRows, rowNumbers } = useMemo(() => {
+    if (!tab?.sheetData) return { filteredSortedRows: [] as XlsxCell[][], rowNumbers: [] as number[] };
     const freezeRowCount = tab.sheetData.freeze_pane.rows;
-    let rows = tab.sheetData.rows.slice(freezeRowCount);
-
+    const body = tab.sheetData.rows.slice(freezeRowCount);
+    let order = body.map((_, i) => i);
     if (filters.length > 0) {
-      rows = rows.filter((row) =>
-        filters.every((cond) => {
-          return matchesFilter(row[cond.column_index]?.value ?? "", cond);
-        })
+      order = order.filter((i) =>
+        filters.every((cond) => matchesFilter(body[i][cond.column_index]?.value ?? "", cond))
       );
     }
-
-    if (!tab.sort) return rows;
-    const { columnIndex, direction } = tab.sort;
-    return sortByColumn(rows, (row) => row[columnIndex]?.value ?? "", direction);
-  }, [tab?.sheetData, tab?.sort, filters, headers]);
+    if (tab.sort) {
+      const { columnIndex, direction } = tab.sort;
+      order = sortByColumn(order, (i) => body[i][columnIndex]?.value ?? "", direction);
+    }
+    return {
+      filteredSortedRows: order.map((i) => body[i]),
+      rowNumbers: order.map((i) => freezeRowCount + i + 1),
+    };
+  }, [tab?.sheetData, tab?.sort, filters]);
 
   const frozenDisplayRows = useMemo((): string[][] => {
     if (!tab?.sheetData) return [];
@@ -343,6 +346,7 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
       <VirtualTable
         headers={headers}
         rows={displayRows}
+        rowNumbers={rowNumbers}
         totalRows={displayRows.length}
         columnWidths={tab.columnWidths}
         sort={
