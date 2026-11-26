@@ -103,3 +103,22 @@ describe("useShortcuts", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("useShortcuts のハンドラ更新", () => {
+  it("再描画で渡されたハンドラやショートカットの追加を使う", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const added = vi.fn();
+    const { rerender } = renderHook(({ map }) => useShortcuts(map), {
+      initialProps: { map: { "cmd+o": first } as Record<string, (e: KeyboardEvent) => void> },
+    });
+    rerender({ map: { "cmd+o": second, "cmd+k": added } });
+
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "o", metaKey: true }));
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }));
+
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(added).toHaveBeenCalledTimes(1);
+  });
+});

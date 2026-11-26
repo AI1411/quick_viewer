@@ -45,13 +45,10 @@ export function useShortcuts(shortcuts: ShortcutMap): void {
   });
 
   useEffect(() => {
-    const parsedCombos = Object.entries(shortcutsRef.current).map(
-      ([combo, handler]) => ({ parsed: parseCombo(combo), handler })
-    );
-
+    // 押されたときの最新のハンドラを使う (初回描画時のハンドラに固定しない)
     function handleKeyDown(e: KeyboardEvent) {
-      for (const { parsed, handler } of parsedCombos) {
-        if (matchesEvent(parsed, e)) {
+      for (const [combo, handler] of Object.entries(shortcutsRef.current)) {
+        if (matchesEvent(parseCombo(combo), e)) {
           e.preventDefault();
           handler(e);
           return;
