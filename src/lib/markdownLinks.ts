@@ -38,6 +38,15 @@ export function resolveRelativePath(markdownPath: string, relative: string): str
   return relative.startsWith("/") ? `/${joined}` : joined;
 }
 
+/** img の src がローカルファイルを指す場合だけ絶対パスを返す (http(s): や data: などは null) */
+export function resolveLocalImagePath(src: string, markdownPath: string): string | null {
+  const target = src.trim();
+  const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(target)?.[1];
+  if (!target || (scheme && !/^[a-zA-Z]$/.test(scheme))) return null;
+  const pathPart = safeDecode(target.split(/[?#]/)[0]);
+  return pathPart ? resolveRelativePath(markdownPath, pathPart) : null;
+}
+
 export function resolveMarkdownLink(href: string, markdownPath: string): LinkAction {
   const target = href.trim();
   if (target.startsWith("#")) {

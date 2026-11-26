@@ -237,6 +237,7 @@ pub fn run() {
             markdown_commands::read_markdown,
             markdown_commands::save_markdown,
             markdown_commands::render_markdown_string,
+            markdown_commands::read_local_image,
             xlsx_commands::read_xlsx,
             xlsx_commands::read_xlsx_sheet,
             xlsx_commands::export_xlsx_sheet_as_csv,

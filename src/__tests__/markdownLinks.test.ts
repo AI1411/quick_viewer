@@ -5,7 +5,7 @@ vi.mock("../lib/openPathInTab", () => ({ openPathInTab: vi.fn().mockResolvedValu
 
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { openPathInTab } from "../lib/openPathInTab";
-import { handleRenderedLinkClick, resolveMarkdownLink } from "../lib/markdownLinks";
+import { handleRenderedLinkClick, resolveLocalImagePath, resolveMarkdownLink } from "../lib/markdownLinks";
 
 const MD = "/Users/me/docs/README.md";
 
@@ -25,6 +25,20 @@ describe("resolveMarkdownLink", () => {
   it("# はページ内アンカー、対応外の拡張子は何もしない", () => {
     expect(resolveMarkdownLink("#インストール", MD)).toEqual({ kind: "anchor", id: "インストール" });
     expect(resolveMarkdownLink("images/logo.png", MD)).toEqual({ kind: "none" });
+  });
+});
+
+describe("resolveLocalImagePath", () => {
+  it("相対・絶対パスは Markdown 基準の絶対パスにし、%20 などをデコードする", () => {
+    expect(resolveLocalImagePath("images/my%20logo.png", MD)).toBe("/Users/me/docs/images/my logo.png");
+    expect(resolveLocalImagePath("../assets/a.svg?v=2", MD)).toBe("/Users/me/assets/a.svg");
+    expect(resolveLocalImagePath("/tmp/b.jpg", MD)).toBe("/tmp/b.jpg");
+  });
+
+  it("リモート URL や data URL は対象外", () => {
+    expect(resolveLocalImagePath("https://example.com/a.png", MD)).toBeNull();
+    expect(resolveLocalImagePath("data:image/png;base64,AAAA", MD)).toBeNull();
+    expect(resolveLocalImagePath("", MD)).toBeNull();
   });
 });
 

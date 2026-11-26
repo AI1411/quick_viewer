@@ -1,12 +1,11 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { dirname, join } from "@tauri-apps/api/path";
+import { invoke } from "@tauri-apps/api/core";
 import { createHighlighter, type Highlighter } from "shiki";
 import mermaid from "mermaid";
 import "katex/dist/katex.min.css";
 import { useSearchStore } from "../../stores/searchStore";
 import { highlightTextNodes, clearSearchMarks, applyMarkStyles } from "../../lib/searchHighlight";
-import { handleRenderedLinkClick } from "../../lib/markdownLinks";
+import { handleRenderedLinkClick, resolveLocalImagePath } from "../../lib/markdownLinks";
 
 let _highlighter: Highlighter | null = null;
 let _highlighterPromise: Promise<Highlighter> | null = null;
@@ -134,24 +133,18 @@ export function RenderedView({ html, filePath, containerRef, onScroll }: Rendere
       // KaTeX 失敗は無視
     }
 
-    // 4. ローカル画像パス解決
-    try {
-      const dir = await dirname(filePath);
-      for (const img of Array.from(el.querySelectorAll<HTMLImageElement>("img"))) {
-        const src = img.getAttribute("src");
-        if (
-          src &&
-          !src.startsWith("http") &&
-          !src.startsWith("data:") &&
-          !src.startsWith("asset:")
-        ) {
-          const abs = await join(dir, src);
-          img.src = convertFileSrc(abs);
+    // 4. ローカル画像を data URL で読み込む (asset プロトコルは任意ファイルを読めるため使わない)
+    await Promise.all(
+      Array.from(el.querySelectorAll<HTMLImageElement>("img")).map(async (img) => {
+        const path = resolveLocalImagePath(img.getAttribute("src") ?? "", filePath);
+        if (!path) return;
+        try {
+          img.src = await invoke<string>("read_local_image", { path });
+        } catch {
+          img.alt = img.alt || "画像を読み込めませんでした";
         }
-      }
-    } catch {
-      // パス解決失敗は無視
-    }
+      })
+    );
 
     setPostProcessKey((k) => k + 1);
   }, [html, filePath]);

@@ -1,4 +1,5 @@
 use ammonia::Builder as AmmoniaBuilder;
+use base64::{engine::general_purpose, Engine as _};
 use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag, TagEnd};
 use serde::Serialize;
 use std::fs;
@@ -166,6 +167,47 @@ pub fn save_markdown(path: String, content: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+const MAX_IMAGE_SIZE: u64 = 20 * 1024 * 1024; // 20 MB
+
+/// 先頭バイト (SVG は拡張子と内容) から画像の MIME タイプを判定する。画像以外は None。
+fn image_mime(path: &std::path::Path, bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Some("image/png");
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    if bytes.starts_with(b"BM") {
+        return Some("image/bmp");
+    }
+    let is_svg = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+        && String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).contains("<svg");
+    is_svg.then_some("image/svg+xml")
+}
+
+/// Markdown から参照されるローカル画像を data URL で返す。
+/// asset プロトコルを有効にすると webview から任意ファイルを読めてしまうため、
+/// 画像と判定できたファイルだけを返す。
+#[tauri::command]
+pub fn read_local_image(path: String) -> Result<String, String> {
+    let p = std::path::Path::new(&path);
+    let size = crate::utils::assert_regular_file(p)?;
+    if size > MAX_IMAGE_SIZE {
+        return Err(format!("image too large: {} bytes (max 20 MB)", size));
+    }
+    let bytes = fs::read(p).map_err(|e| e.to_string())?;
+    let mime = image_mime(p, &bytes).ok_or_else(|| format!("not an image: {}", path))?;
+    Ok(format!("data:{};base64,{}", mime, general_purpose::STANDARD.encode(&bytes)))
+}
+
 #[tauri::command]
 pub fn render_markdown_string(content: String) -> Result<MarkdownResult, String> {
     let (frontmatter, body) = parse_frontmatter(&content);
@@ -175,6 +217,29 @@ pub fn render_markdown_string(content: String) -> Result<MarkdownResult, String>
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn read_local_image_returns_data_url_only_for_images() {
+        let dir = std::env::temp_dir();
+        let png = dir.join(format!("qv_img_{}.png", std::process::id()));
+        let txt = dir.join(format!("qv_img_{}.md", std::process::id()));
+        std::fs::write(&png, b"\x89PNG\r\n\x1a\nrest").unwrap();
+        std::fs::write(&txt, b"secret token").unwrap();
+        let ok = read_local_image(png.to_string_lossy().into_owned());
+        let rejected = read_local_image(txt.to_string_lossy().into_owned());
+        std::fs::remove_file(&png).ok();
+        std::fs::remove_file(&txt).ok();
+        assert!(ok.unwrap().starts_with("data:image/png;base64,"));
+        assert!(rejected.is_err());
+    }
+
+    #[test]
+    fn image_mime_detects_svg_by_extension_and_content() {
+        let svg = std::path::Path::new("a.svg");
+        assert_eq!(image_mime(svg, b"<?xml version=\"1.0\"?><svg xmlns=\"x\"/>"), Some("image/svg+xml"));
+        assert_eq!(image_mime(svg, b"not svg"), None);
+        assert_eq!(image_mime(std::path::Path::new("a.txt"), b"<svg/>"), None);
+    }
+
     use super::*;
 
     #[test]
