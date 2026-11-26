@@ -128,8 +128,9 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
     let localDoc: PDFDocumentProxy | null = null;
     let cancelled = false;
     const store = usePdfStore.getState();
+    const isNewTab = !store.tabs[tabId];
     store.initTab(tabId);
-    store.setDisplayMode(tabId, useSettingsStore.getState().pdfSettings.defaultViewMode);
+    if (isNewTab) store.setDisplayMode(tabId, useSettingsStore.getState().pdfSettings.defaultViewMode);
     store.setLoading(tabId, true);
     annotationsWritableRef.current = false;
     lastSavedJsonRef.current = null;
@@ -146,6 +147,9 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
         localDoc = doc;
         store.setPdfInfo(tabId, { ...(info ?? emptyPdfInfo()), page_count: doc.numPages });
         store.setPdfDocument(tabId, doc);
+        // 引き継いだページがファイルの変更でページ数を超えていたら収める
+        const page = usePdfStore.getState().tabs[tabId]?.currentPage ?? 1;
+        if (page > doc.numPages) store.setCurrentPage(tabId, Math.max(1, doc.numPages));
         store.setLoading(tabId, false);
         if (anns === null) {
           showWarning("注釈ファイルを読み込めなかったため、このファイルの注釈は保存しません");
@@ -167,7 +171,8 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
       pendingSaveRef.current = null;
       annotationsWritableRef.current = false;
       localDoc?.destroy();
-      usePdfStore.getState().removeTab(tabId);
+      // 表示状態はタブ切替をまたいで残す。破棄した文書だけ外す (タブを閉じたら tabActions が消す)
+      if (usePdfStore.getState().tabs[tabId]) usePdfStore.getState().setPdfDocument(tabId, null);
     };
   }, [tabId, filePath]);
 

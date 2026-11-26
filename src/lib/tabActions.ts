@@ -1,6 +1,9 @@
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useTabStore, type Tab } from "../stores/tabStore";
 import { useMarkdownStore } from "../stores/markdownStore";
+import { useCsvStore } from "../stores/csvStore";
+import { useXlsxStore } from "../stores/xlsxStore";
+import { usePdfStore } from "../stores/pdfStore";
 
 /** 外部変更の「再読み込み」。未保存の編集はディスクの内容で置き換える。 */
 export function reloadTabFromDisk(tabId: string): void {
@@ -37,8 +40,11 @@ async function closeTabsWithConfirm(select: (tabs: Tab[]) => Tab[]): Promise<boo
   const { removeTab } = useTabStore.getState();
   for (const t of targets) {
     removeTab(t.id);
-    // Markdown の編集状態はタブ切替をまたいで保持するため、タブを閉じたときに捨てる
+    // 各ビューアの状態はタブ切替をまたいで保持するため、タブを閉じたときに捨てる
     useMarkdownStore.getState().removeTab(t.id);
+    useCsvStore.getState().removeTab(t.id);
+    useXlsxStore.getState().removeTab(t.id);
+    usePdfStore.getState().removeTab(t.id);
   }
   return true;
 }

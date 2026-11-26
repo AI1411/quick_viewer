@@ -61,34 +61,55 @@ const defaultTabState = (): XlsxTabState => ({
 export const useXlsxStore = create<XlsxStore>((set) => ({
   tabs: {},
 
+  // タブを切り替えて戻ったときは、表示中のシートと並べ替え・絞り込み・列幅を引き継ぐ
   initTab: (tabId) =>
-    set((state) => ({
-      tabs: { ...state.tabs, [tabId]: defaultTabState() },
-    })),
+    set((state) => {
+      const prev = state.tabs[tabId];
+      const next = defaultTabState();
+      return {
+        tabs: {
+          ...state.tabs,
+          [tabId]: prev
+            ? {
+                ...next,
+                activeSheetName: prev.activeSheetName,
+                sort: prev.sort,
+                filters: prev.filters,
+                columnWidths: prev.columnWidths,
+              }
+            : next,
+        },
+      };
+    }),
 
   setInfo: (tabId, info) =>
     set((state) => ({
       tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], info } },
     })),
 
+  // 別のシートに切り替えたときだけ並べ替え・絞り込み・列幅をリセットする
   setSheetData: (tabId, sheetData, sheetName) =>
-    set((state) => ({
-      tabs: {
-        ...state.tabs,
-        [tabId]: {
-          ...state.tabs[tabId],
-          sheetData,
-          activeSheetName: sheetName,
-          isLoading: false,
-          error: null,
-          columnWidths: {},
-          sort: null,
-          filters: [],
-          selectedAnchor: null,
-          selectedFocus: null,
+    set((state) => {
+      const prev = state.tabs[tabId];
+      const sameSheet = prev?.activeSheetName === sheetName;
+      return {
+        tabs: {
+          ...state.tabs,
+          [tabId]: {
+            ...prev,
+            sheetData,
+            activeSheetName: sheetName,
+            isLoading: false,
+            error: null,
+            columnWidths: sameSheet ? prev.columnWidths : {},
+            sort: sameSheet ? prev.sort : null,
+            filters: sameSheet ? prev.filters : [],
+            selectedAnchor: null,
+            selectedFocus: null,
+          },
         },
-      },
-    })),
+      };
+    }),
 
   setLoading: (tabId, isLoading) =>
     set((state) => ({

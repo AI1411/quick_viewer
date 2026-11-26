@@ -82,3 +82,25 @@ describe("CsvViewer の既定の区切り文字", () => {
     useSettingsStore.setState({ csvSettings: { defaultDelimiter: "auto" } });
   });
 });
+
+describe("CsvViewer のタブ切替", () => {
+  it("戻ったときに並べ替えと絞り込みを引き継ぎ、絞り込みを掛け直す", async () => {
+    const first = render(<CsvViewer tabId="t4" filePath="/data.csv" />);
+    await act(async () => {});
+    const filter = { column: "n", column_index: 0, filter_type: "gt" as const, value: "200" };
+    act(() => {
+      const store = useCsvStore.getState();
+      store.setSort("t4", { columnIndex: 0, direction: "desc" });
+      store.setFilters("t4", [filter], [["250"]], [0]);
+    });
+    first.unmount();
+    calls.length = 0;
+
+    render(<CsvViewer tabId="t4" filePath="/data.csv" />);
+    await act(async () => {});
+    const tab = useCsvStore.getState().tabs.t4;
+    expect(tab.sort).toEqual({ columnIndex: 0, direction: "desc" });
+    expect(tab.filters).toEqual([filter]);
+    expect(calls.find((c) => c.cmd === "filter_csv")?.args.conditions).toEqual([filter]);
+  });
+});

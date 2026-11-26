@@ -61,6 +61,19 @@ describe("タブを閉じる前の未保存確認", () => {
     expect(ids()).toEqual(["a", "c"]);
   });
 
+  it("閉じたタブの CSV / XLSX / PDF の表示状態も破棄する", async () => {
+    const { useCsvStore } = await import("../stores/csvStore");
+    const { useXlsxStore } = await import("../stores/xlsxStore");
+    const { usePdfStore } = await import("../stores/pdfStore");
+    useCsvStore.getState().initTab("c");
+    useXlsxStore.getState().initTab("c");
+    usePdfStore.getState().initTab("c");
+    await closeTab("c");
+    expect(useCsvStore.getState().tabs.c).toBeUndefined();
+    expect(useXlsxStore.getState().tabs.c).toBeUndefined();
+    expect(usePdfStore.getState().tabs.c).toBeUndefined();
+  });
+
   it("閉じたタブの Markdown の編集状態も破棄する", async () => {
     vi.mocked(confirm).mockResolvedValue(true);
     useMarkdownStore.setState({

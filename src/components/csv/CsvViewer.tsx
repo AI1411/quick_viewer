@@ -45,21 +45,23 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     setLoading(tabId, true);
     const t0 = performance.now();
     invoke<CsvData>("read_csv", { path: filePath, limit: INITIAL_LIMIT, delimiter: defaultDelimiterFor(filePath) })
-      .then((data) => {
+      .then(async (data) => {
         if (cancelled) return;
         console.info(`[perf] read_csv: ${(performance.now() - t0).toFixed(1)}ms`);
         setData(tabId, data);
+        // タブ切替から戻ったときは、引き継いだ絞り込みを読み直した内容に掛け直す
+        const filters = useCsvStore.getState().tabs[tabId]?.filters ?? [];
+        if (filters.length === 0) return;
+        const filtered = await invoke<CsvData>("filter_csv", {
+          path: filePath,
+          delimiter: data.meta.delimiter,
+          conditions: filters,
+        });
+        if (!cancelled) useCsvStore.getState().setFilters(tabId, filters, filtered.rows, filtered.source_rows);
       })
       .catch((err) => { if (!cancelled) setError(tabId, String(err)); });
     return () => { cancelled = true; };
   }, [tabId, filePath]);
-
-  // アンマウント時にストア状態をクリーンアップ
-  useEffect(() => {
-    return () => {
-      useCsvStore.getState().removeTab(tabId);
-    };
-  }, [tabId]);
 
   // チャンク追加読み込み（フィルタ中は無効）
   const handleScrollEnd = useCallback(() => {

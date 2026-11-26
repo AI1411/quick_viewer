@@ -49,9 +49,24 @@ describe("XlsxViewer", () => {
     expect(useXlsxStore.getState().tabs.t1?.sheetData?.name).toBe("Sheet1");
     expect(view?.container.textContent).toContain("Sheet1");
 
+    // タブ切替でアンマウントしても表示状態は残す (タブを閉じたときに tabActions が消す)
     view?.unmount();
-    expect(removeCalls).toBe(1);
-    expect(useXlsxStore.getState().tabs.t1).toBeUndefined();
+    expect(removeCalls).toBe(0);
+    expect(useXlsxStore.getState().tabs.t1?.activeSheetName).toBe("Sheet1");
+  });
+
+  it("タブを切り替えて戻ると、前に表示していたシートを開く", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const first = render(<XlsxViewer tabId="t3" filePath="/book.xlsx" />);
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    await act(async () => { fireEvent.click(screen.getByText("Broken")); });
+    first.unmount();
+
+    vi.mocked(invoke).mockClear();
+    render(<XlsxViewer tabId="t3" filePath="/book.xlsx" />);
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+    expect(vi.mocked(invoke).mock.calls.find((c) => c[0] === "read_xlsx_sheet")?.[1]).toMatchObject({ sheetName: "Broken" });
+    expect(useXlsxStore.getState().tabs.t3.activeSheetName).toBe("Broken");
   });
 });
 

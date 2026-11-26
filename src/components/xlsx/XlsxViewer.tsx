@@ -66,26 +66,21 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
       .then((info) => {
         if (cancelled) return;
         store.setInfo(tabId, info);
-        const firstSheet = info.sheets[0];
-        if (firstSheet) {
+        // タブ切替から戻ったときは前に表示していたシートを開く
+        const previous = useXlsxStore.getState().tabs[tabId]?.activeSheetName;
+        const sheet = info.sheets.find((s) => s.name === previous) ?? info.sheets[0];
+        if (sheet) {
           return invoke<XlsxSheetData>("read_xlsx_sheet", {
             path: filePath,
-            sheetName: firstSheet.name,
+            sheetName: sheet.name,
           }).then((data) => {
-            if (!cancelled) store.setSheetData(tabId, data, firstSheet.name);
+            if (!cancelled) store.setSheetData(tabId, data, sheet.name);
           });
         }
       })
       .catch((e) => { if (!cancelled) store.setError(tabId, String(e)); });
     return () => { cancelled = true; };
   }, [tabId, filePath]);
-
-  // アンマウント時にストア状態をクリーンアップ
-  useEffect(() => {
-    return () => {
-      useXlsxStore.getState().removeTab(tabId);
-    };
-  }, [tabId]);
 
   const sheetRequestSeqRef = useRef(0);
 

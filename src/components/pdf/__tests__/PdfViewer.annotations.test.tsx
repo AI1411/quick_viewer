@@ -146,3 +146,21 @@ describe("PdfViewer の既定の表示モード", () => {
     useSettingsStore.setState({ pdfSettings: { defaultViewMode: "continuous" } });
   });
 });
+
+describe("PdfViewer のタブ切替", () => {
+  it("戻ったときにページ・ズーム・回転を引き継ぐ", async () => {
+    const first = render(<PdfViewer tabId="t1" filePath="/doc.pdf" />);
+    await flush(0);
+    act(() => {
+      const store = usePdfStore.getState();
+      store.setCurrentPage("t1", 3);
+      store.setZoom("t1", 2);
+      store.setRotation("t1", 90);
+    });
+    first.unmount();
+
+    render(<PdfViewer tabId="t1" filePath="/doc.pdf" />);
+    await flush(0);
+    expect(usePdfStore.getState().tabs.t1).toMatchObject({ currentPage: 3, zoom: 2, rotation: 90 });
+  });
+});
