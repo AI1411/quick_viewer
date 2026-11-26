@@ -5,6 +5,7 @@ import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { AnnotationLayer } from "./AnnotationLayer";
+import { rectToPageSpace, type PageSize } from "../../lib/annotationGeometry";
 import type {
   Annotation,
   AnnotationColor,
@@ -60,9 +61,11 @@ export function PdfCanvas({
   const textLayerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isRendering, setIsRendering] = useState(true);
+  // 回転 0°・倍率 1.0 のページサイズ (注釈をページ座標で扱うために使う)
+  const [pageSize, setPageSize] = useState<PageSize>({ width: 0, height: 0 });
   const searchMarksRef = useRef<HTMLElement[]>([]);
   const searchIsOpen = useSearchStore((s) => s.isOpen);
-  const searchQuery = useSearchStore((s) => s.isOpen ? s.query : "");
+  const searchQuery = useSearchStore((s) => (s.isOpen ? s.query : ""));
   const searchUseRegex = useSearchStore((s) => s.options.useRegex);
   const searchCaseSensitive = useSearchStore((s) => s.options.caseSensitive);
   const currentMatchIndex = useSearchStore((s) => s.currentMatchIndex);
@@ -84,6 +87,8 @@ export function PdfCanvas({
       if (cancelled) return;
 
       const viewport = page.getViewport({ scale, rotation });
+      const base = page.getViewport({ scale: 1, rotation: 0 });
+      setPageSize({ width: base.width, height: base.height });
       const canvas = canvasRef.current;
       const textDiv = textLayerRef.current;
       if (!canvas || !textDiv) return;
@@ -145,7 +150,14 @@ export function PdfCanvas({
       const idx = currentMatchIndex % marks.length;
       applyMarkStyles(marks, idx);
     }
-  }, [isRendering, searchIsOpen, searchQuery, searchUseRegex, searchCaseSensitive, currentMatchIndex]);
+  }, [
+    isRendering,
+    searchIsOpen,
+    searchQuery,
+    searchUseRegex,
+    searchCaseSensitive,
+    currentMatchIndex,
+  ]);
 
   // テキスト選択完了時にカラーピッカーを表示（highlightモード時のみ）
   const handleMouseUp = useCallback(() => {
@@ -191,13 +203,19 @@ export function PdfCanvas({
         (r) => r.width > 0 && r.height > 0
       );
 
-      // scale=1.0 の PDF ユニット座標に変換して保存
-      const rects: AnnotationRect[] = clientRects.map((r) => ({
-        x: (r.left - containerBounds.left) / scale,
-        y: (r.top - containerBounds.top) / scale,
-        width: r.width / scale,
-        height: r.height / scale,
-      }));
+      // 倍率 1.0・回転 0° のページ座標に変換して保存 (回転を変えても同じ文字の上に表示する)
+      const rects: AnnotationRect[] = clientRects.map((r) =>
+        rectToPageSpace(
+          {
+            x: (r.left - containerBounds.left) / scale,
+            y: (r.top - containerBounds.top) / scale,
+            width: r.width / scale,
+            height: r.height / scale,
+          },
+          rotation,
+          pageSize
+        )
+      );
 
       const ann: HighlightAnnotation = {
         id: `hl-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -214,7 +232,7 @@ export function PdfCanvas({
       pendingRangeRef.current = null;
       setColorPickerPos(null);
     },
-    [pageIndex, scale, onAnnotationCreate]
+    [pageIndex, scale, rotation, pageSize, onAnnotationCreate]
   );
 
   const handleNoteCreate = useCallback(
@@ -258,6 +276,8 @@ export function PdfCanvas({
         <AnnotationLayer
           pageIndex={pageIndex}
           scale={scale}
+          rotation={rotation}
+          pageSize={pageSize}
           annotations={annotations}
           annotationMode={annotationMode}
           selectedAnnotationId={selectedAnnotationId}
@@ -279,20 +299,18 @@ export function PdfCanvas({
           }}
           onMouseDown={(e) => e.preventDefault()}
         >
-          {(["yellow", "green", "blue", "pink"] as AnnotationColor[]).map(
-            (color) => (
-              <button
-                key={color}
-                className="w-6 h-6 rounded-full border-2 border-white/30 hover:scale-110 transition-transform"
-                style={{
-                  backgroundColor: HIGHLIGHT_COLORS_CSS[color],
-                  cursor: "pointer",
-                }}
-                title={HIGHLIGHT_COLOR_LABELS[color]}
-                onClick={() => handleCreateHighlight(color)}
-              />
-            )
-          )}
+          {(["yellow", "green", "blue", "pink"] as AnnotationColor[]).map((color) => (
+            <button
+              key={color}
+              className="w-6 h-6 rounded-full border-2 border-white/30 hover:scale-110 transition-transform"
+              style={{
+                backgroundColor: HIGHLIGHT_COLORS_CSS[color],
+                cursor: "pointer",
+              }}
+              title={HIGHLIGHT_COLOR_LABELS[color]}
+              onClick={() => handleCreateHighlight(color)}
+            />
+          ))}
           <button
             className="text-xs px-1 hover:text-white"
             style={{ color: "#9ca3af" }}

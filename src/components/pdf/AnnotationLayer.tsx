@@ -1,10 +1,11 @@
 import { useState, useRef } from "react";
-import type {
-  Annotation,
-  HighlightAnnotation,
-  NoteAnnotation,
-  AnnotationColor,
-} from "../../types";
+import type { Annotation, HighlightAnnotation, NoteAnnotation, AnnotationColor } from "../../types";
+import {
+  rectToScreenSpace,
+  toPageSpace,
+  toScreenSpace,
+  type PageSize,
+} from "../../lib/annotationGeometry";
 
 const HIGHLIGHT_COLORS_CSS: Record<AnnotationColor, string> = {
   yellow: "rgba(255, 235, 59, 0.45)",
@@ -23,6 +24,8 @@ interface NoteEditorState {
 interface AnnotationLayerProps {
   pageIndex: number;
   scale: number;
+  rotation: number;
+  pageSize: PageSize;
   annotations: Annotation[];
   annotationMode: "none" | "highlight" | "note";
   selectedAnnotationId: string | null;
@@ -34,6 +37,8 @@ interface AnnotationLayerProps {
 export function AnnotationLayer({
   pageIndex,
   scale,
+  rotation,
+  pageSize,
   annotations,
   annotationMode,
   selectedAnnotationId,
@@ -58,8 +63,10 @@ export function AnnotationLayer({
     setNoteEditor({
       popupLeft: Math.min(screenX, layerWidth - 210),
       screenY,
-      normalX: screenX / scale,
-      normalY: screenY / scale,
+      ...(() => {
+        const p = toPageSpace({ x: screenX / scale, y: screenY / scale }, rotation, pageSize);
+        return { normalX: p.x, normalY: p.y };
+      })(),
     });
     setNoteContent("");
   }
@@ -88,12 +95,8 @@ export function AnnotationLayer({
     setNoteContent("");
   }
 
-  const highlights = annotations.filter(
-    (a): a is HighlightAnnotation => a.type === "highlight"
-  );
-  const notes = annotations.filter(
-    (a): a is NoteAnnotation => a.type === "note"
-  );
+  const highlights = annotations.filter((a): a is HighlightAnnotation => a.type === "highlight");
+  const notes = annotations.filter((a): a is NoteAnnotation => a.type === "note");
 
   return (
     <div
@@ -105,100 +108,98 @@ export function AnnotationLayer({
       {/* ハイライト */}
       {highlights.map((ann) => (
         <div key={ann.id} className="annotation-item absolute inset-0">
-          {ann.rects.map((rect, i) => (
-            <div
-              key={i}
-              className="absolute"
+          {ann.rects.map((pageRect, i) => {
+            const rect = rectToScreenSpace(pageRect, rotation, pageSize);
+            return (
+              <div
+                key={i}
+                className="absolute"
+                style={{
+                  left: rect.x * scale,
+                  top: rect.y * scale,
+                  width: rect.width * scale,
+                  height: rect.height * scale,
+                  backgroundColor: HIGHLIGHT_COLORS_CSS[ann.color],
+                  outline:
+                    selectedAnnotationId === ann.id ? "2px solid rgba(59, 130, 246, 0.8)" : "none",
+                  cursor: "pointer",
+                  pointerEvents: "auto",
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAnnotationSelect(selectedAnnotationId === ann.id ? null : ann.id);
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onAnnotationDelete(pageIndex, ann.id);
+                }}
+                title={`"${ann.selectedText}" — 右クリックで削除`}
+              />
+            );
+          })}
+        </div>
+      ))}
+
+      {/* メモ注釈 */}
+      {notes.map((ann) => {
+        const pos = toScreenSpace({ x: ann.x, y: ann.y }, rotation, pageSize);
+        return (
+          <div
+            key={ann.id}
+            className="annotation-item absolute"
+            style={{
+              left: pos.x * scale - 12,
+              top: pos.y * scale - 12,
+              pointerEvents: "auto",
+            }}
+          >
+            <button
+              className="w-6 h-6 rounded-full flex items-center justify-center text-xs shadow-md"
               style={{
-                left: rect.x * scale,
-                top: rect.y * scale,
-                width: rect.width * scale,
-                height: rect.height * scale,
-                backgroundColor: HIGHLIGHT_COLORS_CSS[ann.color],
-                outline:
-                  selectedAnnotationId === ann.id
-                    ? "2px solid rgba(59, 130, 246, 0.8)"
-                    : "none",
+                backgroundColor: selectedAnnotationId === ann.id ? "#2563eb" : "#f59e0b",
+                color: "white",
+                border: selectedAnnotationId === ann.id ? "2px solid #1d4ed8" : "2px solid #d97706",
                 cursor: "pointer",
-                pointerEvents: "auto",
               }}
               onClick={(e) => {
                 e.stopPropagation();
-                onAnnotationSelect(
-                  selectedAnnotationId === ann.id ? null : ann.id
-                );
+                setActiveNoteId(activeNoteId === ann.id ? null : ann.id);
+                onAnnotationSelect(ann.id);
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 onAnnotationDelete(pageIndex, ann.id);
               }}
-              title={`"${ann.selectedText}" — 右クリックで削除`}
-            />
-          ))}
-        </div>
-      ))}
-
-      {/* メモ注釈 */}
-      {notes.map((ann) => (
-        <div
-          key={ann.id}
-          className="annotation-item absolute"
-          style={{
-            left: ann.x * scale - 12,
-            top: ann.y * scale - 12,
-            pointerEvents: "auto",
-          }}
-        >
-          <button
-            className="w-6 h-6 rounded-full flex items-center justify-center text-xs shadow-md"
-            style={{
-              backgroundColor:
-                selectedAnnotationId === ann.id ? "#2563eb" : "#f59e0b",
-              color: "white",
-              border:
-                selectedAnnotationId === ann.id
-                  ? "2px solid #1d4ed8"
-                  : "2px solid #d97706",
-              cursor: "pointer",
-            }}
-            onClick={(e) => {
-              e.stopPropagation();
-              setActiveNoteId(activeNoteId === ann.id ? null : ann.id);
-              onAnnotationSelect(ann.id);
-            }}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onAnnotationDelete(pageIndex, ann.id);
-            }}
-            title="メモ — 右クリックで削除"
-          >
-            📌
-          </button>
-
-          {activeNoteId === ann.id && (
-            <div
-              className="absolute z-50 p-2 rounded shadow-lg text-xs"
-              style={{
-                top: 28,
-                left: 0,
-                minWidth: 160,
-                maxWidth: 240,
-                backgroundColor: "#fffde7",
-                border: "1px solid #f59e0b",
-                color: "#333",
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                pointerEvents: "auto",
-              }}
-              onClick={(e) => e.stopPropagation()}
+              title="メモ — 右クリックで削除"
             >
-              {ann.content}
-            </div>
-          )}
-        </div>
-      ))}
+              📌
+            </button>
+
+            {activeNoteId === ann.id && (
+              <div
+                className="absolute z-50 p-2 rounded shadow-lg text-xs"
+                style={{
+                  top: 28,
+                  left: 0,
+                  minWidth: 160,
+                  maxWidth: 240,
+                  backgroundColor: "#fffde7",
+                  border: "1px solid #f59e0b",
+                  color: "#333",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  pointerEvents: "auto",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {ann.content}
+              </div>
+            )}
+          </div>
+        );
+      })}
 
       {/* メモ作成エディタ */}
       {noteEditor && (
