@@ -15,6 +15,7 @@ vi.mock("@tauri-apps/api/core", () => ({
         rows: [[cell("hello"), cell("world")]],
         total_rows: 1,
         total_cols: 2,
+        loaded_cols: 2,
         freeze_pane: { rows: 0, cols: 0 },
       });
     return Promise.resolve(undefined);

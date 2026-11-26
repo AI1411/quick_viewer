@@ -1,4 +1,4 @@
-use calamine::{open_workbook, Data, Range, Reader, Xlsx};
+use calamine::{open_workbook, Data, DataRef, Reader, Xlsx};
 use chrono::NaiveDate;
 use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
@@ -41,6 +41,8 @@ pub struct XlsxSheetData {
     pub rows: Vec<Vec<XlsxCell>>,
     pub total_rows: usize,
     pub total_cols: usize,
+    /// rows の各行に含まれる列数 (total_cols が上限を超える場合は切り詰める)
+    pub loaded_cols: usize,
     pub freeze_pane: FreezePane,
 }
 
@@ -592,6 +594,105 @@ fn load_sheet_file_map(xlsx_path: &str) -> HashMap<String, String> {
         .collect()
 }
 
+// ── セルのストリーミング読み出し ─────────────────────────
+
+type Workbook = Xlsx<std::io::BufReader<std::fs::File>>;
+
+/// 1 シートの表示上限。calamine の worksheet_range は使用範囲の幅×高さの
+/// 密な配列を確保するため、A1 と XFD1048576 の 2 セルだけのファイルでも
+/// 巨大なメモリを使う。セルを 1 つずつ読み、この範囲だけを保持する。
+const MAX_DISPLAY_ROWS: usize = 10_000;
+const MAX_DISPLAY_COLS: usize = 1_000;
+const MAX_DISPLAY_CELLS: usize = 1_000_000;
+/// エクスポートする CSV の上限 (行×列)。巨大な空範囲で出力が数 GB になるのを防ぐ。
+const MAX_EXPORT_CELLS: usize = 50_000_000;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Bounds {
+    row_start: u32,
+    row_end: u32,
+    col_start: u32,
+    col_end: u32,
+}
+
+impl Bounds {
+    fn rows(&self) -> usize {
+        (self.row_end - self.row_start) as usize + 1
+    }
+    fn cols(&self) -> usize {
+        (self.col_end - self.col_start) as usize + 1
+    }
+}
+
+/// 空でないセルを 1 つずつ `f` に渡す。シート全体を密な配列に展開しない。
+fn for_each_cell(
+    workbook: &mut Workbook,
+    sheet_name: &str,
+    mut f: impl FnMut(u32, u32, &DataRef),
+) -> Result<(), String> {
+    let mut reader = workbook
+        .worksheet_cells_reader(sheet_name)
+        .map_err(|e| e.to_string())?;
+    while let Some(cell) = reader.next_cell().map_err(|e| e.to_string())? {
+        if !matches!(cell.get_value(), DataRef::Empty) {
+            let (row, col) = cell.get_position();
+            f(row, col, cell.get_value());
+        }
+    }
+    Ok(())
+}
+
+fn sheet_bounds(workbook: &mut Workbook, sheet_name: &str) -> Result<Option<Bounds>, String> {
+    let mut bounds: Option<Bounds> = None;
+    for_each_cell(workbook, sheet_name, |row, col, _| {
+        bounds = Some(match bounds {
+            None => Bounds { row_start: row, row_end: row, col_start: col, col_end: col },
+            Some(b) => Bounds {
+                row_start: b.row_start.min(row),
+                row_end: b.row_end.max(row),
+                col_start: b.col_start.min(col),
+                col_end: b.col_end.max(col),
+            },
+        });
+    })?;
+    Ok(bounds)
+}
+
+fn display_size(total_rows: usize, total_cols: usize) -> (usize, usize) {
+    let cols = total_cols.min(MAX_DISPLAY_COLS);
+    let rows = if cols == 0 {
+        0
+    } else {
+        total_rows.min(MAX_DISPLAY_ROWS).min(MAX_DISPLAY_CELLS / cols)
+    };
+    (rows, cols)
+}
+
+fn export_cell_string(data: &Data) -> String {
+    match data {
+        Data::String(s) => s.clone(),
+        Data::Float(f) => f.to_string(),
+        Data::Int(i) => i.to_string(),
+        Data::Bool(b) => if *b { "TRUE".to_string() } else { "FALSE".to_string() },
+        Data::DateTime(dt) => serial_to_date_string(dt.as_f64()),
+        Data::DateTimeIso(s) => s.clone(),
+        Data::DurationIso(s) => s.clone(),
+        Data::Error(e) => format!("{:?}", e),
+        Data::Empty => String::new(),
+    }
+}
+
+fn column_letters(index: usize) -> String {
+    let mut result = String::new();
+    let mut n = index + 1;
+    while n > 0 {
+        let rem = (n - 1) % 26;
+        result.insert(0, (b'A' + rem as u8) as char);
+        n = (n - 1) / 26;
+    }
+    result
+}
+
 // ── Tauri コマンド ────────────────────────────────────────
 
 #[tauri::command]
@@ -611,50 +712,43 @@ pub fn read_xlsx(path: String) -> Result<XlsxInfo, String> {
 
 #[tauri::command]
 pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData, String> {
-    let mut workbook: Xlsx<_> = open_workbook::<Xlsx<_>, _>(&path).map_err(|e| e.to_string())?;
-    let range: Range<Data> = workbook
-        .worksheet_range(&sheet_name)
-        .map_err(|e| e.to_string())?;
-
-    let (total_rows, total_cols) = range.get_size();
+    let mut workbook: Workbook = open_workbook(&path).map_err(|e: calamine::XlsxError| e.to_string())?;
+    let bounds = sheet_bounds(&mut workbook, &sheet_name)?;
+    let (total_rows, total_cols) = bounds.map_or((0, 0), |b| (b.rows(), b.cols()));
+    let (display_rows, display_cols) = display_size(total_rows, total_cols);
 
     let xf_to_fmt = load_styles(&path).unwrap_or_default();
-
     let sheet_file_map = load_sheet_file_map(&path);
     let sheet_file = sheet_file_map
         .get(&sheet_name)
         .cloned()
         .unwrap_or_else(|| "xl/worksheets/sheet1.xml".to_string());
-    let (cell_xf_map, freeze_pane) =
+    let (cell_xf_map, mut freeze_pane) =
         load_sheet_xml(&path, &sheet_file).unwrap_or_default();
+    freeze_pane.rows = freeze_pane.rows.min(display_rows as u32);
+    freeze_pane.cols = freeze_pane.cols.min(display_cols as u32);
 
-    let (start_row, start_col) = range.start().unwrap_or((0, 0));
-
-    const MAX_DISPLAY_ROWS: usize = 10_000;
-
-    let rows: Vec<Vec<XlsxCell>> = range
-        .rows()
-        .take(MAX_DISPLAY_ROWS)
-        .enumerate()
-        .map(|(row_rel, row): (usize, &[Data])| {
-            row.iter()
-                .enumerate()
-                .map(|(col_rel, data)| {
-                    let abs_row = start_row + row_rel as u32;
-                    let abs_col = start_col + col_rel as u32;
-                    let xf_idx = cell_xf_map.get(&(abs_row, abs_col)).copied();
-                    let format_code = xf_idx.and_then(|xf| xf_to_fmt.get(&xf)).cloned();
-                    convert_cell(data, format_code)
-                })
-                .collect()
-        })
-        .collect();
+    let empty = convert_cell(&Data::Empty, None);
+    let mut rows: Vec<Vec<XlsxCell>> = vec![vec![empty; display_cols]; display_rows];
+    if let Some(b) = bounds {
+        for_each_cell(&mut workbook, &sheet_name, |row, col, value| {
+            let (r, c) = ((row - b.row_start) as usize, (col - b.col_start) as usize);
+            if r < display_rows && c < display_cols {
+                let format_code = cell_xf_map
+                    .get(&(row, col))
+                    .and_then(|xf| xf_to_fmt.get(xf))
+                    .cloned();
+                rows[r][c] = convert_cell(&Data::from(value.clone()), format_code);
+            }
+        })?;
+    }
 
     Ok(XlsxSheetData {
         name: sheet_name,
         rows,
         total_rows,
         total_cols,
+        loaded_cols: display_cols,
         freeze_pane,
     })
 }
@@ -667,66 +761,40 @@ pub fn export_xlsx_sheet_as_csv(
     output_path: String,
     conditions: Vec<crate::csv_commands::FilterCondition>,
 ) -> Result<(), String> {
-    let mut workbook: Xlsx<_> = open_workbook::<Xlsx<_>, _>(&path).map_err(|e| e.to_string())?;
-    let range: Range<Data> = workbook
-        .worksheet_range(&sheet_name)
-        .map_err(|e| e.to_string())?;
-
-    let (total_rows, total_cols) = range.get_size();
-    if total_rows == 0 || total_cols == 0 {
-        return Err("シートにデータがありません".to_string());
+    let mut workbook: Workbook = open_workbook(&path).map_err(|e: calamine::XlsxError| e.to_string())?;
+    let b = sheet_bounds(&mut workbook, &sheet_name)?
+        .ok_or_else(|| "シートにデータがありません".to_string())?;
+    if b.rows().saturating_mul(b.cols()) > MAX_EXPORT_CELLS {
+        return Err(format!(
+            "シートが大きすぎるためエクスポートできません ({} 行 × {} 列)",
+            b.rows(),
+            b.cols()
+        ));
     }
 
-    // 列ヘッダを生成（A, B, C...）
-    let headers: Vec<String> = (0..total_cols)
-        .map(|i| {
-            let mut result = String::new();
-            let mut n = i + 1;
-            while n > 0 {
-                let rem = (n - 1) % 26;
-                result.insert(0, (65 + rem as u8) as char);
-                n = (n - 1) / 26;
-            }
-            result
-        })
-        .collect();
+    // 実在するセルだけを保持し、行順に並べてから 1 行ずつ書き出す
+    let mut cells: Vec<(u32, u32, String)> = Vec::new();
+    for_each_cell(&mut workbook, &sheet_name, |row, col, value| {
+        cells.push((row, col, export_cell_string(&Data::from(value.clone()))));
+    })?;
+    cells.sort_unstable_by_key(|(row, col, _)| (*row, *col));
 
-    // 全行を文字列に変換
-    let all_rows: Vec<Vec<String>> = range
-        .rows()
-        .map(|row| {
-            row.iter()
-                .map(|data| match data {
-                    Data::String(s) => s.clone(),
-                    Data::Float(f) => f.to_string(),
-                    Data::Int(i) => i.to_string(),
-                    Data::Bool(b) => if *b { "TRUE".to_string() } else { "FALSE".to_string() },
-                    Data::DateTime(dt) => serial_to_date_string(dt.as_f64()),
-                    Data::DateTimeIso(s) => s.clone(),
-                    Data::DurationIso(s) => s.clone(),
-                    Data::Error(e) => format!("{:?}", e),
-                    Data::Empty => String::new(),
-                })
-                .collect()
-        })
-        .collect();
-
-    // フィルタ適用
-    let filtered = if conditions.is_empty() {
-        all_rows
-    } else {
-        crate::csv_commands::apply_filters(&headers, &all_rows, &conditions)
-    };
-
-    // CSV として書き込み
+    let headers: Vec<String> = (0..b.cols()).map(column_letters).collect();
     let out_file = std::fs::File::create(&output_path).map_err(|e| e.to_string())?;
-    let mut wtr = csv::WriterBuilder::new()
-        .delimiter(b',')
-        .from_writer(out_file);
-
+    let mut wtr = csv::WriterBuilder::new().delimiter(b',').from_writer(out_file);
     wtr.write_record(&headers).map_err(|e| e.to_string())?;
-    for row in &filtered {
-        wtr.write_record(row).map_err(|e| e.to_string())?;
+
+    let mut cells = cells.into_iter().peekable();
+    for row_index in b.row_start..=b.row_end {
+        let mut row = vec![String::new(); b.cols()];
+        while let Some((_, col, value)) = cells.next_if(|(r, _, _)| *r == row_index) {
+            row[(col - b.col_start) as usize] = value;
+        }
+        if conditions.is_empty()
+            || crate::csv_commands::row_matches_all(&headers, &row, &conditions)
+        {
+            wtr.write_record(&row).map_err(|e| e.to_string())?;
+        }
     }
     wtr.flush().map_err(|e| e.to_string())?;
 
@@ -871,6 +939,86 @@ mod tests {
     }
 
     // convert_cell tests
+
+    fn write_test_xlsx(name: &str, cell_xfs: &str, sheet_body: &str) -> std::path::PathBuf {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        let path = std::env::temp_dir().join(format!("qv_{}_{}.xlsx", name, std::process::id()));
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        let files = [
+            ("[Content_Types].xml", r#"<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>"#.to_string()),
+            ("_rels/.rels", r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#.to_string()),
+            ("xl/workbook.xml", r#"<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>"#.to_string()),
+            ("xl/_rels/workbook.xml.rels", r#"<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"#.to_string()),
+            ("xl/styles.xml", format!(r#"<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font/></fonts><fills count="1"><fill/></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs>{cell_xfs}</cellXfs></styleSheet>"#)),
+            ("xl/worksheets/sheet1.xml", format!(r#"<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">{sheet_body}</worksheet>"#)),
+        ];
+        for (name, content) in files {
+            zip.start_file(name, SimpleFileOptions::default()).unwrap();
+            zip.write_all(content.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        path
+    }
+
+    #[test]
+    fn sparse_sheet_is_read_without_materializing_the_whole_range() {
+        let path = write_test_xlsx(
+            "sparse",
+            r#"<xf numFmtId="0"/>"#,
+            r#"<sheetViews><sheetView><pane ySplit="5000" xSplit="16384" state="frozen"/></sheetView></sheetViews><sheetData><row r="1"><c r="A1"><v>1</v></c></row><row r="1048576"><c r="XFD1048576"><v>2</v></c></row></sheetData>"#,
+        );
+        let data = read_xlsx_sheet(path.to_string_lossy().into_owned(), "Sheet1".into()).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!((data.total_rows, data.total_cols), (1_048_576, 16_384));
+        assert_eq!(data.loaded_cols, MAX_DISPLAY_COLS);
+        assert_eq!(data.rows.len(), MAX_DISPLAY_CELLS / MAX_DISPLAY_COLS);
+        assert!(data.rows.iter().all(|r| r.len() == MAX_DISPLAY_COLS));
+        assert_eq!(data.rows[0][0].value, "1");
+        // フリーズ行・列は読み込んだ範囲を超えない
+        assert_eq!(data.freeze_pane.rows as usize, data.rows.len());
+        assert_eq!(data.freeze_pane.cols as usize, MAX_DISPLAY_COLS);
+    }
+
+    #[test]
+    fn small_sheet_keeps_all_cells_and_formats() {
+        let path = write_test_xlsx(
+            "small",
+            r#"<xf numFmtId="0"/><xf numFmtId="14" applyNumberFormat="1"/><xf numFmtId="38" applyNumberFormat="1"/>"#,
+            r#"<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>name</t></is></c><c r="B1" s="1"><v>45292</v></c><c r="C1" s="2"><v>1234</v></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>x</t></is></c></row></sheetData>"#,
+        );
+        let data = read_xlsx_sheet(path.to_string_lossy().into_owned(), "Sheet1".into()).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!((data.total_rows, data.total_cols, data.loaded_cols), (2, 3, 3));
+        let values: Vec<Vec<&str>> = data.rows.iter().map(|r| r.iter().map(|c| c.value.as_str()).collect()).collect();
+        assert_eq!(values, vec![vec!["name", "2024-01-01", "1234"], vec!["x", "", ""]]);
+        assert_eq!(data.rows[0][2].cell_type, "number");
+    }
+
+    #[test]
+    fn export_streams_rows_and_applies_filters() {
+        let path = write_test_xlsx(
+            "export",
+            r#"<xf numFmtId="0"/>"#,
+            r#"<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>apple</t></is></c><c r="B1"><v>3</v></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>banana</t></is></c></row><row r="4"><c r="B4"><v>7</v></c></row></sheetData>"#,
+        );
+        let out = std::env::temp_dir().join(format!("qv_export_{}.csv", std::process::id()));
+        let input = path.to_string_lossy().into_owned();
+        let output = out.to_string_lossy().into_owned();
+        export_xlsx_sheet_as_csv(input.clone(), "Sheet1".into(), output.clone(), vec![]).unwrap();
+        let all = std::fs::read_to_string(&out).unwrap();
+        let cond = crate::csv_commands::FilterCondition {
+            column: "B".into(),
+            filter_type: "gt".into(),
+            value: "5".into(),
+        };
+        export_xlsx_sheet_as_csv(input, "Sheet1".into(), output, vec![cond]).unwrap();
+        let filtered = std::fs::read_to_string(&out).unwrap();
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&out).ok();
+        assert_eq!(all, "A,B\napple,3\nbanana,\n,\n,7\n");
+        assert_eq!(filtered, "A,B\n,7\n");
+    }
 
     #[test]
     fn serial_to_date_out_of_range_values_do_not_panic() {

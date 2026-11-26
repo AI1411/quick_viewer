@@ -106,9 +106,9 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   );
 
   const headers = useMemo((): string[] => {
-    const cols = tab?.sheetData?.total_cols ?? 0;
+    const cols = tab?.sheetData?.loaded_cols ?? 0;
     return Array.from({ length: cols }, (_, i) => colLetter(i));
-  }, [tab?.sheetData?.total_cols]);
+  }, [tab?.sheetData?.loaded_cols]);
 
   const filters = tab?.filters ?? [];
 
@@ -335,12 +335,14 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
         onClearAll={handleClearAllFilters}
         onExport={handleExport}
       />
-      {tab.sheetData.rows.length < tab.sheetData.total_rows && (
+      {(tab.sheetData.rows.length < tab.sheetData.total_rows ||
+        tab.sheetData.loaded_cols < tab.sheetData.total_cols) && (
         <div
           className="px-3 py-1 text-xs shrink-0"
           style={{ color: "var(--text-secondary)", backgroundColor: "var(--toolbar-bg)", borderBottom: "1px solid var(--border-color)" }}
         >
-          先頭 {tab.sheetData.rows.length.toLocaleString()} 行を表示（全 {tab.sheetData.total_rows.toLocaleString()} 行）
+          先頭 {tab.sheetData.rows.length.toLocaleString()} 行 × {tab.sheetData.loaded_cols.toLocaleString()} 列を表示（全{" "}
+          {tab.sheetData.total_rows.toLocaleString()} 行 × {tab.sheetData.total_cols.toLocaleString()} 列）
         </div>
       )}
       <VirtualTable

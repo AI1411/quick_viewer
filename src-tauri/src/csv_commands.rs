@@ -156,6 +156,18 @@ fn parse_f64(s: &str) -> Option<f64> {
     s.parse::<f64>().ok()
 }
 
+/// 1 行が全フィルタ条件（AND）に合致するか判定する。
+pub(crate) fn row_matches_all(
+    headers: &[String],
+    row: &[String],
+    conditions: &[FilterCondition],
+) -> bool {
+    conditions.iter().all(|cond| match headers.iter().position(|h| h == &cond.column) {
+        Some(idx) => row_matches(row.get(idx).map(|s| s.as_str()).unwrap_or(""), cond),
+        None => false,
+    })
+}
+
 /// 複数フィルタ条件（AND）を全行に適用して合致行を返す。
 pub(crate) fn apply_filters(
     headers: &[String],
@@ -163,16 +175,7 @@ pub(crate) fn apply_filters(
     conditions: &[FilterCondition],
 ) -> Vec<Vec<String>> {
     rows.iter()
-        .filter(|row| {
-            conditions.iter().all(|cond| {
-                match headers.iter().position(|h| h == &cond.column) {
-                    Some(idx) => {
-                        row_matches(row.get(idx).map(|s| s.as_str()).unwrap_or(""), cond)
-                    }
-                    None => false,
-                }
-            })
-        })
+        .filter(|row| row_matches_all(headers, row, conditions))
         .cloned()
         .collect()
 }

@@ -160,6 +160,8 @@ export interface XlsxSheetData {
   rows: XlsxCell[][];
   total_rows: number;
   total_cols: number;
+  /** rows の各行の列数。total_cols が上限を超えると切り詰められる */
+  loaded_cols: number;
   freeze_pane: FreezePane;
 }
 
