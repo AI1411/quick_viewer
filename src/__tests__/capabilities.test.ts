@@ -44,3 +44,20 @@ describe("capabilities/default.json", () => {
     expect(missing).toEqual([]);
   });
 });
+
+describe("tauri.conf.json の CSP", () => {
+  it("IPC のカスタムプロトコルと、CSS に埋め込まれたフォントを遮断しない", async () => {
+    const { default: conf } = await import("../../src-tauri/tauri.conf.json");
+    const directives = Object.fromEntries(
+      conf.app.security.csp.split(";").map((d: string) => {
+        const [name, ...values] = d.trim().split(/\s+/);
+        return [name, values];
+      })
+    );
+    // 無いと invoke が遅い postMessage 経路に落ちる (大きな画像や PDF の受け渡しで効く)
+    expect(directives["connect-src"]).toEqual(expect.arrayContaining(["ipc:", "http://ipc.localhost"]));
+    // Vite は小さなフォント (KaTeX_Size3) を data: URL で CSS に埋め込む
+    expect(directives["font-src"]).toEqual(expect.arrayContaining(["'self'", "data:"]));
+    expect(directives["script-src"]).toEqual(["'self'"]);
+  });
+});
