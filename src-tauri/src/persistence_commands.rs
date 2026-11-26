@@ -12,7 +12,7 @@ fn validate_key(key: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_app_data(app: tauri::AppHandle, key: String, value: String) -> Result<(), String> {
     validate_key(&key)?;
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -21,7 +21,7 @@ pub fn save_app_data(app: tauri::AppHandle, key: String, value: String) -> Resul
     crate::utils::atomic_write(&file, value.as_bytes()).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn load_app_data(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
     validate_key(&key)?;
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;

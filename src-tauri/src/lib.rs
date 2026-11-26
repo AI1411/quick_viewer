@@ -50,7 +50,7 @@ fn detect_format(path: &Path, bytes: &[u8]) -> Result<String, String> {
 
 const MAX_OPEN_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1 GB
 
-#[tauri::command]
+#[tauri::command(async)]
 fn open_file(path: String) -> Result<FileInfo, String> {
     let p = Path::new(&path);
     let size = utils::assert_regular_file(p)?;
@@ -114,6 +114,23 @@ mod tests {
     fn unsupported_format_returns_err() {
         let p = Path::new("photo.jpg");
         assert!(detect_format(p, b"\xFF\xD8\xFF").is_err());
+    }
+
+    /// 同期コマンドは macOS のメインスレッドで実行され、大きなファイルの処理中は UI が固まる。
+    /// ファイルを読み書きするコマンドは #[tauri::command(async)] にする。
+    #[test]
+    fn file_commands_do_not_run_on_the_main_thread() {
+        let sync_command = concat!("#[tauri::", "command]\n");
+        for (name, src) in [
+            ("lib.rs", include_str!("lib.rs")),
+            ("csv_commands.rs", include_str!("csv_commands.rs")),
+            ("pdf_commands.rs", include_str!("pdf_commands.rs")),
+            ("markdown_commands.rs", include_str!("markdown_commands.rs")),
+            ("xlsx_commands.rs", include_str!("xlsx_commands.rs")),
+            ("persistence_commands.rs", include_str!("persistence_commands.rs")),
+        ] {
+            assert!(!src.contains(sync_command), "{name} に同期コマンドがある");
+        }
     }
 
     #[test]

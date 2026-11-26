@@ -667,7 +667,7 @@ fn column_letters(index: usize) -> String {
 
 // ── Tauri コマンド ────────────────────────────────────────
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_xlsx(path: String) -> Result<XlsxInfo, String> {
     let workbook: Xlsx<_> = open_workbook::<Xlsx<_>, _>(&path).map_err(|e| e.to_string())?;
     let names = workbook.sheet_names().to_vec();
@@ -682,7 +682,7 @@ pub fn read_xlsx(path: String) -> Result<XlsxInfo, String> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData, String> {
     let mut workbook: Workbook = open_workbook(&path).map_err(|e: calamine::XlsxError| e.to_string())?;
     let bounds = sheet_bounds(&mut workbook, &sheet_name)?;
@@ -724,7 +724,7 @@ pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData
 }
 
 /// XLSX シートを CSV としてエクスポートする。フィルタ条件（AND 複合）を適用可能。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_xlsx_sheet_as_csv(
     path: String,
     sheet_name: String,
