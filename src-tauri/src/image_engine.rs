@@ -258,7 +258,9 @@ impl Rendered {
 pub mod test_support {
     use super::*;
     use objc2_image_io::{
-        kCGImagePropertyGPSLatitude, kCGImagePropertyGPSLatitudeRef, kCGImagePropertyTIFFMake,
+        kCGImagePropertyExifDictionary, kCGImagePropertyExifPixelXDimension,
+        kCGImagePropertyExifPixelYDimension, kCGImagePropertyGPSLatitude,
+        kCGImagePropertyGPSLatitudeRef, kCGImagePropertyTIFFMake,
     };
 
     /// 撮影時の向きと位置情報・メーカー名を持つファイルを作る (メタデータ処理のテスト用)。
@@ -285,6 +287,21 @@ pub mod test_support {
             assert!(destination.finalize());
         }
         data.to_vec()
+    }
+
+    pub fn exif_pixel_size(source: &Source) -> Option<(i64, i64)> {
+        let props = typed(&source.properties);
+        unsafe {
+            let exif = props
+                .get(kCGImagePropertyExifDictionary)?
+                .downcast::<CFDictionary>()
+                .ok()?;
+            let exif = typed(&exif);
+            Some((
+                number(exif, kCGImagePropertyExifPixelXDimension)?,
+                number(exif, kCGImagePropertyExifPixelYDimension)?,
+            ))
+        }
     }
 
     pub fn camera_make(source: &Source) -> Option<String> {

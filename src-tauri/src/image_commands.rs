@@ -1,6 +1,5 @@
 //! 画像の表示・変換・圧縮。
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, OnceLock};
@@ -345,16 +344,23 @@ struct BatchProgress<'a> {
     item: &'a BatchItem,
 }
 
-/// 既存のファイルも、同じ一括変換の他の出力も上書きしない名前を決める。
-fn unique_output_path(dir: &Path, stem: &str, extension: &str, taken: &mut HashSet<PathBuf>) -> PathBuf {
-    let mut candidate = dir.join(format!("{stem}.{extension}"));
-    let mut n = 1;
-    while candidate.exists() || taken.contains(&candidate) {
-        candidate = dir.join(format!("{stem}-{n}.{extension}"));
-        n += 1;
+/// 既存のファイルも、同じ一括変換の他の出力も上書きしない出力先を確保する。
+/// 空のファイルを排他的に作って場所を取るので、存在確認と確保の間に隙が無く、
+/// 大文字小文字だけ違う名前 (macOS の既定のファイルシステムは区別しない) も衝突として扱われる。
+fn reserve_output_path(dir: &Path, stem: &str, extension: &str) -> std::io::Result<PathBuf> {
+    let mut n = 0u32;
+    loop {
+        let name = match n {
+            0 => format!("{stem}.{extension}"),
+            n => format!("{stem}-{n}.{extension}"),
+        };
+        let candidate = dir.join(name);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&candidate) {
+            Ok(_) => return Ok(candidate),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => return Err(e),
+        }
     }
-    taken.insert(candidate.clone());
-    candidate
 }
 
 fn convert_to_file(source: &Path, output: &Path, options: &ConvertOptions) -> Result<Encoded, String> {
@@ -379,15 +385,18 @@ pub fn convert_batch(
         return Err(format!("一度に変換できるのは {MAX_BATCH_FILES} ファイルまでです"));
     }
 
-    // 出力名はファイル順に決めておく (並列に処理しても結果の名前が変わらない)
-    let mut taken = HashSet::new();
-    let outputs: Vec<PathBuf> = paths
-        .iter()
-        .map(|p| {
-            let stem = Path::new(p).file_stem().and_then(|s| s.to_str()).unwrap_or("image");
-            unique_output_path(output_dir, stem, spec.extensions[0], &mut taken)
-        })
-        .collect();
+    // 出力先はファイル順に確保しておく (並列に処理しても結果の名前が変わらない)
+    let mut outputs: Vec<PathBuf> = Vec::with_capacity(paths.len());
+    for p in paths {
+        let stem = Path::new(p).file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+        match reserve_output_path(output_dir, stem, spec.extensions[0]) {
+            Ok(path) => outputs.push(path),
+            Err(e) => {
+                outputs.iter().for_each(|reserved| drop(std::fs::remove_file(reserved)));
+                return Err(format!("保存先に書き込めません: {e}"));
+            }
+        }
+    }
 
     let next = AtomicUsize::new(0);
     let workers = std::thread::available_parallelism().map_or(2, |n| n.get()).min(4);
@@ -410,13 +419,17 @@ pub fn convert_batch(
                         size: Some(encoded.bytes.len() as u64),
                         error: None,
                     },
-                    Err(error) => BatchItem {
-                        source: source.clone(),
-                        source_size,
-                        output_path: None,
-                        size: None,
-                        error: Some(error),
-                    },
+                    Err(error) => {
+                        // 確保しておいた空のファイルを残さない
+                        let _ = std::fs::remove_file(&outputs[i]);
+                        BatchItem {
+                            source: source.clone(),
+                            source_size,
+                            output_path: None,
+                            size: None,
+                            error: Some(error),
+                        }
+                    }
                 };
                 if tx.send((i, item)).is_err() {
                     break;
@@ -535,6 +548,10 @@ pub fn convert_image(
     let (source, output) = (Path::new(&path), Path::new(&output_path));
     let spec = format_spec(options.format)?;
     crate::utils::require_extension(output, spec.extensions)?;
+    // 保存はシンボリックリンクの先を置き換えるので、リンク先も同じ形式の拡張子でなければ書かない
+    if let Ok(resolved) = std::fs::canonicalize(output) {
+        crate::utils::require_extension(&resolved, spec.extensions)?;
+    }
     if same_file(source, output) {
         return Err("元のファイルには上書きできません。別の名前で保存してください".to_string());
     }
@@ -566,7 +583,9 @@ pub fn convert_images(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::image_engine::test_support::{camera_make, encode_with_camera_metadata};
+    use crate::image_engine::test_support::{
+        camera_make, encode_with_camera_metadata, exif_pixel_size,
+    };
 
     struct TempDir(PathBuf);
 
@@ -817,6 +836,61 @@ mod tests {
     }
 
     #[test]
+    fn batch_keeps_both_files_when_names_differ_only_by_case() {
+        let dir = TempDir::new("case");
+        let out_dir = dir.path("out");
+        for sub in ["a", "b", "out"] {
+            std::fs::create_dir_all(dir.path(sub)).unwrap();
+        }
+        write_photo(&dir.path("a/Photo.png"), 80, 60);
+        write_photo(&dir.path("b/photo.png"), 60, 80);
+        let paths: Vec<String> = ["a/Photo.png", "b/photo.png"]
+            .iter()
+            .map(|p| dir.path(p).to_string_lossy().into_owned())
+            .collect();
+
+        let results = convert_batch(&paths, &out_dir, &options(OutputFormat::Jpeg), |_, _| {}).unwrap();
+
+        // 大文字小文字を区別しないファイルシステムでは Photo.jpg と photo.jpg は同じファイルになる
+        let widths: Vec<u32> = results
+            .iter()
+            .map(|r| engine::open(Path::new(r.output_path.as_ref().unwrap())).unwrap().info.width)
+            .collect();
+        assert_eq!(widths, vec![80, 60]);
+        assert_eq!(std::fs::read_dir(&out_dir).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn convert_image_does_not_write_through_a_symlink_to_another_kind_of_file() {
+        let dir = TempDir::new("symlink");
+        let (png, secret, link) = (dir.path("a.png"), dir.path("notes.txt"), dir.path("out.jpg"));
+        write_photo(&png, 32, 32);
+        std::fs::write(&secret, "keep me").unwrap();
+        std::os::unix::fs::symlink(&secret, &link).unwrap();
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+
+        assert!(convert_image(s(&png), s(&link), options(OutputFormat::Jpeg)).is_err());
+        assert_eq!(std::fs::read_to_string(&secret).unwrap(), "keep me");
+    }
+
+    #[test]
+    fn resized_output_reports_its_real_size_in_exif() {
+        let dir = TempDir::new("exifsize");
+        let jpg = write_camera_jpeg(&dir);
+        let out = dir.path("small.jpg");
+        convert_file(
+            &jpg,
+            &out,
+            &ConvertOptions { resize: Resize::LongEdge { pixels: 20 }, ..options(OutputFormat::Jpeg) },
+        );
+        let source = engine::open(&out).unwrap();
+        assert_eq!((source.info.width, source.info.height), (10, 20));
+        // 元画像の Exif (40x20) をそのまま引き継ぐと古い寸法が残る。ImageIO が書き出し時に直す
+        assert_eq!(exif_pixel_size(&engine::open(&jpg).unwrap()), Some((40, 20)));
+        assert_eq!(exif_pixel_size(&source), Some((10, 20)));
+    }
+
+    #[test]
     fn images_with_huge_dimensions_are_refused_before_decoding() {
         // 2.56 億画素の 1bit PNG。ファイルは 31KB だが、展開には画素数に比例したメモリが要る
         // (4 億画素の同種のファイルで、表示用の展開だけで 450MB を計測)
@@ -855,6 +929,7 @@ mod tests {
             .collect();
         assert_eq!(names, vec![Some("photo-1.jpg".into()), None, Some("photo-2.jpg".into())]);
         assert!(results[1].error.is_some());
+        assert!(!out_dir.join("broken.jpg").exists(), "a failed item must not leave a file behind");
         assert!(results[0].size.unwrap() > 0 && results[0].source_size > 0);
         assert_eq!(std::fs::read(out_dir.join("photo.jpg")).unwrap(), b"existing");
         assert_eq!(engine::open(&out_dir.join("photo-2.jpg")).unwrap().info.width, 60);
