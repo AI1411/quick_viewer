@@ -90,25 +90,8 @@ pub(crate) fn parse_delimiter(d: Option<String>, content: &str) -> u8 {
     }
 }
 
-/// CSV 文字列のデータ行数（ヘッダ除く）を数える。
-fn count_rows(content: &str, delimiter: u8) -> usize {
-    csv::ReaderBuilder::new()
-        .delimiter(delimiter)
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(content.as_bytes())
-        .records()
-        .count()
-}
-
-/// ヘッダと行を最大列数に合わせて padding する（flexible モードで列数が不揃いな場合に使用）。
-fn normalize_columns(headers: &mut Vec<String>, rows: &mut [Vec<String>]) {
-    let max_cols = rows
-        .iter()
-        .map(|r| r.len())
-        .max()
-        .unwrap_or(0)
-        .max(headers.len());
+/// ヘッダと行を max_cols 列に揃える（flexible モードで列数が不揃いな場合に使用）。
+fn pad_columns(headers: &mut Vec<String>, rows: &mut [Vec<String>], max_cols: usize) {
     while headers.len() < max_cols {
         headers.push(format!("Column {}", headers.len() + 1));
     }
@@ -119,53 +102,95 @@ fn normalize_columns(headers: &mut Vec<String>, rows: &mut [Vec<String>]) {
     }
 }
 
-/// 1 つのフィルタ条件に対してセル値が合致するか判定する。
-fn row_matches(value: &str, condition: &FilterCondition) -> bool {
-    match condition.filter_type.as_str() {
-        "exact" => value == condition.value,
-        "contains" => value.contains(&condition.value),
-        "starts_with" => value.starts_with(&condition.value),
-        "regex" => Regex::new(&condition.value)
-            .map(|re| re.is_match(value))
-            .unwrap_or(false),
-        "gt" => parse_f64(value)
-            .zip(parse_f64(&condition.value))
-            .map(|(a, b)| a > b)
-            .unwrap_or(false),
-        "lt" => parse_f64(value)
-            .zip(parse_f64(&condition.value))
-            .map(|(a, b)| a < b)
-            .unwrap_or(false),
-        "gte" => parse_f64(value)
-            .zip(parse_f64(&condition.value))
-            .map(|(a, b)| a >= b)
-            .unwrap_or(false),
-        "lte" => parse_f64(value)
-            .zip(parse_f64(&condition.value))
-            .map(|(a, b)| a <= b)
-            .unwrap_or(false),
-        "eq_num" => parse_f64(value)
-            .zip(parse_f64(&condition.value))
-            .map(|(a, b)| (a - b).abs() < f64::EPSILON)
-            .unwrap_or(false),
-        _ => false,
+enum NumOp {
+    Gt,
+    Lt,
+    Gte,
+    Lte,
+    Eq,
+}
+
+enum Matcher {
+    Exact(String),
+    Contains(String),
+    StartsWith(String),
+    /// 不正な正規表現は何にも合致しない
+    Regex(Option<Regex>),
+    Num(NumOp, Option<f64>),
+    Never,
+}
+
+/// 列位置と判定方法を事前に解決したフィルタ条件。
+/// 正規表現を行ごとにコンパイルしないよう、条件ごとに 1 回だけ作る。
+pub(crate) struct CompiledFilter {
+    column: Option<usize>,
+    matcher: Matcher,
+}
+
+impl Matcher {
+    fn new(condition: &FilterCondition) -> Matcher {
+        let num = |op| Matcher::Num(op, parse_f64(&condition.value));
+        match condition.filter_type.as_str() {
+            "exact" => Matcher::Exact(condition.value.clone()),
+            "contains" => Matcher::Contains(condition.value.clone()),
+            "starts_with" => Matcher::StartsWith(condition.value.clone()),
+            "regex" => Matcher::Regex(Regex::new(&condition.value).ok()),
+            "gt" => num(NumOp::Gt),
+            "lt" => num(NumOp::Lt),
+            "gte" => num(NumOp::Gte),
+            "lte" => num(NumOp::Lte),
+            "eq_num" => num(NumOp::Eq),
+            _ => Matcher::Never,
+        }
     }
+
+    fn matches(&self, value: &str) -> bool {
+        match self {
+            Matcher::Exact(v) => value == v,
+            Matcher::Contains(v) => value.contains(v.as_str()),
+            Matcher::StartsWith(v) => value.starts_with(v.as_str()),
+            Matcher::Regex(re) => re.as_ref().is_some_and(|re| re.is_match(value)),
+            Matcher::Num(op, Some(b)) => parse_f64(value).is_some_and(|a| match op {
+                NumOp::Gt => a > *b,
+                NumOp::Lt => a < *b,
+                NumOp::Gte => a >= *b,
+                NumOp::Lte => a <= *b,
+                NumOp::Eq => (a - b).abs() < f64::EPSILON,
+            }),
+            Matcher::Num(_, None) | Matcher::Never => false,
+        }
+    }
+}
+
+pub(crate) fn compile_filters(
+    headers: &[String],
+    conditions: &[FilterCondition],
+) -> Vec<CompiledFilter> {
+    conditions
+        .iter()
+        .map(|cond| CompiledFilter {
+            column: headers.iter().position(|h| h == &cond.column),
+            matcher: Matcher::new(cond),
+        })
+        .collect()
+}
+
+/// 1 行が全フィルタ条件（AND）に合致するか判定する。
+pub(crate) fn row_matches_all(filters: &[CompiledFilter], row: &[String]) -> bool {
+    filters.iter().all(|f| match f.column {
+        Some(idx) => f.matcher.matches(row.get(idx).map(|s| s.as_str()).unwrap_or("")),
+        None => false,
+    })
+}
+
+/// 1 つのフィルタ条件に対してセル値が合致するか判定する。
+#[cfg(test)]
+fn row_matches(value: &str, condition: &FilterCondition) -> bool {
+    Matcher::new(condition).matches(value)
 }
 
 fn parse_f64(s: &str) -> Option<f64> {
     s.parse::<f64>().ok()
-}
-
-/// 1 行が全フィルタ条件（AND）に合致するか判定する。
-pub(crate) fn row_matches_all(
-    headers: &[String],
-    row: &[String],
-    conditions: &[FilterCondition],
-) -> bool {
-    conditions.iter().all(|cond| match headers.iter().position(|h| h == &cond.column) {
-        Some(idx) => row_matches(row.get(idx).map(|s| s.as_str()).unwrap_or(""), cond),
-        None => false,
-    })
 }
 
 /// 複数フィルタ条件（AND）を全行に適用して合致行を返す。
@@ -174,33 +199,162 @@ pub(crate) fn apply_filters(
     rows: &[Vec<String>],
     conditions: &[FilterCondition],
 ) -> Vec<Vec<String>> {
+    let filters = compile_filters(headers, conditions);
     rows.iter()
-        .filter(|row| row_matches_all(headers, row, conditions))
+        .filter(|row| row_matches_all(&filters, row))
         .cloned()
         .collect()
 }
 
-// ─── Tauri Commands ───────────────────────────────────────────────────────────
+// ─── 解析済み CSV のキャッシュ ────────────────────────────────────────────────
 
 const MAX_CSV_SIZE: u64 = 512 * 1024 * 1024; // 512 MB
+/// この行数ごとにレコード先頭のバイト位置を記録し、チャンク読み込みで先頭から解析し直さない
+const CHECKPOINT_INTERVAL: usize = 1_000;
 
-fn check_csv_file(path: &str) -> Result<(), String> {
+/// 1 回の全件走査で得た CSV の情報。スクロールのたびにファイル全体を読み直し、
+/// 2 回パースしていたのを、デコード済みの内容とレコード位置の索引で置き換える。
+struct ParsedCsv {
+    content: String,
+    encoding: String,
+    delimiter: u8,
+    headers: Vec<String>,
+    total_rows: usize,
+    /// ファイル全体での最大列数 (100 行目以降で増える列にもヘッダを付ける)
+    max_cols: usize,
+    /// checkpoints[i] = (i * CHECKPOINT_INTERVAL) 番目のデータ行の先頭バイト位置
+    checkpoints: Vec<usize>,
+}
+
+type CacheKey = (std::path::PathBuf, u64, Option<std::time::SystemTime>, Option<String>);
+
+/// 直近に開いた 1 ファイル分だけ保持する
+static CSV_CACHE: std::sync::Mutex<Option<(CacheKey, std::sync::Arc<ParsedCsv>)>> =
+    std::sync::Mutex::new(None);
+
+fn parse_csv_file(path: &str, delimiter: Option<String>) -> Result<std::sync::Arc<ParsedCsv>, String> {
     let size = crate::utils::assert_regular_file(std::path::Path::new(path))?;
     if size > MAX_CSV_SIZE {
         return Err(format!("CSV file too large: {} bytes (max 512 MB)", size));
     }
-    Ok(())
+    let modified = fs::metadata(path).ok().and_then(|m| m.modified().ok());
+    let key: CacheKey = (std::path::PathBuf::from(path), size, modified, delimiter.clone());
+    if let Ok(cache) = CSV_CACHE.lock() {
+        if let Some((k, parsed)) = cache.as_ref() {
+            if *k == key {
+                return Ok(parsed.clone());
+            }
+        }
+    }
+
+    let raw = fs::read(path).map_err(|e| e.to_string())?;
+    let (content, encoding) = decode_file(&raw);
+    drop(raw);
+    let delim = parse_delimiter(delimiter, &content);
+
+    let mut rdr = csv::ReaderBuilder::new()
+        .delimiter(delim)
+        .has_headers(true)
+        .flexible(true)
+        .from_reader(content.as_bytes());
+    let headers: Vec<String> = rdr
+        .headers()
+        .map_err(|e| e.to_string())?
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    let mut checkpoints = Vec::new();
+    let mut total_rows = 0usize;
+    let mut max_cols = headers.len();
+    let mut record = csv::StringRecord::new();
+    loop {
+        let start = rdr.position().byte() as usize;
+        if !rdr.read_record(&mut record).map_err(|e| e.to_string())? {
+            break;
+        }
+        if total_rows % CHECKPOINT_INTERVAL == 0 {
+            checkpoints.push(start);
+        }
+        max_cols = max_cols.max(record.len());
+        total_rows += 1;
+    }
+
+    let parsed = std::sync::Arc::new(ParsedCsv {
+        content,
+        encoding,
+        delimiter: delim,
+        headers,
+        total_rows,
+        max_cols,
+        checkpoints,
+    });
+    if let Ok(mut cache) = CSV_CACHE.lock() {
+        *cache = Some((key, parsed.clone()));
+    }
+    Ok(parsed)
 }
+
+impl ParsedCsv {
+    fn reader_from(&self, byte: usize) -> csv::Reader<&[u8]> {
+        csv::ReaderBuilder::new()
+            .delimiter(self.delimiter)
+            .has_headers(false)
+            .flexible(true)
+            .from_reader(&self.content.as_bytes()[byte..])
+    }
+
+    /// offset 行目から limit 行。直前のチェックポイントから読み進める。
+    fn rows(&self, offset: usize, limit: usize) -> Result<Vec<Vec<String>>, String> {
+        if offset >= self.total_rows || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let cp = offset / CHECKPOINT_INTERVAL;
+        let mut rows: Vec<Vec<String>> = self
+            .reader_from(self.checkpoints[cp])
+            .records()
+            .skip(offset - cp * CHECKPOINT_INTERVAL)
+            .take(limit)
+            .map(|r| r.map(|rec| rec.iter().map(|s| s.to_string()).collect()))
+            .collect::<Result<_, _>>()
+            .map_err(|e| e.to_string())?;
+        let mut headers = self.headers.clone();
+        pad_columns(&mut headers, &mut rows, self.max_cols);
+        Ok(rows)
+    }
+
+    fn all_rows(&self) -> Result<Vec<Vec<String>>, String> {
+        self.rows(0, self.total_rows)
+    }
+
+    fn padded_headers(&self) -> Vec<String> {
+        let mut headers = self.headers.clone();
+        pad_columns(&mut headers, &mut [], self.max_cols);
+        headers
+    }
+
+    fn data(&self, rows: Vec<Vec<String>>, total_rows: usize) -> CsvData {
+        let headers = self.padded_headers();
+        CsvData {
+            headers: headers.clone(),
+            rows,
+            meta: CsvMeta {
+                total_rows,
+                columns: headers.len(),
+                encoding: self.encoding.clone(),
+                delimiter: (self.delimiter as char).to_string(),
+                headers,
+            },
+        }
+    }
+}
+
+// ─── Tauri Commands ───────────────────────────────────────────────────────────
 
 /// ファイルのテキストエンコーディングを検出して返す。
 #[tauri::command(async)]
 pub fn detect_encoding(path: String) -> Result<String, String> {
-    crate::utils::catch_panic(move || {
-        check_csv_file(&path)?;
-        let raw = fs::read(&path).map_err(|e| e.to_string())?;
-        let (_, encoding_name) = decode_file(&raw);
-        Ok(encoding_name)
-    })
+    crate::utils::catch_panic(move || Ok(parse_csv_file(&path, None)?.encoding.clone()))
 }
 
 /// CSV ファイルを読み込む。先頭 limit 行（デフォルト 100）とメタデータを返す。
@@ -211,50 +365,9 @@ pub fn read_csv(
     limit: Option<usize>,
 ) -> Result<CsvData, String> {
     crate::utils::catch_panic(move || {
-        check_csv_file(&path)?;
-        let raw = fs::read(&path).map_err(|e| e.to_string())?;
-        let (content, encoding_name) = decode_file(&raw);
-        let delim = parse_delimiter(delimiter, &content);
-        let delim_str = (delim as char).to_string();
-
-        let mut rdr = csv::ReaderBuilder::new()
-            .delimiter(delim)
-            .has_headers(true)
-            .flexible(true)
-            .from_reader(content.as_bytes());
-
-        let mut headers: Vec<String> = rdr
-            .headers()
-            .map_err(|e| e.to_string())?
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-
-        let max_rows = limit.unwrap_or(100);
-        let mut rows: Vec<Vec<String>> = rdr
-            .records()
-            .take(max_rows)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(|r| r.iter().map(|s| s.to_string()).collect())
-            .collect();
-
-        normalize_columns(&mut headers, &mut rows);
-
-        let total_rows = count_rows(&content, delim);
-
-        Ok(CsvData {
-            headers: headers.clone(),
-            rows,
-            meta: CsvMeta {
-                total_rows,
-                columns: headers.len(),
-                encoding: encoding_name,
-                delimiter: delim_str,
-                headers,
-            },
-        })
+        let parsed = parse_csv_file(&path, delimiter)?;
+        let rows = parsed.rows(0, limit.unwrap_or(100))?;
+        Ok(parsed.data(rows, parsed.total_rows))
     })
 }
 
@@ -267,43 +380,12 @@ pub fn read_csv_chunk(
     limit: usize,
 ) -> Result<CsvChunk, String> {
     crate::utils::catch_panic(move || {
-        check_csv_file(&path)?;
-        let raw = fs::read(&path).map_err(|e| e.to_string())?;
-        let (content, _) = decode_file(&raw);
-        let delim = parse_delimiter(delimiter, &content);
-
-        let mut rdr = csv::ReaderBuilder::new()
-            .delimiter(delim)
-            .has_headers(true)
-            .flexible(true)
-            .from_reader(content.as_bytes());
-
-        let mut headers: Vec<String> = rdr
-            .headers()
-            .map_err(|e| e.to_string())?
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-
-        let mut rows: Vec<Vec<String>> = rdr
-            .records()
-            .skip(offset)
-            .take(limit)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(|r| r.iter().map(|s| s.to_string()).collect())
-            .collect();
-
-        normalize_columns(&mut headers, &mut rows);
-
-        let total_rows = count_rows(&content, delim);
-
+        let parsed = parse_csv_file(&path, delimiter)?;
         Ok(CsvChunk {
-            headers,
-            rows,
+            headers: parsed.padded_headers(),
+            rows: parsed.rows(offset, limit)?,
             offset,
-            total_rows,
+            total_rows: parsed.total_rows,
         })
     })
 }
@@ -316,54 +398,10 @@ pub fn filter_csv(
     conditions: Vec<FilterCondition>,
 ) -> Result<CsvData, String> {
     crate::utils::catch_panic(move || {
-        check_csv_file(&path)?;
-        let raw = fs::read(&path).map_err(|e| e.to_string())?;
-        let (content, encoding_name) = decode_file(&raw);
-        let delim = parse_delimiter(delimiter, &content);
-        let delim_str = (delim as char).to_string();
-
-        let mut rdr = csv::ReaderBuilder::new()
-            .delimiter(delim)
-            .has_headers(true)
-            .flexible(true)
-            .from_reader(content.as_bytes());
-
-        let mut headers: Vec<String> = rdr
-            .headers()
-            .map_err(|e| e.to_string())?
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-
-        let mut all_rows: Vec<Vec<String>> = rdr
-            .records()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(|r| r.iter().map(|s| s.to_string()).collect())
-            .collect();
-
-        normalize_columns(&mut headers, &mut all_rows);
-
-        let filtered = if conditions.is_empty() {
-            all_rows
-        } else {
-            apply_filters(&headers, &all_rows, &conditions)
-        };
-
-        let total_rows = filtered.len();
-
-        Ok(CsvData {
-            headers: headers.clone(),
-            rows: filtered,
-            meta: CsvMeta {
-                total_rows,
-                columns: headers.len(),
-                encoding: encoding_name,
-                delimiter: delim_str,
-                headers,
-            },
-        })
+        let parsed = parse_csv_file(&path, delimiter)?;
+        let rows = apply_filters(&parsed.padded_headers(), &parsed.all_rows()?, &conditions);
+        let total = rows.len();
+        Ok(parsed.data(rows, total))
     })
 }
 
@@ -376,51 +414,21 @@ pub fn export_csv(
     conditions: Vec<FilterCondition>,
 ) -> Result<(), String> {
     crate::utils::catch_panic(move || {
-        check_csv_file(&path)?;
-        let raw = fs::read(&path).map_err(|e| e.to_string())?;
-        let (content, _) = decode_file(&raw);
-        let delim = parse_delimiter(delimiter, &content);
-
-        let mut rdr = csv::ReaderBuilder::new()
-            .delimiter(delim)
-            .has_headers(true)
-            .flexible(true)
-            .from_reader(content.as_bytes());
-
-        let mut headers: Vec<String> = rdr
-            .headers()
-            .map_err(|e| e.to_string())?
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-
-        let mut all_rows: Vec<Vec<String>> = rdr
-            .records()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .map(|r| r.iter().map(|s| s.to_string()).collect())
-            .collect();
-
-        normalize_columns(&mut headers, &mut all_rows);
-
-        let filtered = if conditions.is_empty() {
-            all_rows
-        } else {
-            apply_filters(&headers, &all_rows, &conditions)
-        };
+        let parsed = parse_csv_file(&path, delimiter)?;
+        let headers = parsed.padded_headers();
+        let filters = compile_filters(&headers, &conditions);
 
         let out_file = fs::File::create(&output_path).map_err(|e| e.to_string())?;
         let mut wtr = csv::WriterBuilder::new()
-            .delimiter(delim)
+            .delimiter(parsed.delimiter)
             .from_writer(out_file);
-
         wtr.write_record(&headers).map_err(|e| e.to_string())?;
-        for row in &filtered {
-            wtr.write_record(row).map_err(|e| e.to_string())?;
+        for row in parsed.all_rows()? {
+            if row_matches_all(&filters, &row) {
+                wtr.write_record(&row).map_err(|e| e.to_string())?;
+            }
         }
         wtr.flush().map_err(|e| e.to_string())?;
-
         Ok(())
     })
 }
@@ -455,13 +463,13 @@ mod tests {
     }
 
     #[test]
-    fn normalize_columns_pads_short_header_and_rows() {
+    fn pad_columns_pads_short_header_and_rows() {
         let mut headers = vec!["sep=,".to_string()];
         let mut rows = vec![
             vec!["a".into(), "b".into(), "c".into()],
             vec!["d".into(), "e".into()],
         ];
-        normalize_columns(&mut headers, &mut rows);
+        pad_columns(&mut headers, &mut rows, 3);
         assert_eq!(headers, vec!["sep=,", "Column 2", "Column 3"]);
         assert_eq!(rows[0], vec!["a", "b", "c"]);
         assert_eq!(rows[1], vec!["d", "e", ""]);
@@ -592,6 +600,69 @@ mod tests {
         ];
         let result = apply_filters(&headers, &rows, &[]);
         assert_eq!(result.len(), 2);
+    }
+
+    fn temp_csv(name: &str, content: &str) -> String {
+        let path = std::env::temp_dir().join(format!("qv_csv_{}_{}.csv", name, std::process::id()));
+        std::fs::write(&path, content).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn chunks_across_checkpoints_return_the_right_rows() {
+        let mut content = String::from("id,note\n");
+        for i in 0..2_500 {
+            // 改行を含む引用符付きフィールドでもレコード位置がずれないこと
+            content.push_str(&format!("{i},\"line1\nline2 {i}\"\n"));
+        }
+        let path = temp_csv("chunks", &content);
+        let chunk = read_csv_chunk(path.clone(), None, 1_999, 3).unwrap();
+        let head = read_csv(path.clone(), None, Some(2)).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(chunk.total_rows, 2_500);
+        let ids: Vec<&str> = chunk.rows.iter().map(|r| r[0].as_str()).collect();
+        assert_eq!(ids, vec!["1999", "2000", "2001"]);
+        assert_eq!(chunk.rows[1][1], "line1\nline2 2000");
+        assert_eq!(head.meta.total_rows, 2_500);
+        assert_eq!(head.rows.len(), 2);
+    }
+
+    #[test]
+    fn columns_that_appear_after_the_first_rows_get_headers() {
+        let mut content = String::from("a,b\n");
+        for _ in 0..150 {
+            content.push_str("1,2\n");
+        }
+        content.push_str("1,2,3,4\n");
+        let path = temp_csv("wide", &content);
+        let first = read_csv(path.clone(), None, Some(100)).unwrap();
+        let tail = read_csv_chunk(path.clone(), None, 150, 10).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(first.headers, vec!["a", "b", "Column 3", "Column 4"]);
+        assert!(first.rows.iter().all(|r| r.len() == 4));
+        assert_eq!(tail.rows[0], vec!["1", "2", "3", "4"]);
+    }
+
+    #[test]
+    fn modified_file_is_parsed_again() {
+        let path = temp_csv("modified", "a\n1\n");
+        assert_eq!(read_csv(path.clone(), None, None).unwrap().meta.total_rows, 1);
+        std::fs::write(&path, "a\n1\n2\n3\n").unwrap();
+        let after = read_csv(path.clone(), None, None).unwrap();
+        std::fs::remove_file(&path).ok();
+        assert_eq!(after.meta.total_rows, 3);
+    }
+
+    #[test]
+    fn export_writes_only_matching_rows() {
+        let path = temp_csv("export_src", "name,age\nAlice,30\nBob,25\nCarol,35\n");
+        let out = std::env::temp_dir().join(format!("qv_csv_export_{}.csv", std::process::id()));
+        let cond = FilterCondition { column: "age".into(), filter_type: "gte".into(), value: "30".into() };
+        export_csv(path.clone(), None, out.to_string_lossy().into_owned(), vec![cond]).unwrap();
+        let written = std::fs::read_to_string(&out).unwrap();
+        std::fs::remove_file(&path).ok();
+        std::fs::remove_file(&out).ok();
+        assert_eq!(written, "name,age\nAlice,30\nCarol,35\n");
     }
 
     #[test]

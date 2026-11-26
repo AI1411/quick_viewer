@@ -755,6 +755,7 @@ pub fn export_xlsx_sheet_as_csv(
         cells.sort_unstable_by_key(|(row, col, _)| (*row, *col));
 
         let headers: Vec<String> = (0..b.cols()).map(column_letters).collect();
+        let filters = crate::csv_commands::compile_filters(&headers, &conditions);
         let out_file = std::fs::File::create(&output_path).map_err(|e| e.to_string())?;
         let mut wtr = csv::WriterBuilder::new().delimiter(b',').from_writer(out_file);
         wtr.write_record(&headers).map_err(|e| e.to_string())?;
@@ -765,9 +766,7 @@ pub fn export_xlsx_sheet_as_csv(
             while let Some((_, col, value)) = cells.next_if(|(r, _, _)| *r == row_index) {
                 row[(col - b.col_start) as usize] = value;
             }
-            if conditions.is_empty()
-                || crate::csv_commands::row_matches_all(&headers, &row, &conditions)
-            {
+            if crate::csv_commands::row_matches_all(&filters, &row) {
                 wtr.write_record(&row).map_err(|e| e.to_string())?;
             }
         }
