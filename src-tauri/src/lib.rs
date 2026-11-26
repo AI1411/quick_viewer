@@ -116,15 +116,51 @@ mod tests {
     }
 
     #[test]
+    fn navigation_allows_only_app_entry() {
+        let ok = |u: &str| is_app_entry_url(&tauri::Url::parse(u).unwrap());
+        assert!(ok("tauri://localhost"));
+        assert!(ok("tauri://localhost/"));
+        assert!(ok("tauri://localhost/#usage"));
+        assert!(ok("http://tauri.localhost/index.html"));
+        assert!(!ok("tauri://localhost/docs/guide.md"));
+        assert!(!ok("https://evil.example/"));
+        assert!(!ok("https://localhost.evil.example/"));
+        assert!(!ok("file:///etc/passwd"));
+        assert!(!ok("about:blank"));
+    }
+
+    #[test]
     fn greet_returns_greeting() {
         let result = format!("Hello, {}! You've been greeted from Rust!", "QuickView");
         assert!(result.contains("QuickView"));
     }
 }
 
+/// webview の遷移先をアプリ自身のトップページに限定する。
+/// 外部サイトへの遷移はアプリ画面を乗っ取られ、アプリ内パスへの遷移は
+/// SPA の再読み込みで全タブが消えるため、どちらも拒否する。
+fn is_app_entry_url(url: &tauri::Url) -> bool {
+    let is_app_origin = match url.scheme() {
+        "tauri" => url.host_str() == Some("localhost"),
+        "http" | "https" => {
+            url.host_str() == Some("tauri.localhost")
+                || (cfg!(debug_assertions)
+                    && url.host_str() == Some("localhost")
+                    && url.port() == Some(1420))
+        }
+        _ => false,
+    };
+    is_app_origin && matches!(url.path(), "" | "/" | "/index.html")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("navigation-guard")
+                .on_navigation(|_webview, url| is_app_entry_url(url))
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

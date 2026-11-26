@@ -11,9 +11,9 @@ import { TitleBar } from "./components/TitleBar";
 import { ViewerArea } from "./components/ViewerArea";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { RecentFilesMenu } from "./components/RecentFilesMenu";
-import { openFile, showOpenDialog } from "./lib/fileCommands";
+import { showOpenDialog } from "./lib/fileCommands";
+import { openPathInTab } from "./lib/openPathInTab";
 import { useTabStore, useSettingsStore, useSearchStore, useRecentFilesStore, showError } from "./stores";
-import type { RecentFile } from "./stores";
 import { Toast } from "./components/Toast";
 import { errorMessage } from "./lib/errorUtils";
 import { useShortcuts } from "./hooks/useShortcuts";
@@ -27,27 +27,6 @@ interface WindowState {
   x: number;
   y: number;
   isMaximized: boolean;
-}
-
-async function handleOpenPath(
-  path: string,
-  addTab: ReturnType<typeof useTabStore.getState>["addTab"],
-  setActiveTab: ReturnType<typeof useTabStore.getState>["setActiveTab"]
-) {
-  try {
-    const info = await openFile(path);
-    const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    addTab({ id, title: info.name, filePath: info.path, format: info.format, isDirty: false, reloadCount: 0 });
-    setActiveTab(id);
-    useRecentFilesStore.getState().addRecentFile({
-      path: info.path,
-      name: info.name,
-      format: info.format as RecentFile["format"],
-      openedAt: new Date().toISOString(),
-    });
-  } catch (err) {
-    showError(`ファイルを開けませんでした: ${errorMessage(err)}`);
-  }
 }
 
 function App() {
@@ -182,9 +161,8 @@ function App() {
     // ファイル
     "cmd+o": async () => {
       try {
-        const { addTab, setActiveTab } = useTabStore.getState();
         const path = await showOpenDialog();
-        if (path) await handleOpenPath(path, addTab, setActiveTab);
+        if (path) await openPathInTab(path);
       } catch (err) {
         showError(`ファイルダイアログを開けませんでした: ${errorMessage(err)}`);
       }
@@ -262,9 +240,8 @@ function App() {
         if (cancelled) return;
         if (event.payload.type === "drop") {
           const paths = event.payload.paths ?? [];
-          const { addTab, setActiveTab } = useTabStore.getState();
           for (const path of paths) {
-            handleOpenPath(path, addTab, setActiveTab);
+            openPathInTab(path);
           }
         }
       })
@@ -292,10 +269,7 @@ function App() {
             <ViewerArea />
           ) : (
             <EmptyState
-              onOpenFile={async (path) => {
-                const { addTab, setActiveTab } = useTabStore.getState();
-                await handleOpenPath(path, addTab, setActiveTab);
-              }}
+              onOpenFile={openPathInTab}
             />
           )}
         </main>
@@ -313,10 +287,7 @@ function App() {
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
       {recentMenuOpen && (
         <RecentFilesMenu
-          onOpen={async (file) => {
-            const { addTab, setActiveTab } = useTabStore.getState();
-            await handleOpenPath(file.path, addTab, setActiveTab);
-          }}
+          onOpen={(file) => openPathInTab(file.path)}
           onClose={() => setRecentMenuOpen(false)}
         />
       )}

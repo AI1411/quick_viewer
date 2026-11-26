@@ -6,6 +6,7 @@ import mermaid from "mermaid";
 import "katex/dist/katex.min.css";
 import { useSearchStore } from "../../stores/searchStore";
 import { highlightTextNodes, clearSearchMarks, applyMarkStyles } from "../../lib/searchHighlight";
+import { handleRenderedLinkClick } from "../../lib/markdownLinks";
 
 let _highlighter: Highlighter | null = null;
 let _highlighterPromise: Promise<Highlighter> | null = null;
@@ -201,6 +202,9 @@ export function RenderedView({ html, filePath, containerRef, onScroll }: Rendere
       <div
         ref={innerRef}
         className="markdown-body max-w-4xl mx-auto px-8 py-6"
+        onClick={(e) => {
+          if (innerRef.current) handleRenderedLinkClick(e, innerRef.current, filePath);
+        }}
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </div>
