@@ -85,3 +85,24 @@ describe("PdfViewer の注釈保存", () => {
     expect(saves()).toEqual([JSON.stringify([saved, added])]);
   });
 });
+
+describe("PdfViewer のキーボード操作", () => {
+  it("メモ入力中の矢印キーではページを移動しない", async () => {
+    render(<PdfViewer tabId="t1" filePath="/doc.pdf" />);
+    await flush(0);
+    const note = document.createElement("textarea");
+    document.body.appendChild(note);
+    note.focus();
+
+    act(() => {
+      note.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    });
+    expect(usePdfStore.getState().tabs.t1?.currentPage).toBe(1);
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    });
+    expect(usePdfStore.getState().tabs.t1?.currentPage).toBe(2);
+    note.remove();
+  });
+});

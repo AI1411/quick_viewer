@@ -13,6 +13,11 @@ const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4.0;
 const ZOOM_STEP = 0.25;
 
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
+
 function parseAnnotations(json: string): Annotation[] {
   const parsed: unknown = JSON.parse(json);
   if (!Array.isArray(parsed)) throw new Error("annotations sidecar is not an array");
@@ -184,7 +189,8 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
       const store = usePdfStore.getState();
       const tab = store.tabs[tabId];
       if (!tab?.pdfInfo) return;
-      if (document.activeElement === pageInputRef.current) return;
+      // メモの入力欄や検索欄で矢印キーを押したときはページを移動しない
+      if (isTextEntryTarget(e.target)) return;
 
       if (e.key === "ArrowRight" || e.key === "ArrowDown") {
         e.preventDefault();
