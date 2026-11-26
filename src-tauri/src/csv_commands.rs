@@ -205,7 +205,8 @@ fn parse_f64(s: &str) -> Option<f64> {
 }
 
 /// 複数フィルタ条件（AND）を全行に適用して合致行を返す。
-pub(crate) fn apply_filters(
+#[cfg(test)]
+fn apply_filters(
     headers: &[String],
     rows: &[Vec<String>],
     conditions: &[FilterCondition],
