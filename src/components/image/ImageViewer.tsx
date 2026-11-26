@@ -77,6 +77,21 @@ export function ImageViewer({ tabId, filePath }: Props) {
   const [fit, setFit] = useState(true);
   const [saving, setSaving] = useState(false);
   const estimateSeq = useRef(0);
+  // 見積もりは同時に 1 件だけ走らせる。Rust 側の変換は途中で止められないので、
+  // 設定を変えるたびに投げると古い変換が並行して走り続けてしまう
+  const estimator = useRef<{ busy: boolean; queued: (() => void) | null; disposed: boolean }>({
+    busy: false,
+    queued: null,
+    disposed: false,
+  });
+  useEffect(() => {
+    const e = estimator.current;
+    e.disposed = false;
+    return () => {
+      e.disposed = true;
+      e.queued = null;
+    };
+  }, []);
 
   const storedOptions = useImageStore((s) => s.optionsByTab[tabId]);
   const [initialOptions] = useState(() => useImageStore.getState().lastOptions);
@@ -117,15 +132,30 @@ export function ImageViewer({ tabId, filePath }: Props) {
       status: "running",
       previous: prev.status === "done" ? prev.estimate : prev.status === "running" ? prev.previous : null,
     }));
-    const timer = setTimeout(() => {
+    const run = () => {
+      const e = estimator.current;
+      // 待っている間にさらに設定が変わっていたら、この要求は捨てる (新しい要求が後から来る)
+      if (e.disposed || seq !== estimateSeq.current) return;
+      if (e.busy) {
+        e.queued = run;
+        return;
+      }
+      e.busy = true;
       estimateImage(filePath, JSON.parse(optionsKey) as ImageConvertOptions, showConverted)
         .then((result) => {
           if (seq === estimateSeq.current) setEstimate({ status: "done", estimate: result });
         })
         .catch((err) => {
           if (seq === estimateSeq.current) setEstimate({ status: "error", message: errorMessage(err) });
+        })
+        .finally(() => {
+          e.busy = false;
+          const next = e.queued;
+          e.queued = null;
+          next?.();
         });
-    }, ESTIMATE_DEBOUNCE_MS);
+    };
+    const timer = setTimeout(run, ESTIMATE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [ready, filePath, optionsKey, showConverted]);
 
@@ -264,7 +294,7 @@ export function ImageViewer({ tabId, filePath }: Props) {
                 {latest.width}×{latest.height}
                 {latest.quality !== null && ` · 品質 ${latest.quality}`}
               </div>
-              {options.target_bytes !== null && latest.size > options.target_bytes && (
+              {estimate.status === "done" && options.target_bytes !== null && latest.size > options.target_bytes && (
                 <div className="text-xs" style={{ color: "#f59e0b" }}>
                   目標サイズには収まりませんでした。
                 </div>
