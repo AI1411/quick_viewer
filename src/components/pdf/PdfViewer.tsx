@@ -1,7 +1,7 @@
 import { useEffect, useCallback, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { usePdfStore } from "../../stores/pdfStore";
-import { showError } from "../../stores/toastStore";
+import { showError, showWarning } from "../../stores/toastStore";
 import { loadPdfDocument } from "../../lib/pdfLib";
 import { PdfCanvas } from "./PdfCanvas";
 import { ThumbnailSidebar } from "./ThumbnailSidebar";
@@ -12,6 +12,33 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4.0;
 const ZOOM_STEP = 0.25;
+
+function parseAnnotations(json: string): Annotation[] {
+  const parsed: unknown = JSON.parse(json);
+  if (!Array.isArray(parsed)) throw new Error("annotations sidecar is not an array");
+  return parsed as Annotation[];
+}
+
+function emptyPdfInfo(): PdfInfo {
+  return {
+    page_count: 0,
+    title: null,
+    author: null,
+    subject: null,
+    creator: null,
+    producer: null,
+    creation_date: null,
+    modification_date: null,
+    encrypted: false,
+    outlines: [],
+  };
+}
+
+function saveAnnotationsJson(pdfPath: string, annotationsJson: string) {
+  invoke("save_annotations", { pdfPath, annotationsJson }).catch((err: unknown) => {
+    showError(`注釈の保存に失敗しました: ${String(err)}`);
+  });
+}
 
 interface PdfViewerProps {
   tabId: string;
@@ -85,7 +112,10 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
   const tabState = usePdfStore((s) => s.tabs[tabId]);
   const containerRef = useRef<HTMLDivElement>(null);
   const pageInputRef = useRef<HTMLInputElement>(null);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 注釈 sidecar を正しく読めた場合だけ true。読込失敗中に既定値 [] で上書きしないためのゲート
+  const annotationsWritableRef = useRef(false);
+  const lastSavedJsonRef = useRef<string | null>(null);
+  const pendingSaveRef = useRef<string | null>(null);
 
   // ── 初期化 ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -94,34 +124,41 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
     const store = usePdfStore.getState();
     store.initTab(tabId);
     store.setLoading(tabId, true);
+    annotationsWritableRef.current = false;
+    lastSavedJsonRef.current = null;
+    pendingSaveRef.current = null;
 
     Promise.all([
-      invoke<PdfInfo>("read_pdf_info", { path: filePath }),
       loadPdfDocument(filePath),
-      invoke<string>("load_annotations", { pdfPath: filePath }),
+      // lopdf で読めなくても pdf.js で表示できる PDF はあるので、メタ情報の失敗は致命的にしない
+      invoke<PdfInfo>("read_pdf_info", { path: filePath }).catch(() => null),
+      invoke<string>("load_annotations", { pdfPath: filePath }).then(parseAnnotations, () => null),
     ])
-      .then(([info, doc, annsJson]) => {
+      .then(([doc, info, anns]) => {
         if (cancelled) { doc.destroy(); return; }
         localDoc = doc;
-        store.setPdfInfo(tabId, info);
+        store.setPdfInfo(tabId, { ...(info ?? emptyPdfInfo()), page_count: doc.numPages });
         store.setPdfDocument(tabId, doc);
         store.setLoading(tabId, false);
-        // 注釈 JSON が巨大（5MB 超）または破損していても無視
-        if (annsJson.length < 5 * 1024 * 1024) {
-          try {
-            const anns: Annotation[] = JSON.parse(annsJson);
-            if (Array.isArray(anns) && anns.length > 0) {
-              store.setAnnotations(tabId, anns);
-            }
-          } catch {
-            // 注釈ファイルが不正な場合は無視
-          }
+        if (anns === null) {
+          showWarning("注釈ファイルを読み込めなかったため、このファイルの注釈は保存しません");
+          return;
         }
+        lastSavedJsonRef.current = JSON.stringify(anns);
+        if (anns.length > 0) store.setAnnotations(tabId, anns);
+        annotationsWritableRef.current = true;
       })
       .catch((err) => { if (!cancelled) store.setError(tabId, String(err)); });
 
     return () => {
       cancelled = true;
+      // デバウンス待ちの注釈を閉じる前に書き出す
+      const pending = pendingSaveRef.current;
+      if (pending !== null && annotationsWritableRef.current) {
+        saveAnnotationsJson(filePath, pending);
+      }
+      pendingSaveRef.current = null;
+      annotationsWritableRef.current = false;
       localDoc?.destroy();
       usePdfStore.getState().removeTab(tabId);
     };
@@ -129,20 +166,16 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
 
   // ── 注釈の自動保存（デバウンス 500ms）────────────────────────────────────
   useEffect(() => {
-    if (!tabState?.annotations) return;
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      const allAnnotations = Object.values(tabState.annotations).flat();
-      invoke("save_annotations", {
-        pdfPath: filePath,
-        annotationsJson: JSON.stringify(allAnnotations),
-      }).catch((err: unknown) => {
-        showError(`注釈の保存に失敗しました: ${String(err)}`);
-      });
+    if (!annotationsWritableRef.current || !tabState?.annotations) return;
+    const json = JSON.stringify(Object.values(tabState.annotations).flat());
+    if (json === lastSavedJsonRef.current) return;
+    pendingSaveRef.current = json;
+    const timer = setTimeout(() => {
+      pendingSaveRef.current = null;
+      lastSavedJsonRef.current = json;
+      saveAnnotationsJson(filePath, json);
     }, 500);
-    return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    };
+    return () => clearTimeout(timer);
   }, [tabState?.annotations, filePath]);
 
   // ── キーボードナビゲーション ───────────────────────────────────────────────

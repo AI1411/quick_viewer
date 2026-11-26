@@ -338,6 +338,8 @@ pub fn read_pdf_bytes(path: String) -> Result<String, String> {
 
 // ─── Annotation Persistence ───────────────────────────────────────────────────
 
+const MAX_ANNOTATIONS_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
+
 fn annotation_key(pdf_path: &str) -> String {
     Sha256::digest(pdf_path.as_bytes())
         .iter()
@@ -357,6 +359,9 @@ pub fn save_annotations(
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("annotations");
+    if annotations_json.len() as u64 > MAX_ANNOTATIONS_SIZE {
+        return Err("annotations exceed size limit (10 MB)".to_string());
+    }
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let key = annotation_key(&pdf_path);
     let file = dir.join(format!("{}.json", key));
@@ -377,9 +382,9 @@ pub fn load_annotations(app: tauri::AppHandle, pdf_path: String) -> Result<Strin
         return Ok("[]".to_string());
     }
     let meta = std::fs::metadata(&file).map_err(|e| e.to_string())?;
-    if meta.len() > 10 * 1024 * 1024 {
-        // 巨大な sidecar は破損とみなし無視
-        return Ok("[]".to_string());
+    if meta.len() > MAX_ANNOTATIONS_SIZE {
+        // "[]" を返すとフロントがそれを保存して既存の注釈を消すため、エラーで読み込みを止める
+        return Err("annotation sidecar exceeds size limit (10 MB)".to_string());
     }
     std::fs::read_to_string(&file).map_err(|e| e.to_string())
 }
