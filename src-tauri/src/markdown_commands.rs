@@ -155,10 +155,12 @@ fn sanitize_markdown_html(html: &str) -> String {
 
 #[tauri::command(async)]
 pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
-    let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let (frontmatter, content) = parse_frontmatter(&raw);
-    let (html, toc) = render_markdown(content);
-    Ok(MarkdownResult { html, toc, frontmatter, raw })
+    crate::utils::catch_panic(move || {
+        let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let (frontmatter, content) = parse_frontmatter(&raw);
+        let (html, toc) = render_markdown(content);
+        Ok(MarkdownResult { html, toc, frontmatter, raw })
+    })
 }
 
 #[tauri::command(async)]
@@ -210,9 +212,11 @@ pub fn read_local_image(path: String) -> Result<String, String> {
 
 #[tauri::command(async)]
 pub fn render_markdown_string(content: String) -> Result<MarkdownResult, String> {
-    let (frontmatter, body) = parse_frontmatter(&content);
-    let (html, toc) = render_markdown(body);
-    Ok(MarkdownResult { html, toc, frontmatter, raw: content })
+    crate::utils::catch_panic(move || {
+        let (frontmatter, body) = parse_frontmatter(&content);
+        let (html, toc) = render_markdown(body);
+        Ok(MarkdownResult { html, toc, frontmatter, raw: content })
+    })
 }
 
 #[cfg(test)]

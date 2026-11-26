@@ -228,57 +228,59 @@ const MAX_PDF_SIZE: u64 = 512 * 1024 * 1024; // 512 MB
 /// Returns PDF metadata, page count, and outline (bookmarks).
 #[tauri::command(async)]
 pub fn read_pdf_info(path: String) -> Result<PdfInfo, String> {
-    crate::utils::assert_regular_file(std::path::Path::new(&path))
-        .map_err(|e| format!("Failed to load PDF: {}", e))?;
+    crate::utils::catch_panic(move || {
+        crate::utils::assert_regular_file(std::path::Path::new(&path))
+            .map_err(|e| format!("Failed to load PDF: {}", e))?;
 
-    let doc = Document::load(&path)
-        .map_err(|e| format!("Failed to load PDF: {}", e))?;
+        let doc = Document::load(&path)
+            .map_err(|e| format!("Failed to load PDF: {}", e))?;
 
-    let page_count = doc.get_pages().len();
-    let encrypted = doc.is_encrypted();
+        let page_count = doc.get_pages().len();
+        let encrypted = doc.is_encrypted();
 
-    let mut title = None;
-    let mut author = None;
-    let mut subject = None;
-    let mut creator = None;
-    let mut producer = None;
-    let mut creation_date = None;
-    let mut modification_date = None;
+        let mut title = None;
+        let mut author = None;
+        let mut subject = None;
+        let mut creator = None;
+        let mut producer = None;
+        let mut creation_date = None;
+        let mut modification_date = None;
 
-    if let Ok(info_ref) = doc.trailer.get(b"Info").and_then(|r| r.as_reference()) {
-        if let Ok(info_dict) = doc.get_dictionary(info_ref) {
-            let info_dict = info_dict.clone();
-            for (key, value) in info_dict.iter() {
-                if let Ok(raw) = value.as_str() {
-                    let text = decode_pdf_string(raw);
-                    match key.as_slice() {
-                        b"Title" => title = Some(text),
-                        b"Author" => author = Some(text),
-                        b"Subject" => subject = Some(text),
-                        b"Creator" => creator = Some(text),
-                        b"Producer" => producer = Some(text),
-                        b"CreationDate" => creation_date = Some(text),
-                        b"ModDate" => modification_date = Some(text),
-                        _ => {}
+        if let Ok(info_ref) = doc.trailer.get(b"Info").and_then(|r| r.as_reference()) {
+            if let Ok(info_dict) = doc.get_dictionary(info_ref) {
+                let info_dict = info_dict.clone();
+                for (key, value) in info_dict.iter() {
+                    if let Ok(raw) = value.as_str() {
+                        let text = decode_pdf_string(raw);
+                        match key.as_slice() {
+                            b"Title" => title = Some(text),
+                            b"Author" => author = Some(text),
+                            b"Subject" => subject = Some(text),
+                            b"Creator" => creator = Some(text),
+                            b"Producer" => producer = Some(text),
+                            b"CreationDate" => creation_date = Some(text),
+                            b"ModDate" => modification_date = Some(text),
+                            _ => {}
+                        }
                     }
                 }
             }
         }
-    }
 
-    let outlines = extract_outlines(&doc);
+        let outlines = extract_outlines(&doc);
 
-    Ok(PdfInfo {
-        page_count,
-        title,
-        author,
-        subject,
-        creator,
-        producer,
-        creation_date,
-        modification_date,
-        encrypted,
-        outlines,
+        Ok(PdfInfo {
+            page_count,
+            title,
+            author,
+            subject,
+            creator,
+            producer,
+            creation_date,
+            modification_date,
+            encrypted,
+            outlines,
+        })
     })
 }
 
@@ -286,54 +288,56 @@ pub fn read_pdf_info(path: String) -> Result<PdfInfo, String> {
 /// `page_index` is 0-based. `scale` controls render resolution (default 1.5).
 #[tauri::command(async)]
 pub fn read_pdf_page(path: String, page_index: u32, scale: Option<f32>) -> Result<PdfPageData, String> {
-    crate::utils::assert_regular_file(std::path::Path::new(&path))
-        .map_err(|e| format!("Failed to load PDF: {}", e))?;
+    crate::utils::catch_panic(move || {
+        crate::utils::assert_regular_file(std::path::Path::new(&path))
+            .map_err(|e| format!("Failed to load PDF: {}", e))?;
 
-    let scale = scale.unwrap_or(1.5_f32);
-    let target_width = (595.0 * scale) as i32; // A4 width in points × scale
+        let scale = scale.unwrap_or(1.5_f32);
+        let target_width = (595.0 * scale) as i32; // A4 width in points × scale
 
-    let pdfium = get_pdfium()?;
+        let pdfium = get_pdfium()?;
 
-    let document = pdfium
-        .load_pdf_from_file(&path, None)
-        .map_err(|e| format!("Failed to load PDF: {}", e))?;
+        let document = pdfium
+            .load_pdf_from_file(&path, None)
+            .map_err(|e| format!("Failed to load PDF: {}", e))?;
 
-    let page_count = document.pages().len() as u32;
-    if page_index >= page_count {
-        return Err(format!(
-            "Page index {} out of range (document has {} pages)",
-            page_index, page_count
-        ));
-    }
+        let page_count = document.pages().len() as u32;
+        if page_index >= page_count {
+            return Err(format!(
+                "Page index {} out of range (document has {} pages)",
+                page_index, page_count
+            ));
+        }
 
-    let render_config = PdfRenderConfig::new()
-        .set_target_width(target_width)
-        .set_maximum_height(4096);
+        let render_config = PdfRenderConfig::new()
+            .set_target_width(target_width)
+            .set_maximum_height(4096);
 
-    let page = document
-        .pages()
-        .get(page_index as u16)
-        .map_err(|e| format!("Failed to get page {}: {}", page_index, e))?;
+        let page = document
+            .pages()
+            .get(page_index as u16)
+            .map_err(|e| format!("Failed to get page {}: {}", page_index, e))?;
 
-    let rendered = page
-        .render_with_config(&render_config)
-        .map_err(|e| format!("Failed to render page {}: {}", page_index, e))?;
+        let rendered = page
+            .render_with_config(&render_config)
+            .map_err(|e| format!("Failed to render page {}: {}", page_index, e))?;
 
-    let img = rendered.as_image();
-    let width = img.width();
-    let height = img.height();
+        let img = rendered.as_image();
+        let width = img.width();
+        let height = img.height();
 
-    let mut png_bytes: Vec<u8> = Vec::new();
-    img.write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
-        .map_err(|e| format!("Failed to encode page as PNG: {}", e))?;
+        let mut png_bytes: Vec<u8> = Vec::new();
+        img.write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
+            .map_err(|e| format!("Failed to encode page as PNG: {}", e))?;
 
-    let image_base64 = general_purpose::STANDARD.encode(&png_bytes);
+        let image_base64 = general_purpose::STANDARD.encode(&png_bytes);
 
-    Ok(PdfPageData {
-        page_index,
-        width,
-        height,
-        image_base64,
+        Ok(PdfPageData {
+            page_index,
+            width,
+            height,
+            image_base64,
+        })
     })
 }
 

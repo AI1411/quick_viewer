@@ -31,8 +31,23 @@ pub fn assert_regular_file(path: &Path) -> Result<u64, String> {
     Ok(meta.len())
 }
 
+/// 細工されたファイルで依存クレート (lopdf, calamine, pulldown-cmark など) が
+/// panic しても、コマンドのエラーとして返す。非同期コマンドが panic すると応答が
+/// 返らず、フロントは読み込み中のまま止まってしまう。
+pub fn catch_panic<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+        .unwrap_or_else(|_| Err("ファイルの解析中に内部エラーが発生しました".to_string()))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn catch_panic_turns_panics_into_errors() {
+        let r: Result<(), String> = catch_panic(|| panic!("boom"));
+        assert!(r.is_err());
+        assert_eq!(catch_panic(|| Ok(1)), Ok(1));
+    }
+
     use super::*;
     use std::fs;
 

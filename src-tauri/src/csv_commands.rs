@@ -195,10 +195,12 @@ fn check_csv_file(path: &str) -> Result<(), String> {
 /// ファイルのテキストエンコーディングを検出して返す。
 #[tauri::command(async)]
 pub fn detect_encoding(path: String) -> Result<String, String> {
-    check_csv_file(&path)?;
-    let raw = fs::read(&path).map_err(|e| e.to_string())?;
-    let (_, encoding_name) = decode_file(&raw);
-    Ok(encoding_name)
+    crate::utils::catch_panic(move || {
+        check_csv_file(&path)?;
+        let raw = fs::read(&path).map_err(|e| e.to_string())?;
+        let (_, encoding_name) = decode_file(&raw);
+        Ok(encoding_name)
+    })
 }
 
 /// CSV ファイルを読み込む。先頭 limit 行（デフォルト 100）とメタデータを返す。
@@ -208,49 +210,51 @@ pub fn read_csv(
     delimiter: Option<String>,
     limit: Option<usize>,
 ) -> Result<CsvData, String> {
-    check_csv_file(&path)?;
-    let raw = fs::read(&path).map_err(|e| e.to_string())?;
-    let (content, encoding_name) = decode_file(&raw);
-    let delim = parse_delimiter(delimiter, &content);
-    let delim_str = (delim as char).to_string();
+    crate::utils::catch_panic(move || {
+        check_csv_file(&path)?;
+        let raw = fs::read(&path).map_err(|e| e.to_string())?;
+        let (content, encoding_name) = decode_file(&raw);
+        let delim = parse_delimiter(delimiter, &content);
+        let delim_str = (delim as char).to_string();
 
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(delim)
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(content.as_bytes());
+        let mut rdr = csv::ReaderBuilder::new()
+            .delimiter(delim)
+            .has_headers(true)
+            .flexible(true)
+            .from_reader(content.as_bytes());
 
-    let mut headers: Vec<String> = rdr
-        .headers()
-        .map_err(|e| e.to_string())?
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+        let mut headers: Vec<String> = rdr
+            .headers()
+            .map_err(|e| e.to_string())?
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
 
-    let max_rows = limit.unwrap_or(100);
-    let mut rows: Vec<Vec<String>> = rdr
-        .records()
-        .take(max_rows)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|r| r.iter().map(|s| s.to_string()).collect())
-        .collect();
+        let max_rows = limit.unwrap_or(100);
+        let mut rows: Vec<Vec<String>> = rdr
+            .records()
+            .take(max_rows)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|r| r.iter().map(|s| s.to_string()).collect())
+            .collect();
 
-    normalize_columns(&mut headers, &mut rows);
+        normalize_columns(&mut headers, &mut rows);
 
-    let total_rows = count_rows(&content, delim);
+        let total_rows = count_rows(&content, delim);
 
-    Ok(CsvData {
-        headers: headers.clone(),
-        rows,
-        meta: CsvMeta {
-            total_rows,
-            columns: headers.len(),
-            encoding: encoding_name,
-            delimiter: delim_str,
-            headers,
-        },
+        Ok(CsvData {
+            headers: headers.clone(),
+            rows,
+            meta: CsvMeta {
+                total_rows,
+                columns: headers.len(),
+                encoding: encoding_name,
+                delimiter: delim_str,
+                headers,
+            },
+        })
     })
 }
 
@@ -262,43 +266,45 @@ pub fn read_csv_chunk(
     offset: usize,
     limit: usize,
 ) -> Result<CsvChunk, String> {
-    check_csv_file(&path)?;
-    let raw = fs::read(&path).map_err(|e| e.to_string())?;
-    let (content, _) = decode_file(&raw);
-    let delim = parse_delimiter(delimiter, &content);
+    crate::utils::catch_panic(move || {
+        check_csv_file(&path)?;
+        let raw = fs::read(&path).map_err(|e| e.to_string())?;
+        let (content, _) = decode_file(&raw);
+        let delim = parse_delimiter(delimiter, &content);
 
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(delim)
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(content.as_bytes());
+        let mut rdr = csv::ReaderBuilder::new()
+            .delimiter(delim)
+            .has_headers(true)
+            .flexible(true)
+            .from_reader(content.as_bytes());
 
-    let mut headers: Vec<String> = rdr
-        .headers()
-        .map_err(|e| e.to_string())?
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+        let mut headers: Vec<String> = rdr
+            .headers()
+            .map_err(|e| e.to_string())?
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
 
-    let mut rows: Vec<Vec<String>> = rdr
-        .records()
-        .skip(offset)
-        .take(limit)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|r| r.iter().map(|s| s.to_string()).collect())
-        .collect();
+        let mut rows: Vec<Vec<String>> = rdr
+            .records()
+            .skip(offset)
+            .take(limit)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|r| r.iter().map(|s| s.to_string()).collect())
+            .collect();
 
-    normalize_columns(&mut headers, &mut rows);
+        normalize_columns(&mut headers, &mut rows);
 
-    let total_rows = count_rows(&content, delim);
+        let total_rows = count_rows(&content, delim);
 
-    Ok(CsvChunk {
-        headers,
-        rows,
-        offset,
-        total_rows,
+        Ok(CsvChunk {
+            headers,
+            rows,
+            offset,
+            total_rows,
+        })
     })
 }
 
@@ -309,53 +315,55 @@ pub fn filter_csv(
     delimiter: Option<String>,
     conditions: Vec<FilterCondition>,
 ) -> Result<CsvData, String> {
-    check_csv_file(&path)?;
-    let raw = fs::read(&path).map_err(|e| e.to_string())?;
-    let (content, encoding_name) = decode_file(&raw);
-    let delim = parse_delimiter(delimiter, &content);
-    let delim_str = (delim as char).to_string();
+    crate::utils::catch_panic(move || {
+        check_csv_file(&path)?;
+        let raw = fs::read(&path).map_err(|e| e.to_string())?;
+        let (content, encoding_name) = decode_file(&raw);
+        let delim = parse_delimiter(delimiter, &content);
+        let delim_str = (delim as char).to_string();
 
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(delim)
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(content.as_bytes());
+        let mut rdr = csv::ReaderBuilder::new()
+            .delimiter(delim)
+            .has_headers(true)
+            .flexible(true)
+            .from_reader(content.as_bytes());
 
-    let mut headers: Vec<String> = rdr
-        .headers()
-        .map_err(|e| e.to_string())?
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+        let mut headers: Vec<String> = rdr
+            .headers()
+            .map_err(|e| e.to_string())?
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
 
-    let mut all_rows: Vec<Vec<String>> = rdr
-        .records()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|r| r.iter().map(|s| s.to_string()).collect())
-        .collect();
+        let mut all_rows: Vec<Vec<String>> = rdr
+            .records()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|r| r.iter().map(|s| s.to_string()).collect())
+            .collect();
 
-    normalize_columns(&mut headers, &mut all_rows);
+        normalize_columns(&mut headers, &mut all_rows);
 
-    let filtered = if conditions.is_empty() {
-        all_rows
-    } else {
-        apply_filters(&headers, &all_rows, &conditions)
-    };
+        let filtered = if conditions.is_empty() {
+            all_rows
+        } else {
+            apply_filters(&headers, &all_rows, &conditions)
+        };
 
-    let total_rows = filtered.len();
+        let total_rows = filtered.len();
 
-    Ok(CsvData {
-        headers: headers.clone(),
-        rows: filtered,
-        meta: CsvMeta {
-            total_rows,
-            columns: headers.len(),
-            encoding: encoding_name,
-            delimiter: delim_str,
-            headers,
-        },
+        Ok(CsvData {
+            headers: headers.clone(),
+            rows: filtered,
+            meta: CsvMeta {
+                total_rows,
+                columns: headers.len(),
+                encoding: encoding_name,
+                delimiter: delim_str,
+                headers,
+            },
+        })
     })
 }
 
@@ -367,52 +375,54 @@ pub fn export_csv(
     output_path: String,
     conditions: Vec<FilterCondition>,
 ) -> Result<(), String> {
-    check_csv_file(&path)?;
-    let raw = fs::read(&path).map_err(|e| e.to_string())?;
-    let (content, _) = decode_file(&raw);
-    let delim = parse_delimiter(delimiter, &content);
+    crate::utils::catch_panic(move || {
+        check_csv_file(&path)?;
+        let raw = fs::read(&path).map_err(|e| e.to_string())?;
+        let (content, _) = decode_file(&raw);
+        let delim = parse_delimiter(delimiter, &content);
 
-    let mut rdr = csv::ReaderBuilder::new()
-        .delimiter(delim)
-        .has_headers(true)
-        .flexible(true)
-        .from_reader(content.as_bytes());
+        let mut rdr = csv::ReaderBuilder::new()
+            .delimiter(delim)
+            .has_headers(true)
+            .flexible(true)
+            .from_reader(content.as_bytes());
 
-    let mut headers: Vec<String> = rdr
-        .headers()
-        .map_err(|e| e.to_string())?
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+        let mut headers: Vec<String> = rdr
+            .headers()
+            .map_err(|e| e.to_string())?
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
 
-    let mut all_rows: Vec<Vec<String>> = rdr
-        .records()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|r| r.iter().map(|s| s.to_string()).collect())
-        .collect();
+        let mut all_rows: Vec<Vec<String>> = rdr
+            .records()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|r| r.iter().map(|s| s.to_string()).collect())
+            .collect();
 
-    normalize_columns(&mut headers, &mut all_rows);
+        normalize_columns(&mut headers, &mut all_rows);
 
-    let filtered = if conditions.is_empty() {
-        all_rows
-    } else {
-        apply_filters(&headers, &all_rows, &conditions)
-    };
+        let filtered = if conditions.is_empty() {
+            all_rows
+        } else {
+            apply_filters(&headers, &all_rows, &conditions)
+        };
 
-    let out_file = fs::File::create(&output_path).map_err(|e| e.to_string())?;
-    let mut wtr = csv::WriterBuilder::new()
-        .delimiter(delim)
-        .from_writer(out_file);
+        let out_file = fs::File::create(&output_path).map_err(|e| e.to_string())?;
+        let mut wtr = csv::WriterBuilder::new()
+            .delimiter(delim)
+            .from_writer(out_file);
 
-    wtr.write_record(&headers).map_err(|e| e.to_string())?;
-    for row in &filtered {
-        wtr.write_record(row).map_err(|e| e.to_string())?;
-    }
-    wtr.flush().map_err(|e| e.to_string())?;
+        wtr.write_record(&headers).map_err(|e| e.to_string())?;
+        for row in &filtered {
+            wtr.write_record(row).map_err(|e| e.to_string())?;
+        }
+        wtr.flush().map_err(|e| e.to_string())?;
 
-    Ok(())
+        Ok(())
+    })
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

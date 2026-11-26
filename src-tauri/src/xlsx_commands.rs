@@ -669,57 +669,61 @@ fn column_letters(index: usize) -> String {
 
 #[tauri::command(async)]
 pub fn read_xlsx(path: String) -> Result<XlsxInfo, String> {
-    let workbook: Xlsx<_> = open_workbook::<Xlsx<_>, _>(&path).map_err(|e| e.to_string())?;
-    let names = workbook.sheet_names().to_vec();
-    let sheets = names
-        .into_iter()
-        .enumerate()
-        .map(|(index, name)| XlsxSheetMeta { name, index })
-        .collect();
-    Ok(XlsxInfo {
-        sheets,
-        active_sheet_index: 0,
+    crate::utils::catch_panic(move || {
+        let workbook: Xlsx<_> = open_workbook::<Xlsx<_>, _>(&path).map_err(|e| e.to_string())?;
+        let names = workbook.sheet_names().to_vec();
+        let sheets = names
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| XlsxSheetMeta { name, index })
+            .collect();
+        Ok(XlsxInfo {
+            sheets,
+            active_sheet_index: 0,
+        })
     })
 }
 
 #[tauri::command(async)]
 pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData, String> {
-    let mut workbook: Workbook = open_workbook(&path).map_err(|e: calamine::XlsxError| e.to_string())?;
-    let bounds = sheet_bounds(&mut workbook, &sheet_name)?;
-    let (total_rows, total_cols) = bounds.map_or((0, 0), |b| (b.rows(), b.cols()));
-    let (display_rows, display_cols) = display_size(total_rows, total_cols);
+    crate::utils::catch_panic(move || {
+        let mut workbook: Workbook = open_workbook(&path).map_err(|e: calamine::XlsxError| e.to_string())?;
+        let bounds = sheet_bounds(&mut workbook, &sheet_name)?;
+        let (total_rows, total_cols) = bounds.map_or((0, 0), |b| (b.rows(), b.cols()));
+        let (display_rows, display_cols) = display_size(total_rows, total_cols);
 
-    let xf_to_fmt = load_styles(&path).unwrap_or_default();
-    // シートの XML が特定できないときに sheet1.xml を当てると、別シートの書式とフリーズを表示してしまう
-    let (cell_xf_map, mut freeze_pane) = load_sheet_file_map(&path)
-        .get(&sheet_name)
-        .and_then(|sheet_file| load_sheet_xml(&path, sheet_file).ok())
-        .unwrap_or_default();
-    freeze_pane.rows = freeze_pane.rows.min(display_rows as u32);
-    freeze_pane.cols = freeze_pane.cols.min(display_cols as u32);
+        let xf_to_fmt = load_styles(&path).unwrap_or_default();
+        // シートの XML が特定できないときに sheet1.xml を当てると、別シートの書式とフリーズを表示してしまう
+        let (cell_xf_map, mut freeze_pane) = load_sheet_file_map(&path)
+            .get(&sheet_name)
+            .and_then(|sheet_file| load_sheet_xml(&path, sheet_file).ok())
+            .unwrap_or_default();
+        freeze_pane.rows = freeze_pane.rows.min(display_rows as u32);
+        freeze_pane.cols = freeze_pane.cols.min(display_cols as u32);
 
-    let empty = convert_cell(&Data::Empty, None);
-    let mut rows: Vec<Vec<XlsxCell>> = vec![vec![empty; display_cols]; display_rows];
-    if let Some(b) = bounds {
-        for_each_cell(&mut workbook, &sheet_name, |row, col, value| {
-            let (r, c) = ((row - b.row_start) as usize, (col - b.col_start) as usize);
-            if r < display_rows && c < display_cols {
-                let format_code = cell_xf_map
-                    .get(&(row, col))
-                    .and_then(|xf| xf_to_fmt.get(xf))
-                    .cloned();
-                rows[r][c] = convert_cell(&Data::from(value.clone()), format_code);
-            }
-        })?;
-    }
+        let empty = convert_cell(&Data::Empty, None);
+        let mut rows: Vec<Vec<XlsxCell>> = vec![vec![empty; display_cols]; display_rows];
+        if let Some(b) = bounds {
+            for_each_cell(&mut workbook, &sheet_name, |row, col, value| {
+                let (r, c) = ((row - b.row_start) as usize, (col - b.col_start) as usize);
+                if r < display_rows && c < display_cols {
+                    let format_code = cell_xf_map
+                        .get(&(row, col))
+                        .and_then(|xf| xf_to_fmt.get(xf))
+                        .cloned();
+                    rows[r][c] = convert_cell(&Data::from(value.clone()), format_code);
+                }
+            })?;
+        }
 
-    Ok(XlsxSheetData {
-        name: sheet_name,
-        rows,
-        total_rows,
-        total_cols,
-        loaded_cols: display_cols,
-        freeze_pane,
+        Ok(XlsxSheetData {
+            name: sheet_name,
+            rows,
+            total_rows,
+            total_cols,
+            loaded_cols: display_cols,
+            freeze_pane,
+        })
     })
 }
 
@@ -731,44 +735,46 @@ pub fn export_xlsx_sheet_as_csv(
     output_path: String,
     conditions: Vec<crate::csv_commands::FilterCondition>,
 ) -> Result<(), String> {
-    let mut workbook: Workbook = open_workbook(&path).map_err(|e: calamine::XlsxError| e.to_string())?;
-    let b = sheet_bounds(&mut workbook, &sheet_name)?
-        .ok_or_else(|| "シートにデータがありません".to_string())?;
-    if b.rows().saturating_mul(b.cols()) > MAX_EXPORT_CELLS {
-        return Err(format!(
-            "シートが大きすぎるためエクスポートできません ({} 行 × {} 列)",
-            b.rows(),
-            b.cols()
-        ));
-    }
-
-    // 実在するセルだけを保持し、行順に並べてから 1 行ずつ書き出す
-    let mut cells: Vec<(u32, u32, String)> = Vec::new();
-    for_each_cell(&mut workbook, &sheet_name, |row, col, value| {
-        cells.push((row, col, export_cell_string(&Data::from(value.clone()))));
-    })?;
-    cells.sort_unstable_by_key(|(row, col, _)| (*row, *col));
-
-    let headers: Vec<String> = (0..b.cols()).map(column_letters).collect();
-    let out_file = std::fs::File::create(&output_path).map_err(|e| e.to_string())?;
-    let mut wtr = csv::WriterBuilder::new().delimiter(b',').from_writer(out_file);
-    wtr.write_record(&headers).map_err(|e| e.to_string())?;
-
-    let mut cells = cells.into_iter().peekable();
-    for row_index in b.row_start..=b.row_end {
-        let mut row = vec![String::new(); b.cols()];
-        while let Some((_, col, value)) = cells.next_if(|(r, _, _)| *r == row_index) {
-            row[(col - b.col_start) as usize] = value;
+    crate::utils::catch_panic(move || {
+        let mut workbook: Workbook = open_workbook(&path).map_err(|e: calamine::XlsxError| e.to_string())?;
+        let b = sheet_bounds(&mut workbook, &sheet_name)?
+            .ok_or_else(|| "シートにデータがありません".to_string())?;
+        if b.rows().saturating_mul(b.cols()) > MAX_EXPORT_CELLS {
+            return Err(format!(
+                "シートが大きすぎるためエクスポートできません ({} 行 × {} 列)",
+                b.rows(),
+                b.cols()
+            ));
         }
-        if conditions.is_empty()
-            || crate::csv_commands::row_matches_all(&headers, &row, &conditions)
-        {
-            wtr.write_record(&row).map_err(|e| e.to_string())?;
-        }
-    }
-    wtr.flush().map_err(|e| e.to_string())?;
 
-    Ok(())
+        // 実在するセルだけを保持し、行順に並べてから 1 行ずつ書き出す
+        let mut cells: Vec<(u32, u32, String)> = Vec::new();
+        for_each_cell(&mut workbook, &sheet_name, |row, col, value| {
+            cells.push((row, col, export_cell_string(&Data::from(value.clone()))));
+        })?;
+        cells.sort_unstable_by_key(|(row, col, _)| (*row, *col));
+
+        let headers: Vec<String> = (0..b.cols()).map(column_letters).collect();
+        let out_file = std::fs::File::create(&output_path).map_err(|e| e.to_string())?;
+        let mut wtr = csv::WriterBuilder::new().delimiter(b',').from_writer(out_file);
+        wtr.write_record(&headers).map_err(|e| e.to_string())?;
+
+        let mut cells = cells.into_iter().peekable();
+        for row_index in b.row_start..=b.row_end {
+            let mut row = vec![String::new(); b.cols()];
+            while let Some((_, col, value)) = cells.next_if(|(r, _, _)| *r == row_index) {
+                row[(col - b.col_start) as usize] = value;
+            }
+            if conditions.is_empty()
+                || crate::csv_commands::row_matches_all(&headers, &row, &conditions)
+            {
+                wtr.write_record(&row).map_err(|e| e.to_string())?;
+            }
+        }
+        wtr.flush().map_err(|e| e.to_string())?;
+
+        Ok(())
+    })
 }
 
 // ── テスト ────────────────────────────────────────────────
