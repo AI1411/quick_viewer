@@ -1,5 +1,8 @@
 import { useRecentFilesStore } from "../stores/recentFilesStore";
-import { showOpenDialog } from "../lib/fileCommands";
+import { showOpenDialog, showOpenImagesDialog } from "../lib/fileCommands";
+import { useImageStore } from "../stores/imageStore";
+import { showError } from "../stores/toastStore";
+import { errorMessage } from "../lib/errorUtils";
 
 interface Props {
   onOpenFile?: (path: string) => void;
@@ -11,6 +14,15 @@ export function EmptyState({ onOpenFile }: Props) {
   const handleSelectFile = async () => {
     const path = await showOpenDialog();
     if (path && onOpenFile) onOpenFile(path);
+  };
+
+  const handleBatchConvert = async () => {
+    try {
+      const paths = await showOpenImagesDialog();
+      if (paths.length > 0) useImageStore.getState().openBatch(paths);
+    } catch (err) {
+      showError(`ファイルを選択できませんでした: ${errorMessage(err)}`);
+    }
   };
 
   return (
@@ -50,6 +62,15 @@ export function EmptyState({ onOpenFile }: Props) {
         onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "#3b82f6")}
       >
         ファイルを選択
+      </button>
+
+      <button
+        type="button"
+        onClick={handleBatchConvert}
+        className="px-3 py-1 rounded text-xs cursor-pointer"
+        style={{ backgroundColor: "var(--bg-hover)", color: "var(--text-primary)" }}
+      >
+        画像を一括で変換・圧縮...
       </button>
 
       <div

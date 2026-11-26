@@ -3,6 +3,7 @@ import { CsvViewer } from "./csv/CsvViewer";
 import { PdfViewer } from "./pdf/PdfViewer";
 import { MarkdownViewer } from "./markdown/MarkdownViewer";
 import { XlsxViewer } from "./xlsx/XlsxViewer";
+import { ImageViewer } from "./image/ImageViewer";
 import { SearchBar } from "./SearchBar";
 
 export function ViewerArea() {
@@ -23,6 +24,8 @@ export function ViewerArea() {
         <MarkdownViewer key={`${activeTab.id}-${activeTab.reloadCount}`} tabId={activeTab.id} filePath={activeTab.filePath} />
       ) : activeTab.format === "xlsx" ? (
         <XlsxViewer key={`${activeTab.id}-${activeTab.reloadCount}`} tabId={activeTab.id} filePath={activeTab.filePath} />
+      ) : activeTab.format === "image" ? (
+        <ImageViewer key={`${activeTab.id}-${activeTab.reloadCount}`} tabId={activeTab.id} filePath={activeTab.filePath} />
       ) : (
         <div
           className="flex-1 flex items-center justify-center text-sm"

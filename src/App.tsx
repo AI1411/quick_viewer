@@ -23,6 +23,8 @@ import { errorMessage } from "./lib/errorUtils";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { useFileWatcher } from "./hooks/useFileWatcher";
 import { FileChangedDialog } from "./components/FileChangedDialog";
+import { BatchConvertDialog } from "./components/image/BatchConvertDialog";
+import { useImageStore } from "./stores/imageStore";
 import "./App.css";
 
 function App() {
@@ -31,6 +33,7 @@ function App() {
   const [recentMenuOpen, setRecentMenuOpen] = useState(false);
   const [reloadQueue, setReloadQueue] = useState<PendingReload[]>([]);
   const activeTabId = useTabStore((state) => state.activeTabId);
+  const batchOpen = useImageStore((state) => state.batchPaths !== null);
   const openTabIds = useTabStore((state) => state.tabs.map((t) => t.id).join("\n"));
   const pendingReload = nextReload(reloadQueue, openTabIds.split("\n"));
   const finishReload = (tabId: string) => setReloadQueue((q) => q.filter((p) => p.tabId !== tabId));
@@ -316,6 +319,7 @@ function App() {
         />
       )}
       {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {batchOpen && <BatchConvertDialog />}
       {recentMenuOpen && (
         <RecentFilesMenu
           onOpen={(file) => openPathInTab(file.path)}

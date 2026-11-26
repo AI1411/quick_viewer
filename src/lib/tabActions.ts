@@ -4,6 +4,7 @@ import { useMarkdownStore } from "../stores/markdownStore";
 import { useCsvStore } from "../stores/csvStore";
 import { useXlsxStore } from "../stores/xlsxStore";
 import { usePdfStore } from "../stores/pdfStore";
+import { useImageStore } from "../stores/imageStore";
 
 /** 外部変更の「再読み込み」。未保存の編集はディスクの内容で置き換える。 */
 export function reloadTabFromDisk(tabId: string): void {
@@ -45,6 +46,7 @@ async function closeTabsWithConfirm(select: (tabs: Tab[]) => Tab[]): Promise<boo
     useCsvStore.getState().removeTab(t.id);
     useXlsxStore.getState().removeTab(t.id);
     usePdfStore.getState().removeTab(t.id);
+    useImageStore.getState().removeTab(t.id);
   }
   return true;
 }

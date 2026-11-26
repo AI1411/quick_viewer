@@ -13,7 +13,7 @@ export interface RecentFile {
   openedAt: string;
 }
 
-const FORMATS: readonly FileFormat[] = ["csv", "tsv", "pdf", "markdown", "xlsx"];
+const FORMATS: readonly FileFormat[] = ["csv", "tsv", "pdf", "markdown", "xlsx", "image"];
 
 /**
  * 保存データの 1 件を検査する。format が無い・不正な項目があると

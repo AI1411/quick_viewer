@@ -1,4 +1,4 @@
-export type FileFormat = "csv" | "tsv" | "pdf" | "markdown" | "xlsx";
+export type FileFormat = "csv" | "tsv" | "pdf" | "markdown" | "xlsx" | "image";
 
 export interface FileInfo {
   path: string;
@@ -176,4 +176,77 @@ export interface XlsxSheetData {
 export interface AppError {
   code: "io" | "parse" | "not_found" | "unsupported" | "unknown";
   message: string;
+}
+
+// ── 画像 (Rust の image_commands.rs に対応) ──────────────────
+
+export interface ImageInfo {
+  /** 撮影時の向きを反映した表示上の大きさ */
+  width: number;
+  height: number;
+  format: string;
+  frame_count: number;
+  has_alpha: boolean;
+  has_gps: boolean;
+  file_size: number;
+}
+
+export type ImageFormatId = "jpeg" | "png" | "heic" | "avif" | "webp" | "tiff" | "gif" | "bmp";
+
+export interface ImageFormatSpec {
+  id: ImageFormatId;
+  label: string;
+  /** 先頭が既定の拡張子 */
+  extensions: string[];
+  mime: string;
+  lossy: boolean;
+  alpha: boolean;
+  keeps_metadata: boolean;
+}
+
+export type ImageResize =
+  | { kind: "none" }
+  | { kind: "long_edge"; pixels: number }
+  | { kind: "percent"; percent: number };
+
+export type ImageMetadataPolicy = "keep" | "strip_location" | "strip_all";
+
+export interface ImageConvertOptions {
+  format: ImageFormatId;
+  /** 1〜100。非可逆形式でだけ使われる */
+  quality: number;
+  /** 指定すると、このバイト数以下に収まる最高の品質を探す (足りなければ縮小) */
+  target_bytes: number | null;
+  resize: ImageResize;
+  metadata: ImageMetadataPolicy;
+}
+
+export interface ImageEstimate {
+  size: number;
+  width: number;
+  height: number;
+  quality: number | null;
+  preview: string | null;
+}
+
+export interface ImageConverted {
+  output_path: string;
+  size: number;
+  width: number;
+  height: number;
+  quality: number | null;
+}
+
+export interface ImageBatchItem {
+  source: string;
+  source_size: number;
+  output_path: string | null;
+  size: number | null;
+  error: string | null;
+}
+
+export interface ImageBatchProgress {
+  done: number;
+  total: number;
+  item: ImageBatchItem;
 }
