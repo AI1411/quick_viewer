@@ -4,7 +4,6 @@ use base64::{Engine as _, engine::general_purpose};
 use image::ImageFormat;
 use serde::Serialize;
 use sha2::{Sha256, Digest};
-use std::collections::BTreeMap;
 use std::io::Cursor;
 
 // ─── Data Types ───────────────────────────────────────────────────────────────
@@ -80,13 +79,23 @@ fn extract_outlines(doc: &Document) -> Vec<OutlineItem> {
         Ok(r) => r,
         Err(_) => return vec![],
     };
+    // しおりの項目ごとに get_pages() を作り直すと O(項目数 × ページ数) になるため 1 回だけ作る
+    let page_index: PageIndex = doc
+        .get_pages()
+        .into_iter()
+        .map(|(num, id)| (id, num.saturating_sub(1)))
+        .collect();
     let mut visited = std::collections::HashSet::new();
     let mut count = 0usize;
-    collect_outline_items(doc, first_ref, 0, &mut visited, &mut count)
+    collect_outline_items(doc, &page_index, first_ref, 0, &mut visited, &mut count)
 }
+
+/// ページのオブジェクト ID → 0 始まりのページ番号
+type PageIndex = std::collections::HashMap<lopdf::ObjectId, u32>;
 
 fn collect_outline_items(
     doc: &Document,
+    page_index: &PageIndex,
     start_ref: lopdf::ObjectId,
     level: u32,
     visited: &mut std::collections::HashSet<lopdf::ObjectId>,
@@ -120,14 +129,14 @@ fn collect_outline_items(
             .map(decode_pdf_string)
             .unwrap_or_else(|| "(Untitled)".to_string());
 
-        let page = extract_dest_page(doc, &dict);
+        let page = extract_dest_page(doc, page_index, &dict);
 
         let children = dict
             .get(b"First")
             .ok()
             .and_then(|r| r.as_reference().ok())
             .map(|first_ref| {
-                collect_outline_items(doc, first_ref, level + 1, visited, count)
+                collect_outline_items(doc, page_index, first_ref, level + 1, visited, count)
             })
             .unwrap_or_default();
 
@@ -142,44 +151,39 @@ fn collect_outline_items(
     items
 }
 
-fn extract_dest_page(doc: &Document, dict: &lopdf::Dictionary) -> Option<u32> {
+fn extract_dest_page(doc: &Document, page_index: &PageIndex, dict: &lopdf::Dictionary) -> Option<u32> {
     if let Ok(dest) = dict.get(b"Dest") {
-        return page_from_dest(doc, dest);
+        return page_from_dest(doc, page_index, dest);
     }
     if let Ok(action_ref) = dict.get(b"A").and_then(|a| a.as_reference()) {
         if let Ok(action) = doc.get_dictionary(action_ref) {
             let action = action.clone();
             if let Ok(dest) = action.get(b"D") {
-                return page_from_dest(doc, dest);
+                return page_from_dest(doc, page_index, dest);
             }
         }
     }
     None
 }
 
-fn page_from_dest(doc: &Document, dest: &lopdf::Object) -> Option<u32> {
+fn page_from_dest(doc: &Document, page_index: &PageIndex, dest: &lopdf::Object) -> Option<u32> {
     let first_elem = match dest {
         lopdf::Object::Array(a) => a.first()?,
         lopdf::Object::Reference(r) => {
             if let Ok(obj) = doc.get_object(*r) {
                 if let lopdf::Object::Array(a) = obj {
-                    return page_ref_to_number(doc, a.first()?);
+                    return page_ref_to_number(page_index, a.first()?);
                 }
             }
             return None;
         }
         _ => return None,
     };
-    page_ref_to_number(doc, first_elem)
+    page_ref_to_number(page_index, first_elem)
 }
 
-fn page_ref_to_number(doc: &Document, obj: &lopdf::Object) -> Option<u32> {
-    let page_ref = obj.as_reference().ok()?;
-    let pages: BTreeMap<u32, lopdf::ObjectId> = doc.get_pages();
-    pages
-        .iter()
-        .find(|(_, &id)| id == page_ref)
-        .map(|(&page_num, _)| page_num - 1) // Convert to 0-based index
+fn page_ref_to_number(page_index: &PageIndex, obj: &lopdf::Object) -> Option<u32> {
+    page_index.get(&obj.as_reference().ok()?).copied()
 }
 
 // ─── pdfium-render Loader ─────────────────────────────────────────────────────
@@ -413,6 +417,49 @@ pub fn load_annotations(app: tauri::AppHandle, pdf_path: String) -> Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn outline_destinations_resolve_to_zero_based_pages() {
+        use lopdf::{dictionary, Object};
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let p1 = doc.add_object(dictionary! { "Type" => "Page", "Parent" => pages_id });
+        let p2 = doc.add_object(dictionary! { "Type" => "Page", "Parent" => pages_id });
+        doc.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![p1.into(), p2.into()],
+                "Count" => 2,
+            }),
+        );
+        let first = doc.new_object_id();
+        let second = doc.new_object_id();
+        let outlines = doc.add_object(dictionary! { "Type" => "Outlines", "First" => first, "Last" => second });
+        doc.objects.insert(
+            first,
+            Object::Dictionary(dictionary! {
+                "Title" => Object::string_literal("Intro"),
+                "Parent" => outlines,
+                "Next" => second,
+                "Dest" => vec![p1.into(), "Fit".into()],
+            }),
+        );
+        doc.objects.insert(
+            second,
+            Object::Dictionary(dictionary! {
+                "Title" => Object::string_literal("Chapter 2"),
+                "Parent" => outlines,
+                "Dest" => vec![p2.into(), "Fit".into()],
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id, "Outlines" => outlines });
+        doc.trailer.set("Root", catalog);
+
+        let items = extract_outlines(&doc);
+        let got: Vec<(&str, Option<u32>)> = items.iter().map(|i| (i.title.as_str(), i.page)).collect();
+        assert_eq!(got, vec![("Intro", Some(0)), ("Chapter 2", Some(1))]);
+    }
 
     #[test]
     fn pdfium_is_searched_only_at_absolute_paths() {
