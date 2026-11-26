@@ -373,46 +373,66 @@ fn annotation_key(pdf_path: &str) -> String {
         .collect()
 }
 
-#[tauri::command(async)]
-pub fn save_annotations(
-    app: tauri::AppHandle,
-    pdf_path: String,
-    annotations_json: String,
-) -> Result<(), String> {
-    use tauri::Manager;
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("annotations");
-    if annotations_json.len() as u64 > MAX_ANNOTATIONS_SIZE {
-        return Err("annotations exceed size limit (10 MB)".to_string());
-    }
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let key = annotation_key(&pdf_path);
-    let file = dir.join(format!("{}.json", key));
-    crate::utils::atomic_write(&file, annotations_json.as_bytes()).map_err(|e| e.to_string())
+/// 注釈ファイルのパス。シンボリックリンクや ".." を含むパスで開いても同じ PDF なら
+/// 同じ注釈になるよう、正規化したパスから求める。
+fn annotations_file(dir: &std::path::Path, pdf_path: &str) -> std::path::PathBuf {
+    let canonical = std::fs::canonicalize(pdf_path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| pdf_path.to_string());
+    dir.join(format!("{}.json", annotation_key(&canonical)))
 }
 
-#[tauri::command(async)]
-pub fn load_annotations(app: tauri::AppHandle, pdf_path: String) -> Result<String, String> {
+/// 正規化前のパスで保存していた旧バージョンの注釈ファイル
+fn legacy_annotations_file(dir: &std::path::Path, pdf_path: &str) -> std::path::PathBuf {
+    dir.join(format!("{}.json", annotation_key(pdf_path)))
+}
+
+fn annotations_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     use tauri::Manager;
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("annotations");
-    let key = annotation_key(&pdf_path);
-    let file = dir.join(format!("{}.json", key));
-    if !file.exists() {
+    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("annotations"))
+}
+
+fn read_annotations(dir: &std::path::Path, pdf_path: &str) -> Result<String, String> {
+    let file = [annotations_file(dir, pdf_path), legacy_annotations_file(dir, pdf_path)]
+        .into_iter()
+        .find(|f| f.exists());
+    let Some(file) = file else {
         return Ok("[]".to_string());
-    }
+    };
     let meta = std::fs::metadata(&file).map_err(|e| e.to_string())?;
     if meta.len() > MAX_ANNOTATIONS_SIZE {
         // "[]" を返すとフロントがそれを保存して既存の注釈を消すため、エラーで読み込みを止める
         return Err("annotation sidecar exceeds size limit (10 MB)".to_string());
     }
     std::fs::read_to_string(&file).map_err(|e| e.to_string())
+}
+
+fn write_annotations(dir: &std::path::Path, pdf_path: &str, annotations_json: &str) -> Result<(), String> {
+    if annotations_json.len() as u64 > MAX_ANNOTATIONS_SIZE {
+        return Err("annotations exceed size limit (10 MB)".to_string());
+    }
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let file = annotations_file(dir, pdf_path);
+    crate::utils::atomic_write(&file, annotations_json.as_bytes()).map_err(|e| e.to_string())?;
+    let legacy = legacy_annotations_file(dir, pdf_path);
+    if legacy != file {
+        let _ = std::fs::remove_file(legacy);
+    }
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn save_annotations(
+    app: tauri::AppHandle,
+    pdf_path: String,
+    annotations_json: String,
+) -> Result<(), String> {
+    write_annotations(&annotations_dir(&app)?, &pdf_path, &annotations_json)
+}
+
+#[tauri::command(async)]
+pub fn load_annotations(app: tauri::AppHandle, pdf_path: String) -> Result<String, String> {
+    read_annotations(&annotations_dir(&app)?, &pdf_path)
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -543,6 +563,33 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.contains("Failed to read file"), "Unexpected error: {}", err);
+    }
+
+    #[test]
+    fn annotations_are_shared_across_symlinks_and_legacy_files_are_migrated() {
+        let base = std::env::temp_dir().join(format!("qv_ann_{}", std::process::id()));
+        let dir = base.join("annotations");
+        std::fs::create_dir_all(&base).unwrap();
+        let real = base.join("doc.pdf");
+        let link = base.join("link.pdf");
+        std::fs::write(&real, b"%PDF-1.4").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let real_s = real.to_string_lossy().into_owned();
+        let link_s = link.to_string_lossy().into_owned();
+
+        // 旧形式 (リンクのパス文字列そのもの) で保存された注釈も読める
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(legacy_annotations_file(&dir, &link_s), r#"[{"id":"old"}]"#).unwrap();
+        let legacy = read_annotations(&dir, &link_s).unwrap();
+
+        write_annotations(&dir, &link_s, r#"[{"id":"new"}]"#).unwrap();
+        let via_real_path = read_annotations(&dir, &real_s).unwrap();
+        let files = std::fs::read_dir(&dir).unwrap().count();
+        std::fs::remove_dir_all(&base).ok();
+
+        assert_eq!(legacy, r#"[{"id":"old"}]"#);
+        assert_eq!(via_real_path, r#"[{"id":"new"}]"#);
+        assert_eq!(files, 1);
     }
 
     #[test]
