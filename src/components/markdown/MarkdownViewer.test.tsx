@@ -196,3 +196,40 @@ describe("MarkdownViewer の保存 (Cmd+S)", () => {
     expect(useMarkdownStore.getState().tabs.t1.isDirty).toBe(false);
   });
 });
+
+describe("MarkdownViewer の分割プレビュー", () => {
+  const md = (raw: string) => ({ html: "", toc: [], frontmatter: null, raw, encoding: "UTF-8" });
+
+  beforeEach(() => {
+    useMarkdownStore.setState({ tabs: {} });
+    vi.clearAllMocks();
+  });
+
+  it("遅れて返ってきた古い描画結果で新しいプレビューを上書きしない", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const cmds = await import("../../lib/markdownCommands");
+    vi.mocked(cmds.readMarkdown).mockResolvedValue(md("start"));
+    const pending: Array<(html: string) => void> = [];
+    vi.mocked(cmds.renderMarkdownString).mockImplementation(
+      (content) =>
+        new Promise((resolve) =>
+          pending.push((html) => resolve({ ...md(content), html }))
+        )
+    );
+    render(<MarkdownViewer tabId="t1" filePath="/note.md" />);
+    fireEvent.click(await screen.findByText("分割"));
+    const box = screen.getByRole("textbox");
+
+    fireEvent.change(box, { target: { value: "first" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(350); });
+    fireEvent.change(box, { target: { value: "second" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(350); });
+
+    // 新しい要求の結果が先に返り、古い要求の結果が後から返る
+    await act(async () => { pending[pending.length - 1]("<p>second</p>"); });
+    await act(async () => { pending[pending.length - 2]("<p>first</p>"); });
+
+    expect(screen.getByTestId("rendered-view").innerHTML).toBe("<p>second</p>");
+    vi.useRealTimers();
+  });
+});

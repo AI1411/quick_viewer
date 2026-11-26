@@ -24,6 +24,16 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
   const [liveHtml, setLiveHtml] = useState<string | null>(null);
+  // プレビューの描画要求の通し番号。遅れて返ってきた古い結果で新しい結果を上書きしない
+  const previewSeqRef = useRef(0);
+  const renderPreview = (content: string) => {
+    const seq = ++previewSeqRef.current;
+    renderMarkdownString(content)
+      .then((result) => {
+        if (seq === previewSeqRef.current) setLiveHtml(result.html);
+      })
+      .catch(() => {}); // preview failure is non-fatal
+  };
 
   useEffect(() => {
     initTab(tabId);
@@ -52,11 +62,7 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
     const content = tab?.editContent ?? tab?.data?.raw;
     if (content == null) return;
 
-    const timer = setTimeout(() => {
-      renderMarkdownString(content)
-        .then((result) => setLiveHtml(result.html))
-        .catch(() => {}); // preview failure is non-fatal
-    }, 300);
+    const timer = setTimeout(() => renderPreview(content), 300);
     return () => clearTimeout(timer);
   }, [tab?.editContent, tab?.viewMode, tabId]);
 
@@ -86,11 +92,7 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
     // split に切り替わったらすぐ初期 liveHtml を設定
     if (mode === "split") {
       const content = state?.editContent ?? state?.data?.raw;
-      if (content) {
-        renderMarkdownString(content)
-          .then((result) => setLiveHtml(result.html))
-          .catch(() => {});
-      }
+      if (content) renderPreview(content);
     }
     setViewMode(tabId, mode);
   }
