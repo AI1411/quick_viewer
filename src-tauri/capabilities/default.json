@@ -20,6 +20,7 @@
     "opener:default",
     "dialog:allow-open",
     "dialog:allow-save",
-    "dialog:allow-message"
+    "dialog:allow-message",
+    "updater:allow-check"
   ]
 }

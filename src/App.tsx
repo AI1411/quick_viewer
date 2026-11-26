@@ -17,7 +17,7 @@ import { openPathInTab } from "./lib/openPathInTab";
 import { reloadTabFromDisk, closeTab, confirmCloseAllTabs } from "./lib/tabActions";
 import { enqueueReload, nextReload, type PendingReload } from "./lib/reloadQueue";
 import { parseSavedWindowState, toRestoreBounds, type SavedWindowState } from "./lib/windowState";
-import { useTabStore, useSettingsStore, useSearchStore, useRecentFilesStore, showError } from "./stores";
+import { useTabStore, useSettingsStore, useSearchStore, useRecentFilesStore, showError, showInfo } from "./stores";
 import { Toast } from "./components/Toast";
 import { errorMessage } from "./lib/errorUtils";
 import { useShortcuts } from "./hooks/useShortcuts";
@@ -57,8 +57,8 @@ function App() {
   useEffect(() => {
     check()
       .then((update) => {
-        if (update?.available) {
-          showError(`新しいバージョン ${update.version} が利用可能です。`);
+        if (update) {
+          showInfo(`新しいバージョン ${update.version} が公開されています。GitHub のリリースページから入手できます。`);
         }
       })
       .catch(() => {

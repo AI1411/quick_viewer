@@ -16,6 +16,9 @@ const REQUIRED_PERMISSION: Record<string, Record<string, string[]>> = {
     confirm: ["dialog:allow-message", "dialog:default"],
     ask: ["dialog:allow-message", "dialog:default"],
   },
+  "@tauri-apps/plugin-updater": {
+    check: ["updater:allow-check", "updater:default"],
+  },
   "@tauri-apps/plugin-opener": {
     openUrl: ["opener:allow-open-url", "opener:default"],
     openPath: ["opener:allow-open-path"],

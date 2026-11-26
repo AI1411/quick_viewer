@@ -133,6 +133,26 @@ mod tests {
         }
     }
 
+    /// リリースで公開する latest.json (scripts/update-manifest.mjs の出力) を
+    /// アップデータが読めて、この Mac 向けのダウンロード先を返せること
+    #[test]
+    fn update_manifest_from_release_script_is_accepted_by_the_updater() {
+        let manifest = r#"{
+          "version": "2.0.1",
+          "notes": "https://github.com/AI1411/quick_viewer/releases/tag/v2.0.1",
+          "pub_date": "2026-11-26T14:14:33Z",
+          "platforms": {
+            "darwin-aarch64": {
+              "url": "https://github.com/AI1411/quick_viewer/releases/download/v2.0.1/QuickView_2.0.1_aarch64.dmg",
+              "signature": ""
+            }
+          }
+        }"#;
+        let release: tauri_plugin_updater::RemoteRelease = serde_json::from_str(manifest).unwrap();
+        assert_eq!(release.version.to_string(), "2.0.1");
+        assert!(release.download_url("darwin-aarch64").unwrap().as_str().ends_with("QuickView_2.0.1_aarch64.dmg"));
+    }
+
     #[test]
     fn navigation_allows_only_app_entry() {
         let ok = |u: &str| is_app_entry_url(&tauri::Url::parse(u).unwrap());

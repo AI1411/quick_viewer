@@ -70,3 +70,12 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: --target aarch64-apple-darwin
+
+      # アプリ起動時の更新確認 (tauri-plugin-updater の check) が読む latest.json を公開する
+      - name: Publish update manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          node scripts/update-manifest.mjs "${TAG#v}" "${{ github.repository }}" "$TAG" > latest.json
+          gh release upload "$TAG" latest.json --clobber
