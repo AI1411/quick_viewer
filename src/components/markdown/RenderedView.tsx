@@ -1,31 +1,11 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { createHighlighter, type Highlighter } from "shiki";
+import { getHighlighter } from "../../lib/highlighter";
 import mermaid from "mermaid";
 import "katex/dist/katex.min.css";
 import { useSearchStore } from "../../stores/searchStore";
 import { highlightTextNodes, clearSearchMarks, applyMarkStyles } from "../../lib/searchHighlight";
 import { handleRenderedLinkClick, resolveLocalImagePath } from "../../lib/markdownLinks";
-
-let _highlighter: Highlighter | null = null;
-let _highlighterPromise: Promise<Highlighter> | null = null;
-
-async function getHighlighter(): Promise<Highlighter> {
-  if (_highlighter) return _highlighter;
-  if (!_highlighterPromise) {
-    _highlighterPromise = createHighlighter({
-      themes: ["github-dark", "github-light"],
-      langs: [
-        "javascript", "typescript", "tsx", "jsx",
-        "python", "rust", "go", "java", "c", "cpp",
-        "bash", "shell", "json", "yaml", "toml",
-        "markdown", "html", "css", "sql",
-        "ruby", "php", "swift", "kotlin",
-      ],
-    }).then((h) => { _highlighter = h; return h; });
-  }
-  return _highlighterPromise;
-}
 
 mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
 
