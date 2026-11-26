@@ -53,6 +53,8 @@ pub struct SourceInfo {
 
 pub struct Source {
     source: CFRetained<CGImageSource>,
+    /// 代表画像の位置 (HEIC は複数の画像を含められる)
+    index: usize,
     properties: CFRetained<CFDictionary>,
     pub info: SourceInfo,
 }
@@ -63,7 +65,8 @@ pub fn open(path: &Path) -> Result<Source, String> {
     // SAFETY: url は有効で、options は None
     let source = unsafe { CGImageSource::with_url(&url, None) }.ok_or_else(unreadable)?;
     let frame_count = unsafe { source.count() };
-    let properties = unsafe { source.properties_at_index(0, None) }.ok_or_else(unreadable)?;
+    let index = unsafe { source.primary_image_index() };
+    let properties = unsafe { source.properties_at_index(index, None) }.ok_or_else(unreadable)?;
 
     let props = typed(&properties);
     // SAFETY: ImageIO が公開している定数キー
@@ -102,7 +105,7 @@ pub fn open(path: &Path) -> Result<Source, String> {
         has_alpha,
         has_gps: props.contains_key(gps_key),
     };
-    Ok(Source { source, properties, info })
+    Ok(Source { source, index, properties, info })
 }
 
 /// 向きを反映し、指定の大きさに縮小した画素
@@ -128,7 +131,7 @@ impl Source {
             );
         }
         // SAFETY: options は上で作った有効な辞書
-        let image = unsafe { self.source.thumbnail_at_index(0, Some(options.as_opaque())) }
+        let image = unsafe { self.source.thumbnail_at_index(self.index, Some(options.as_opaque())) }
             .ok_or_else(|| "画像を展開できませんでした".to_string())?;
         let width = CGImage::width(Some(&image)) as u32;
         let height = CGImage::height(Some(&image)) as u32;

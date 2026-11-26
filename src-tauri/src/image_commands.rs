@@ -12,6 +12,9 @@ use tauri::Emitter;
 use crate::image_engine::{self as engine, Metadata, Rendered, Source};
 
 const MAX_IMAGE_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1 GB
+/// 展開すると 1 画素 4 バイト以上になるため、画素数にも上限を置く (小さなファイルでも
+/// 巨大な寸法を名乗れる)。250 メガピクセルで約 1 GB
+const MAX_IMAGE_PIXELS: u64 = 250_000_000;
 const MAX_BATCH_FILES: usize = 5_000;
 /// 変換後プレビューとして webview に渡す上限。超える場合は数値だけ返す
 const MAX_RESULT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
@@ -188,7 +191,17 @@ fn open_source(path: &Path) -> Result<Source, String> {
     if size > MAX_IMAGE_FILE_SIZE {
         return Err(format!("画像が大きすぎます: {size} bytes (上限 1 GB)"));
     }
-    engine::open(path)
+    let source = engine::open(path)?;
+    let pixels = u64::from(source.info.width) * u64::from(source.info.height);
+    if pixels > MAX_IMAGE_PIXELS {
+        return Err(format!(
+            "画像の寸法が大きすぎます: {}×{} (上限 {} メガピクセル)",
+            source.info.width,
+            source.info.height,
+            MAX_IMAGE_PIXELS / 1_000_000
+        ));
+    }
+    Ok(source)
 }
 
 fn encode_webp(rendered: &Rendered, quality: u8) -> Result<Vec<u8>, String> {
@@ -801,6 +814,18 @@ mod tests {
         let before = std::fs::read(&jpg).unwrap();
         assert!(convert_image(s(&jpg), s(&jpg), options(OutputFormat::Jpeg)).is_err());
         assert_eq!(std::fs::read(&jpg).unwrap(), before);
+    }
+
+    #[test]
+    fn images_with_huge_dimensions_are_refused_before_decoding() {
+        // 2.56 億画素の 1bit PNG。ファイルは 31KB だが、展開には画素数に比例したメモリが要る
+        // (4 億画素の同種のファイルで、表示用の展開だけで 450MB を計測)
+        let png = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/huge-16000x16000.png");
+        assert!(std::fs::metadata(&png).unwrap().len() < 100_000);
+
+        let err = read_image_preview(png.to_string_lossy().into_owned(), 4096).unwrap_err();
+        assert!(err.contains("寸法が大きすぎます"), "{err}");
+        assert!(convert(&png, &options(OutputFormat::Jpeg)).is_err());
     }
 
     #[test]
