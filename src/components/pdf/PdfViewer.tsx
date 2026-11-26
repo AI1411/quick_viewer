@@ -1,6 +1,7 @@
 import { useEffect, useCallback, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { usePdfStore } from "../../stores/pdfStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { showError, showWarning } from "../../stores/toastStore";
 import { loadPdfDocument } from "../../lib/pdfLib";
 import { PdfCanvas } from "./PdfCanvas";
@@ -128,6 +129,7 @@ export function PdfViewer({ tabId, filePath }: PdfViewerProps) {
     let cancelled = false;
     const store = usePdfStore.getState();
     store.initTab(tabId);
+    store.setDisplayMode(tabId, useSettingsStore.getState().pdfSettings.defaultViewMode);
     store.setLoading(tabId, true);
     annotationsWritableRef.current = false;
     lastSavedJsonRef.current = null;

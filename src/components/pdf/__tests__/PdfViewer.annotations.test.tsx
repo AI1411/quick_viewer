@@ -3,6 +3,7 @@ import { render, act } from "@testing-library/react";
 import { PdfViewer } from "../PdfViewer";
 import { usePdfStore } from "../../../stores/pdfStore";
 import { useToastStore } from "../../../stores/toastStore";
+import { useSettingsStore } from "../../../stores/settingsStore";
 import type { Annotation } from "../../../types";
 
 vi.mock("../PdfCanvas", () => ({ PdfCanvas: () => null }));
@@ -30,7 +31,16 @@ const fakeDoc = () => Promise.resolve({ numPages: 3, destroy: vi.fn() });
 const saves = () => calls.filter((c) => c.cmd === "save_annotations").map((c) => c.args.annotationsJson);
 const flush = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 
+class NoopIntersectionObserver {
+  observe() {}
+  disconnect() {}
+}
+
 beforeEach(() => {
+  // 連続表示のページは IntersectionObserver で遅延描画する (jsdom には無い)
+  vi.stubGlobal("IntersectionObserver", NoopIntersectionObserver);
+  // jsdom には scrollIntoView も無い
+  Element.prototype.scrollIntoView ??= () => {};
   calls.length = 0;
   usePdfStore.setState({ tabs: {} });
   useToastStore.setState({ toasts: [] });
@@ -38,7 +48,10 @@ beforeEach(() => {
   loadPdf = fakeDoc;
   vi.useFakeTimers();
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe("PdfViewer の注釈保存", () => {
   it("PDF の読み込みに失敗しても保存済みの注釈を [] で上書きしない", async () => {
@@ -109,11 +122,6 @@ describe("PdfViewer のキーボード操作", () => {
 
 describe("PdfViewer の連続表示", () => {
   it("ページを指定するとそのページまでスクロールする", async () => {
-    class NoopObserver {
-      observe() {}
-      disconnect() {}
-    }
-    vi.stubGlobal("IntersectionObserver", NoopObserver);
     const scrolled: string[] = [];
     Element.prototype.scrollIntoView = function (this: Element) {
       scrolled.push(this.getAttribute("data-page") ?? "");
@@ -126,6 +134,15 @@ describe("PdfViewer の連続表示", () => {
 
     expect(container.querySelectorAll("[data-page]").length).toBe(3);
     expect(scrolled[scrolled.length - 1]).toBe("3");
-    vi.unstubAllGlobals();
+  });
+});
+
+describe("PdfViewer の既定の表示モード", () => {
+  it("設定の「デフォルト表示モード」で開く", async () => {
+    useSettingsStore.setState({ pdfSettings: { defaultViewMode: "single" } });
+    render(<PdfViewer tabId="t1" filePath="/doc.pdf" />);
+    await flush(0);
+    expect(usePdfStore.getState().tabs.t1?.displayMode).toBe("single");
+    useSettingsStore.setState({ pdfSettings: { defaultViewMode: "continuous" } });
   });
 });

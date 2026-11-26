@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMarkdownStore } from "../../stores/markdownStore";
 import { useTabStore } from "../../stores/tabStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { readMarkdown, saveMarkdown, renderMarkdownString } from "../../lib/markdownCommands";
 import { useShortcuts } from "../../hooks/useShortcuts";
 import { showError, showWarning } from "../../stores/toastStore";
@@ -36,7 +37,7 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
   };
 
   useEffect(() => {
-    initTab(tabId);
+    initTab(tabId, useSettingsStore.getState().markdownSettings.defaultView);
     // ストアのエントリはアンマウント後も残るので、前回の読込エラーをここで消す
     setError(tabId, null);
     setLoading(tabId, true);

@@ -12,7 +12,8 @@ interface MarkdownTabState {
 
 interface MarkdownStore {
   tabs: Record<string, MarkdownTabState>;
-  initTab: (tabId: string) => void;
+  /** 既にエントリがあれば何もしない。新規作成時の表示モードは viewMode (既定は preview) */
+  initTab: (tabId: string, viewMode?: ViewMode) => void;
   setData: (tabId: string, data: MarkdownResult) => void;
   setLoading: (tabId: string, isLoading: boolean) => void;
   setError: (tabId: string, error: string | null) => void;
@@ -26,7 +27,7 @@ interface MarkdownStore {
 export const useMarkdownStore = create<MarkdownStore>((set) => ({
   tabs: {},
 
-  initTab: (tabId) =>
+  initTab: (tabId, viewMode = "preview") =>
     set((s) => ({
       tabs: {
         ...s.tabs,
@@ -36,7 +37,7 @@ export const useMarkdownStore = create<MarkdownStore>((set) => ({
             data: null,
             isLoading: false,
             error: null,
-            viewMode: "preview",
+            viewMode,
             editContent: null,
             isDirty: false,
           },

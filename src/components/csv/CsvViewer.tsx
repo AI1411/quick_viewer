@@ -2,6 +2,7 @@ import { useEffect, useCallback, useMemo, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { sortByColumn } from "../../lib/tableSort";
 import { useCsvStore } from "../../stores/csvStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useSearchStore } from "../../stores/searchStore";
 import { showError, showWarning } from "../../stores/toastStore";
 import { buildRegex } from "../../lib/searchHighlight";
@@ -17,6 +18,12 @@ const CHUNK_SIZE = 200;
 /** 並べ替え・検索のために全行を読み込む上限 */
 const FULL_LOAD_LIMIT = 300_000;
 const INITIAL_LIMIT = 100;
+
+/** 設定の「デフォルト区切り文字」。auto と .tsv ファイルは Rust 側の自動判定に任せる */
+function defaultDelimiterFor(filePath: string): string | undefined {
+  const d = useSettingsStore.getState().csvSettings.defaultDelimiter;
+  return d === "auto" || /\.tsv$/i.test(filePath) ? undefined : d;
+}
 
 interface CsvViewerProps {
   tabId: string;
@@ -37,7 +44,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     let cancelled = false;
     setLoading(tabId, true);
     const t0 = performance.now();
-    invoke<CsvData>("read_csv", { path: filePath, limit: INITIAL_LIMIT })
+    invoke<CsvData>("read_csv", { path: filePath, limit: INITIAL_LIMIT, delimiter: defaultDelimiterFor(filePath) })
       .then((data) => {
         if (cancelled) return;
         console.info(`[perf] read_csv: ${(performance.now() - t0).toFixed(1)}ms`);
@@ -65,6 +72,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     setLoadingChunk(tabId, true);
     invoke<CsvChunk>("read_csv_chunk", {
       path: filePath,
+      delimiter: tab.data.meta.delimiter,
       offset: tab.loadedRows,
       limit: CHUNK_SIZE,
     })
@@ -142,6 +150,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       try {
         const data = await invoke<CsvData>("filter_csv", {
           path: filePath,
+          delimiter: tab.data?.meta.delimiter,
           conditions: newFilters,
         });
         setFilters(tabId, newFilters, data.rows, data.source_rows);
@@ -170,6 +179,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       try {
         const data = await invoke<CsvData>("filter_csv", {
           path: filePath,
+          delimiter: tab.data?.meta.delimiter,
           conditions: newFilters,
         });
         setFilters(tabId, newFilters, data.rows, data.source_rows);
@@ -206,7 +216,12 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
     }
     const { setLoadingChunk, appendRows } = useCsvStore.getState();
     setLoadingChunk(tabId, true);
-    invoke<CsvChunk>("read_csv_chunk", { path: filePath, offset: tab.loadedRows, limit: remaining })
+    invoke<CsvChunk>("read_csv_chunk", {
+      path: filePath,
+      delimiter: tab.data.meta.delimiter,
+      offset: tab.loadedRows,
+      limit: remaining,
+    })
       .then((chunk) => appendRows(tabId, chunk.rows, chunk.total_rows))
       .catch((err) => {
         setLoadingChunk(tabId, false);
@@ -327,6 +342,7 @@ export function CsvViewer({ tabId, filePath }: CsvViewerProps) {
       <ActiveFiltersBar
         filters={tabState.filters}
         filePath={filePath}
+        delimiter={tabState.data.meta.delimiter}
         onClearFilter={handleFilterClearColumn}
         onClearAll={handleClearAllFilters}
       />

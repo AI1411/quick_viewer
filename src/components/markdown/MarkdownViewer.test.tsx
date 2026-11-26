@@ -233,3 +233,16 @@ describe("MarkdownViewer の分割プレビュー", () => {
     vi.useRealTimers();
   });
 });
+
+describe("MarkdownViewer の既定の表示", () => {
+  it("設定の「デフォルト表示」で開く", async () => {
+    const { useSettingsStore } = await import("../../stores/settingsStore");
+    const cmds = await import("../../lib/markdownCommands");
+    useMarkdownStore.setState({ tabs: {} });
+    useSettingsStore.setState({ markdownSettings: { defaultView: "source" } });
+    vi.mocked(cmds.readMarkdown).mockResolvedValue({ html: "", toc: [], frontmatter: null, raw: "# hi", encoding: "UTF-8" });
+    render(<MarkdownViewer tabId="t9" filePath="/note.md" />);
+    expect(((await screen.findByRole("textbox")) as HTMLTextAreaElement).value).toBe("# hi");
+    useSettingsStore.setState({ markdownSettings: { defaultView: "preview" } });
+  });
+});
