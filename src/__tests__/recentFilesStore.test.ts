@@ -46,3 +46,23 @@ describe("recentFilesStore", () => {
     expect(useRecentFilesStore.getState().recentFiles).toHaveLength(0);
   });
 });
+
+describe("recentFilesStore の読み込みの検査", () => {
+  it("format が無い・不正な項目は捨て、起動時の一覧表示で落ちないようにする", async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const { useRecentFilesStore } = await import("../stores/recentFilesStore");
+    vi.mocked(invoke).mockResolvedValueOnce(
+      JSON.stringify([
+        { path: "/a.md", name: "a.md", format: "markdown", openedAt: "2026-01-01T00:00:00Z" },
+        { path: "/b.csv", name: "b.csv" },
+        { path: "/c.exe", name: "c.exe", format: "exe" },
+        { path: "/d.pdf", name: "d.pdf", format: "pdf" },
+      ])
+    );
+    await useRecentFilesStore.getState().loadFromDisk();
+    expect(useRecentFilesStore.getState().recentFiles).toEqual([
+      { path: "/a.md", name: "a.md", format: "markdown", openedAt: "2026-01-01T00:00:00Z" },
+      { path: "/d.pdf", name: "d.pdf", format: "pdf", openedAt: "" },
+    ]);
+  });
+});

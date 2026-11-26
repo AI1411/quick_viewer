@@ -42,3 +42,32 @@ describe("settingsStore (extended)", () => {
     expect(useSettingsStore.getState().markdownSettings.defaultView).toBe("split");
   });
 });
+
+describe("parseSettings (保存された設定の検査)", () => {
+  it("型の違う値や未知のキーは既定値に置き換え、正しい値だけを使う", async () => {
+    const { parseSettings } = await import("../stores/settingsStore");
+    const parsed = parseSettings({
+      theme: "neon",
+      zoomLevel: "huge",
+      fontFamily: 42,
+      setTheme: "not a function",
+      csvSettings: { defaultDelimiter: ";" },
+      pdfSettings: { defaultViewMode: "double" },
+      markdownSettings: null,
+    });
+    expect(parsed).toEqual({
+      theme: "system",
+      zoomLevel: 14,
+      fontFamily: "system-ui",
+      csvSettings: { defaultDelimiter: ";" },
+      pdfSettings: { defaultViewMode: "continuous" },
+      markdownSettings: { defaultView: "preview" },
+    });
+    expect(parsed).not.toHaveProperty("setTheme");
+  });
+
+  it("ズームは範囲内に収める", async () => {
+    const { parseSettings } = await import("../stores/settingsStore");
+    expect(parseSettings({ zoomLevel: 999 }).zoomLevel).toBe(32);
+  });
+});

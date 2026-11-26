@@ -13,6 +13,27 @@ export interface RecentFile {
   openedAt: string;
 }
 
+const FORMATS: readonly FileFormat[] = ["csv", "tsv", "pdf", "markdown", "xlsx"];
+
+/**
+ * 保存データの 1 件を検査する。format が無い・不正な項目があると
+ * 起動時の一覧表示 (format.toUpperCase()) で落ちるため、そうした項目は捨てる。
+ */
+function parseRecentFile(v: unknown): RecentFile[] {
+  if (typeof v !== "object" || v === null) return [];
+  const f = v as Record<string, unknown>;
+  if (typeof f.path !== "string" || typeof f.name !== "string") return [];
+  if (!FORMATS.includes(f.format as FileFormat)) return [];
+  return [
+    {
+      path: f.path,
+      name: f.name,
+      format: f.format as FileFormat,
+      openedAt: typeof f.openedAt === "string" ? f.openedAt : "",
+    },
+  ];
+}
+
 interface RecentFilesState {
   recentFiles: RecentFile[];
   addRecentFile: (file: RecentFile) => void;
@@ -53,14 +74,7 @@ export const useRecentFilesStore = create<RecentFilesState>((set, get) => ({
         }
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed)) return;
-        const files = (parsed as unknown[])
-          .filter(
-            (f): f is RecentFile =>
-              typeof f === "object" && f !== null &&
-              typeof (f as RecentFile).path === "string" &&
-              typeof (f as RecentFile).name === "string"
-          )
-          .slice(0, MAX_RECENT);
+        const files = (parsed as unknown[]).flatMap(parseRecentFile).slice(0, MAX_RECENT);
         set({ recentFiles: files });
       }
     } catch {

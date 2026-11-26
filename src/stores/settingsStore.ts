@@ -43,14 +43,67 @@ const ZOOM_MAX = 32;
 const ZOOM_STEP = 2;
 const ZOOM_DEFAULT = 14;
 
-const DEFAULT_SETTINGS = {
-  theme: "system" as Theme,
+interface PersistedSettings {
+  theme: Theme;
+  zoomLevel: number;
+  fontFamily: string;
+  csvSettings: CsvSettings;
+  pdfSettings: PdfSettings;
+  markdownSettings: MarkdownSettings;
+}
+
+const DEFAULT_SETTINGS: PersistedSettings = {
+  theme: "system",
   zoomLevel: ZOOM_DEFAULT,
   fontFamily: "system-ui",
-  csvSettings: { defaultDelimiter: "auto" as const },
-  pdfSettings: { defaultViewMode: "continuous" as const },
-  markdownSettings: { defaultView: "preview" as const },
+  csvSettings: { defaultDelimiter: "auto" },
+  pdfSettings: { defaultViewMode: "continuous" },
+  markdownSettings: { defaultView: "preview" },
 };
+
+function oneOf<T>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+/**
+ * 保存された設定を項目ごとに検査し、不正な値は既定値に置き換える。
+ * 以前は丸ごとストアにマージしていたため、壊れたファイルで型の違う値や
+ * アクション名と同じキーが入り込むと、起動時や操作時に落ちる恐れがあった。
+ */
+export function parseSettings(value: unknown): PersistedSettings {
+  const s = (typeof value === "object" && value !== null ? value : {}) as Record<string, unknown>;
+  const sub = (v: unknown) => (typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {});
+  const zoom = typeof s.zoomLevel === "number" && Number.isFinite(s.zoomLevel) ? s.zoomLevel : ZOOM_DEFAULT;
+  const viewMode = sub(s.pdfSettings).defaultViewMode;
+  return {
+    theme: oneOf<Theme>(s.theme, ["system", "light", "dark"], DEFAULT_SETTINGS.theme),
+    zoomLevel: Math.max(ZOOM_MIN, Math.min(zoom, ZOOM_MAX)),
+    fontFamily:
+      typeof s.fontFamily === "string" && s.fontFamily.length <= 200 ? s.fontFamily : DEFAULT_SETTINGS.fontFamily,
+    csvSettings: {
+      defaultDelimiter: oneOf(
+        sub(s.csvSettings).defaultDelimiter,
+        ["auto", ",", "\t", ";", "|"] as const,
+        DEFAULT_SETTINGS.csvSettings.defaultDelimiter
+      ),
+    },
+    pdfSettings: {
+      // 旧バージョンの "double" は "continuous" に読み替える
+      defaultViewMode: oneOf(
+        viewMode === "double" ? "continuous" : viewMode,
+        ["single", "continuous"] as const,
+        DEFAULT_SETTINGS.pdfSettings.defaultViewMode
+      ),
+    },
+    markdownSettings: {
+      defaultView: oneOf(
+        sub(s.markdownSettings).defaultView,
+        ["preview", "source", "split"] as const,
+        DEFAULT_SETTINGS.markdownSettings.defaultView
+      ),
+    },
+  };
+}
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   ...DEFAULT_SETTINGS,
@@ -110,12 +163,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           console.warn("settings.json が大きすぎるためデフォルト設定を使用");
           return;
         }
-        const parsed = JSON.parse(raw);
-        if (typeof parsed !== "object" || parsed === null) return;
-        if (parsed.pdfSettings?.defaultViewMode === "double") {
-          parsed.pdfSettings.defaultViewMode = "continuous";
-        }
-        set({ ...DEFAULT_SETTINGS, ...parsed });
+        set(parseSettings(JSON.parse(raw)));
       }
     } catch {
       // 初回起動
