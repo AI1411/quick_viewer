@@ -199,6 +199,25 @@ describe("CsvViewer の既定の区切り文字", () => {
     await waitFor(() => expect(calls.find((c) => c.cmd === "sort_csv")?.args.delimiter).toBe(";"));
   });
 
+  it.each(["auto", ";"] as const)(
+    ".tsv は設定 (%s) に関係なく、どの呼び出しでもタブ区切りとして読む",
+    async (defaultDelimiter) => {
+      useTable(["n"], descendingNumbers());
+      useSettingsStore.setState({ csvSettings: { defaultDelimiter } });
+      const { container } = render(<CsvViewer tabId="t6" filePath="/data.TSV" />);
+      await act(async () => {});
+      await act(async () => {
+        fireEvent.click(sortButtons(container)[0]);
+      });
+      await waitFor(() => expect(calls.some((c) => c.cmd === "sort_csv")).toBe(true));
+
+      // 区切り文字が呼び出しごとに違うと、Rust 側は別の索引を作ってしまう
+      const delimiters = calls.filter((c) => "delimiter" in c.args).map((c) => [c.cmd, c.args.delimiter]);
+      expect(delimiters.length).toBeGreaterThanOrEqual(2);
+      expect(delimiters.filter(([, d]) => d !== "\t")).toEqual([]);
+    }
+  );
+
   it("設定が auto のときは区切り文字を指定せず、自動判定に任せる", async () => {
     useTable(["n"], descendingNumbers());
     render(<CsvViewer tabId="t5" filePath="/data.csv" />);
