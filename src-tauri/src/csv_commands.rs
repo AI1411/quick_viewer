@@ -1,3 +1,4 @@
+use icu_collator::{options::CollatorOptions, CollatorBorrowed};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -5,7 +6,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::SystemTime;
 
 use crate::utils::{atomic_write, atomic_write_with, catch_panic, decode_file, require_extension};
@@ -481,22 +482,39 @@ fn try_parse_entire_number(s: &str) -> Option<f64> {
     s.parse::<f64>().ok().filter(|n| n.is_finite())
 }
 
-/// 並べ替えのキー。行ごとに 1 回だけ作り、比較のたびにセルを数値として読み直さない
-/// (100 万行の並べ替えでは比較が約 2000 万回になる)。
-enum SortKey<'a> {
+/// 文字列の並び順。日本語の照合順序 (CLDR) で、フロントの Intl.Collator("ja") と同じ規則。
+/// バイト順では「Apple, Cherry, apple」「いとう, たなか, アベ」のように大文字やカタカナが分かれてしまう。
+///
+/// かな・英字・JIS 第 1/第 2 水準の漢字は WebView と同じ順になる。それ以外の漢字どうし (髙 と 﨑 など) は
+/// WebView の ICU が部首画数順、ICU4X がコード順に並べるため、順序が異なる。
+static TEXT_ORDER: LazyLock<CollatorBorrowed<'static>> = LazyLock::new(|| {
+    CollatorBorrowed::try_new(
+        icu_locale_core::locale!("ja").into(),
+        CollatorOptions::default(),
+    )
+    .expect("ja の照合データはビルドに含まれている")
+});
+
+/// 並べ替えのキー。行ごとに 1 回だけ作り、比較のたびにセルを数値として読み直したり
+/// 照合し直したりしない (100 万行の並べ替えでは比較が約 2000 万回になる)。
+enum SortKey {
     Number(f64),
-    Text(&'a str),
+    /// 照合キー。バイト列として比べた大小が、照合順序での大小と一致する。
+    /// ひらがなとカタカナのように同順の文字列は同じキーになり、元の並びを保つ
+    Text(Vec<u8>),
     Empty,
 }
 
-impl<'a> SortKey<'a> {
-    fn of(cell: &'a str) -> Self {
+impl SortKey {
+    fn of(cell: &str) -> Self {
         if cell.is_empty() {
             SortKey::Empty
         } else if let Some(n) = try_parse_entire_number(cell) {
             SortKey::Number(n)
         } else {
-            SortKey::Text(cell)
+            let mut key = Vec::new();
+            let Ok(()) = TEXT_ORDER.write_sort_key_to(cell, &mut key);
+            SortKey::Text(key)
         }
     }
 }

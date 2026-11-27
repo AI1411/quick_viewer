@@ -39,6 +39,9 @@ zip = "2"
 quick-xml = "0.37"
 sha2 = "0.10"
 ammonia = "3"
+# CSV の文字列を日本語の照合順序で並べる。tauri (url → idna) が既に使っている ICU4X 2.2 に揃える
+icu_collator = "~2.2"
+icu_locale_core = "~2.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 base64 = "0.22"
