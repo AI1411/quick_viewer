@@ -11,11 +11,11 @@ use objc2_core_graphics::{
     kCGColorSpaceSRGB, CGBitmapContextCreate, CGColorSpace, CGContext, CGImage, CGImageAlphaInfo,
 };
 use objc2_image_io::{
-    kCGImageDestinationLossyCompressionQuality, kCGImagePropertyGPSDictionary, kCGImagePropertyHasAlpha, kCGImagePropertyOrientation,
-    kCGImagePropertyPixelHeight, kCGImagePropertyPixelWidth, kCGImagePropertyTIFFDictionary,
-    kCGImagePropertyTIFFOrientation, kCGImageSourceCreateThumbnailFromImageAlways,
-    kCGImageSourceCreateThumbnailWithTransform, kCGImageSourceThumbnailMaxPixelSize,
-    CGImageDestination, CGImageSource,
+    kCGImageDestinationLossyCompressionQuality, kCGImagePropertyGPSDictionary,
+    kCGImagePropertyHasAlpha, kCGImagePropertyOrientation, kCGImagePropertyPixelHeight,
+    kCGImagePropertyPixelWidth, kCGImagePropertyTIFFDictionary, kCGImagePropertyTIFFOrientation,
+    kCGImageSourceCreateThumbnailFromImageAlways, kCGImageSourceCreateThumbnailWithTransform,
+    kCGImageSourceThumbnailMaxPixelSize, CGImageDestination, CGImageSource,
 };
 
 type Properties = CFDictionary<CFString, CFType>;
@@ -105,7 +105,12 @@ pub fn open(path: &Path) -> Result<Source, String> {
         has_alpha,
         has_gps: props.contains_key(gps_key),
     };
-    Ok(Source { source, index, properties, info })
+    Ok(Source {
+        source,
+        index,
+        properties,
+        info,
+    })
 }
 
 /// 向きを反映し、指定の大きさに縮小した画素
@@ -123,19 +128,32 @@ impl Source {
         // SAFETY: ImageIO が公開している定数キー
         unsafe {
             // 埋め込みサムネイルではなく本体の画素から作り、EXIF の向きを画素に反映する
-            options.set(kCGImageSourceCreateThumbnailFromImageAlways, CFBoolean::new(true));
-            options.set(kCGImageSourceCreateThumbnailWithTransform, CFBoolean::new(true));
+            options.set(
+                kCGImageSourceCreateThumbnailFromImageAlways,
+                CFBoolean::new(true),
+            );
+            options.set(
+                kCGImageSourceCreateThumbnailWithTransform,
+                CFBoolean::new(true),
+            );
             options.set(
                 kCGImageSourceThumbnailMaxPixelSize,
                 &CFNumber::new_i64(i64::from(edge)),
             );
         }
         // SAFETY: options は上で作った有効な辞書
-        let image = unsafe { self.source.thumbnail_at_index(self.index, Some(options.as_opaque())) }
-            .ok_or_else(|| "画像を展開できませんでした".to_string())?;
+        let image = unsafe {
+            self.source
+                .thumbnail_at_index(self.index, Some(options.as_opaque()))
+        }
+        .ok_or_else(|| "画像を展開できませんでした".to_string())?;
         let width = CGImage::width(Some(&image)) as u32;
         let height = CGImage::height(Some(&image)) as u32;
-        Ok(Rendered { image, width, height })
+        Ok(Rendered {
+            image,
+            width,
+            height,
+        })
     }
 
     /// 書き出し先に引き継ぐメタデータ。画素は向きを反映済みなので Orientation は 1 に戻す。
@@ -165,7 +183,10 @@ pub enum Metadata<'a> {
     /// 何も引き継がない
     None,
     /// 元画像の EXIF などを引き継ぐ。`keep_location` が false なら GPS 位置情報だけ除く
-    From { source: &'a Source, keep_location: bool },
+    From {
+        source: &'a Source,
+        keep_location: bool,
+    },
 }
 
 /// ImageIO が書き出せる形式の Uniform Type Identifier 一覧
@@ -197,7 +218,10 @@ impl Rendered {
 
         let props = match metadata {
             Metadata::None => MutableProperties::empty(),
-            Metadata::From { source, keep_location } => source.metadata(keep_location)?,
+            Metadata::From {
+                source,
+                keep_location,
+            } => source.metadata(keep_location)?,
         };
         // SAFETY: ImageIO が公開している定数キー
         unsafe {
@@ -221,7 +245,8 @@ impl Rendered {
         let failed = || "画素を取り出せませんでした".to_string();
         let mut pixels = vec![0u8; width * height * 4];
         // SAFETY: ImageIO が公開している定数
-        let srgb = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB })).ok_or_else(failed)?;
+        let srgb =
+            CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB })).ok_or_else(failed)?;
         // SAFETY: pixels は width*height*4 バイトで、コンテキストより長く生存する
         let context = unsafe {
             CGBitmapContextCreate(
@@ -237,12 +262,15 @@ impl Rendered {
         .ok_or_else(failed)?;
         let bounds = CGRect {
             origin: CGPoint { x: 0.0, y: 0.0 },
-            size: CGSize { width: width as f64, height: height as f64 },
+            size: CGSize {
+                width: width as f64,
+                height: height as f64,
+            },
         };
         CGContext::draw_image(Some(&context), bounds, Some(&self.image));
         drop(context);
 
-        for px in pixels.chunks_exact_mut(4) {
+        for px in pixels.as_chunks_mut::<4>().0 {
             let alpha = u32::from(px[3]);
             if alpha != 0 && alpha != 255 {
                 for c in &mut px[..3] {
@@ -279,7 +307,10 @@ pub mod test_support {
                     .unwrap();
             gps.set(kCGImagePropertyGPSLatitude, &CFNumber::new_f64(35.6812));
             gps.set(kCGImagePropertyGPSLatitudeRef, &CFString::from_str("N"));
-            tiff.set(kCGImagePropertyTIFFMake, &CFString::from_str("QuickViewTest"));
+            tiff.set(
+                kCGImagePropertyTIFFMake,
+                &CFString::from_str("QuickViewTest"),
+            );
             props.set(kCGImagePropertyGPSDictionary, gps.as_opaque());
             props.set(kCGImagePropertyTIFFDictionary, tiff.as_opaque());
             props.set(kCGImagePropertyOrientation, &CFNumber::new_i64(orientation));

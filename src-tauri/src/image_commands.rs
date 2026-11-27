@@ -82,7 +82,9 @@ fn available_formats() -> &'static [FormatSpec] {
         FORMATS
             .iter()
             .filter(|spec| match spec.encoder {
-                Encoder::ImageIo { type_identifier } => writable.iter().any(|t| t == type_identifier),
+                Encoder::ImageIo { type_identifier } => {
+                    writable.iter().any(|t| t == type_identifier)
+                }
                 Encoder::LibWebp => true,
             })
             .copied()
@@ -135,9 +137,13 @@ fn source_format_label(type_identifier: &str) -> String {
 pub enum Resize {
     None,
     /// 長辺をこのピクセル数以下にする
-    LongEdge { pixels: u32 },
+    LongEdge {
+        pixels: u32,
+    },
     /// 元の大きさに対する割合 (1〜100)
-    Percent { percent: u32 },
+    Percent {
+        percent: u32,
+    },
 }
 
 impl Resize {
@@ -227,8 +233,14 @@ fn encode_once(
             let metadata = match policy {
                 _ if !spec.keeps_metadata => Metadata::None,
                 MetadataPolicy::StripAll => Metadata::None,
-                MetadataPolicy::Keep => Metadata::From { source, keep_location: true },
-                MetadataPolicy::StripLocation => Metadata::From { source, keep_location: false },
+                MetadataPolicy::Keep => Metadata::From {
+                    source,
+                    keep_location: true,
+                },
+                MetadataPolicy::StripLocation => Metadata::From {
+                    source,
+                    keep_location: false,
+                },
             };
             let quality = spec.lossy.then(|| f64::from(quality) / 100.0);
             rendered.encode(type_identifier, quality, metadata)
@@ -279,7 +291,9 @@ pub fn convert(path: &Path, options: &ConvertOptions) -> Result<Encoded, String>
     let spec = format_spec(options.format)?;
     let source = open_source(path)?;
     let quality = options.quality.clamp(1, 100);
-    let mut edge = options.resize.long_edge(source.info.width.max(source.info.height));
+    let mut edge = options
+        .resize
+        .long_edge(source.info.width.max(source.info.height));
 
     for round in 0.. {
         let rendered = source.render(edge)?;
@@ -316,7 +330,11 @@ pub fn convert(path: &Path, options: &ConvertOptions) -> Result<Encoded, String>
 }
 
 fn data_url(mime: &str, bytes: &[u8]) -> String {
-    format!("data:{};base64,{}", mime, general_purpose::STANDARD.encode(bytes))
+    format!(
+        "data:{};base64,{}",
+        mime,
+        general_purpose::STANDARD.encode(bytes)
+    )
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
@@ -355,7 +373,11 @@ fn reserve_output_path(dir: &Path, stem: &str, extension: &str) -> std::io::Resu
             n => format!("{stem}-{n}.{extension}"),
         };
         let candidate = dir.join(name);
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&candidate) {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
             Ok(_) => return Ok(candidate),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
             Err(e) => return Err(e),
@@ -363,7 +385,11 @@ fn reserve_output_path(dir: &Path, stem: &str, extension: &str) -> std::io::Resu
     }
 }
 
-fn convert_to_file(source: &Path, output: &Path, options: &ConvertOptions) -> Result<Encoded, String> {
+fn convert_to_file(
+    source: &Path,
+    output: &Path,
+    options: &ConvertOptions,
+) -> Result<Encoded, String> {
     let encoded = crate::utils::catch_panic(|| convert(source, options))?;
     crate::utils::atomic_write(output, &encoded.bytes).map_err(|e| e.to_string())?;
     Ok(encoded)
@@ -379,27 +405,39 @@ pub fn convert_batch(
 ) -> Result<Vec<BatchItem>, String> {
     let spec = format_spec(options.format)?;
     if !output_dir.is_dir() {
-        return Err(format!("保存先フォルダがありません: {}", output_dir.display()));
+        return Err(format!(
+            "保存先フォルダがありません: {}",
+            output_dir.display()
+        ));
     }
     if paths.len() > MAX_BATCH_FILES {
-        return Err(format!("一度に変換できるのは {MAX_BATCH_FILES} ファイルまでです"));
+        return Err(format!(
+            "一度に変換できるのは {MAX_BATCH_FILES} ファイルまでです"
+        ));
     }
 
     // 出力先はファイル順に確保しておく (並列に処理しても結果の名前が変わらない)
     let mut outputs: Vec<PathBuf> = Vec::with_capacity(paths.len());
     for p in paths {
-        let stem = Path::new(p).file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+        let stem = Path::new(p)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("image");
         match reserve_output_path(output_dir, stem, spec.extensions[0]) {
             Ok(path) => outputs.push(path),
             Err(e) => {
-                outputs.iter().for_each(|reserved| drop(std::fs::remove_file(reserved)));
+                outputs
+                    .iter()
+                    .for_each(|reserved| drop(std::fs::remove_file(reserved)));
                 return Err(format!("保存先に書き込めません: {e}"));
             }
         }
     }
 
     let next = AtomicUsize::new(0);
-    let workers = std::thread::available_parallelism().map_or(2, |n| n.get()).min(4);
+    let workers = std::thread::available_parallelism()
+        .map_or(2, |n| n.get())
+        .min(4);
     let (tx, rx) = mpsc::channel::<(usize, BatchItem)>();
     let mut results: Vec<Option<BatchItem>> = vec![None; paths.len()];
 
@@ -574,7 +612,10 @@ pub fn convert_images(
 ) -> Result<Vec<BatchItem>, String> {
     let total = paths.len();
     convert_batch(&paths, Path::new(&output_dir), &options, |done, item| {
-        let _ = app.emit("image-convert-progress", BatchProgress { done, total, item });
+        let _ = app.emit(
+            "image-convert-progress",
+            BatchProgress { done, total, item },
+        );
     })
 }
 
@@ -591,7 +632,8 @@ mod tests {
 
     impl TempDir {
         fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("qv_image_{}_{}", name, std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("qv_image_{}_{}", name, std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             TempDir(dir)
@@ -615,7 +657,11 @@ mod tests {
             seed ^= seed >> 17;
             seed ^= seed << 5;
             let noise = (seed & 0x3F) as u8;
-            image::Rgb([(x * 255 / width) as u8 ^ noise, (y * 255 / height) as u8 ^ noise, 128 ^ noise])
+            image::Rgb([
+                (x * 255 / width) as u8 ^ noise,
+                (y * 255 / height) as u8 ^ noise,
+                128 ^ noise,
+            ])
         });
         img.save(path).unwrap();
     }
@@ -647,12 +693,19 @@ mod tests {
     #[test]
     fn heic_is_written_read_back_and_converted_to_jpeg() {
         let dir = TempDir::new("heic");
-        let (png, heic, jpg) = (dir.path("photo.png"), dir.path("photo.heic"), dir.path("photo.jpg"));
+        let (png, heic, jpg) = (
+            dir.path("photo.png"),
+            dir.path("photo.heic"),
+            dir.path("photo.jpg"),
+        );
         write_photo(&png, 320, 200);
 
         convert_file(&png, &heic, &options(OutputFormat::Heic));
         let info = read_image_info(heic.to_string_lossy().into_owned()).unwrap();
-        assert_eq!((info.width, info.height, info.format.as_str()), (320, 200, "HEIC"));
+        assert_eq!(
+            (info.width, info.height, info.format.as_str()),
+            (320, 200, "HEIC")
+        );
 
         let converted = convert_file(&heic, &jpg, &options(OutputFormat::Jpeg));
         let bytes = std::fs::read(&jpg).unwrap();
@@ -672,7 +725,9 @@ mod tests {
         for spec in formats {
             let out = dir.path(&format!("out.{}", spec.extensions[0]));
             convert_file(&png, &out, &options(spec.id));
-            let info = engine::open(&out).unwrap_or_else(|e| panic!("{}: {e}", spec.label)).info;
+            let info = engine::open(&out)
+                .unwrap_or_else(|e| panic!("{}: {e}", spec.label))
+                .info;
             assert_eq!((info.width, info.height), (64, 48), "{}", spec.label);
         }
     }
@@ -683,8 +738,22 @@ mod tests {
         let png = dir.path("src.png");
         write_photo(&png, 400, 300);
         for format in [OutputFormat::Jpeg, OutputFormat::Heic, OutputFormat::Webp] {
-            let low = size_of(&png, &ConvertOptions { quality: 30, ..options(format) }).0;
-            let high = size_of(&png, &ConvertOptions { quality: 90, ..options(format) }).0;
+            let low = size_of(
+                &png,
+                &ConvertOptions {
+                    quality: 30,
+                    ..options(format)
+                },
+            )
+            .0;
+            let high = size_of(
+                &png,
+                &ConvertOptions {
+                    quality: 90,
+                    ..options(format)
+                },
+            )
+            .0;
             assert!(low < high, "{format:?}: q30={low} q90={high}");
         }
     }
@@ -695,7 +764,13 @@ mod tests {
         let png = dir.path("src.png");
         write_photo(&png, 400, 200);
         let dims = |resize| {
-            let (_, w, h) = size_of(&png, &ConvertOptions { resize, ..options(OutputFormat::Jpeg) });
+            let (_, w, h) = size_of(
+                &png,
+                &ConvertOptions {
+                    resize,
+                    ..options(OutputFormat::Jpeg)
+                },
+            );
             (w, h)
         };
         assert_eq!(dims(Resize::LongEdge { pixels: 100 }), (100, 50));
@@ -710,18 +785,40 @@ mod tests {
         let png = dir.path("src.png");
         write_photo(&png, 600, 400);
         let with_target = |target| {
-            convert(&png, &ConvertOptions { target_bytes: Some(target), ..options(OutputFormat::Jpeg) }).unwrap()
+            convert(
+                &png,
+                &ConvertOptions {
+                    target_bytes: Some(target),
+                    ..options(OutputFormat::Jpeg)
+                },
+            )
+            .unwrap()
         };
 
-        let at_q95 = size_of(&png, &ConvertOptions { quality: 95, ..options(OutputFormat::Jpeg) }).0 as u64;
+        let at_q95 = size_of(
+            &png,
+            &ConvertOptions {
+                quality: 95,
+                ..options(OutputFormat::Jpeg)
+            },
+        )
+        .0 as u64;
         let roomy = with_target(at_q95 / 2);
         assert!(roomy.bytes.len() as u64 <= at_q95 / 2);
-        assert_eq!((roomy.width, roomy.height), (600, 400), "quality alone should be enough");
+        assert_eq!(
+            (roomy.width, roomy.height),
+            (600, 400),
+            "quality alone should be enough"
+        );
         assert!(roomy.quality.unwrap() < 95);
 
         // 最低品質でも収まらない大きさを指定すると、画像を縮小して収める
         let tight = with_target(3_000);
-        assert!(tight.bytes.len() <= 3_000, "got {} bytes", tight.bytes.len());
+        assert!(
+            tight.bytes.len() <= 3_000,
+            "got {} bytes",
+            tight.bytes.len()
+        );
         assert!(tight.width < 600);
     }
 
@@ -741,7 +838,11 @@ mod tests {
         write_photo(&png, 40, 20);
         let rendered = engine::open(&png).unwrap().render(40).unwrap();
         let jpg = dir.path("camera.jpg");
-        std::fs::write(&jpg, encode_with_camera_metadata(&rendered, "public.jpeg", 6)).unwrap();
+        std::fs::write(
+            &jpg,
+            encode_with_camera_metadata(&rendered, "public.jpeg", 6),
+        )
+        .unwrap();
         jpg
     }
 
@@ -750,7 +851,11 @@ mod tests {
         let dir = TempDir::new("orientation");
         let jpg = write_camera_jpeg(&dir);
         let info = engine::open(&jpg).unwrap().info;
-        assert_eq!((info.width, info.height), (20, 40), "display size follows the orientation tag");
+        assert_eq!(
+            (info.width, info.height),
+            (20, 40),
+            "display size follows the orientation tag"
+        );
 
         let out = dir.path("upright.heic");
         let converted = convert_file(&jpg, &out, &options(OutputFormat::Heic));
@@ -770,12 +875,25 @@ mod tests {
 
         let result = |policy, name: &str| {
             let out = dir.path(name);
-            convert_file(&jpg, &out, &ConvertOptions { metadata: policy, ..options(OutputFormat::Jpeg) });
+            convert_file(
+                &jpg,
+                &out,
+                &ConvertOptions {
+                    metadata: policy,
+                    ..options(OutputFormat::Jpeg)
+                },
+            );
             let s = engine::open(&out).unwrap();
             (s.info.has_gps, camera_make(&s))
         };
-        assert_eq!(result(MetadataPolicy::Keep, "keep.jpg"), (true, Some("QuickViewTest".into())));
-        assert_eq!(result(MetadataPolicy::StripLocation, "noloc.jpg"), (false, Some("QuickViewTest".into())));
+        assert_eq!(
+            result(MetadataPolicy::Keep, "keep.jpg"),
+            (true, Some("QuickViewTest".into()))
+        );
+        assert_eq!(
+            result(MetadataPolicy::StripLocation, "noloc.jpg"),
+            (false, Some("QuickViewTest".into()))
+        );
         assert_eq!(result(MetadataPolicy::StripAll, "bare.jpg"), (false, None));
     }
 
@@ -783,18 +901,41 @@ mod tests {
     fn transparency_is_flattened_onto_white_for_formats_without_alpha() {
         let dir = TempDir::new("alpha");
         let png = dir.path("transparent.png");
-        image::RgbaImage::from_pixel(16, 16, image::Rgba([255, 0, 0, 0])).save(&png).unwrap();
+        image::RgbaImage::from_pixel(16, 16, image::Rgba([255, 0, 0, 0]))
+            .save(&png)
+            .unwrap();
         assert!(engine::open(&png).unwrap().info.has_alpha);
 
         let jpg = dir.path("flat.jpg");
-        convert_file(&png, &jpg, &ConvertOptions { quality: 95, ..options(OutputFormat::Jpeg) });
-        let rgba = engine::open(&jpg).unwrap().render(16).unwrap().to_rgba().unwrap();
-        assert!(rgba[..3].iter().all(|&c| c > 240), "expected white, got {:?}", &rgba[..4]);
+        convert_file(
+            &png,
+            &jpg,
+            &ConvertOptions {
+                quality: 95,
+                ..options(OutputFormat::Jpeg)
+            },
+        );
+        let rgba = engine::open(&jpg)
+            .unwrap()
+            .render(16)
+            .unwrap()
+            .to_rgba()
+            .unwrap();
+        assert!(
+            rgba[..3].iter().all(|&c| c > 240),
+            "expected white, got {:?}",
+            &rgba[..4]
+        );
 
         // 透過を持てる形式ではそのまま残る
         let webp = dir.path("clear.webp");
         convert_file(&png, &webp, &options(OutputFormat::Webp));
-        let rgba = engine::open(&webp).unwrap().render(16).unwrap().to_rgba().unwrap();
+        let rgba = engine::open(&webp)
+            .unwrap()
+            .render(16)
+            .unwrap()
+            .to_rgba()
+            .unwrap();
         assert_eq!(rgba[3], 0);
     }
 
@@ -807,10 +948,23 @@ mod tests {
         let preview = read_image_preview(heic.to_string_lossy().into_owned(), 64).unwrap();
         assert!(preview.starts_with("data:image/jpeg;base64,"));
 
-        let estimate = estimate_image(heic.to_string_lossy().into_owned(), options(OutputFormat::Webp), true).unwrap();
-        assert!(estimate.preview.unwrap().starts_with("data:image/webp;base64,"));
+        let estimate = estimate_image(
+            heic.to_string_lossy().into_owned(),
+            options(OutputFormat::Webp),
+            true,
+        )
+        .unwrap();
+        assert!(estimate
+            .preview
+            .unwrap()
+            .starts_with("data:image/webp;base64,"));
         assert_eq!((estimate.width, estimate.height), (300, 100));
-        let without = estimate_image(heic.to_string_lossy().into_owned(), options(OutputFormat::Webp), false).unwrap();
+        let without = estimate_image(
+            heic.to_string_lossy().into_owned(),
+            options(OutputFormat::Webp),
+            false,
+        )
+        .unwrap();
         assert!(without.preview.is_none());
         assert_eq!(without.size, estimate.size);
     }
@@ -827,7 +981,12 @@ mod tests {
         assert!(read_image_info(s(&secret)).is_err());
         assert!(read_image_preview(s(&secret), 100).is_err());
         // 選んだ形式と違う拡張子には書かない
-        assert!(convert_image(s(&jpg), s(&dir.path("out.plist")), options(OutputFormat::Jpeg)).is_err());
+        assert!(convert_image(
+            s(&jpg),
+            s(&dir.path("out.plist")),
+            options(OutputFormat::Jpeg)
+        )
+        .is_err());
         assert!(!dir.path("out.plist").exists());
         // 非可逆の再圧縮で元のファイルを壊さない
         let before = std::fs::read(&jpg).unwrap();
@@ -849,12 +1008,18 @@ mod tests {
             .map(|p| dir.path(p).to_string_lossy().into_owned())
             .collect();
 
-        let results = convert_batch(&paths, &out_dir, &options(OutputFormat::Jpeg), |_, _| {}).unwrap();
+        let results =
+            convert_batch(&paths, &out_dir, &options(OutputFormat::Jpeg), |_, _| {}).unwrap();
 
         // 大文字小文字を区別しないファイルシステムでは Photo.jpg と photo.jpg は同じファイルになる
         let widths: Vec<u32> = results
             .iter()
-            .map(|r| engine::open(Path::new(r.output_path.as_ref().unwrap())).unwrap().info.width)
+            .map(|r| {
+                engine::open(Path::new(r.output_path.as_ref().unwrap()))
+                    .unwrap()
+                    .info
+                    .width
+            })
             .collect();
         assert_eq!(widths, vec![80, 60]);
         assert_eq!(std::fs::read_dir(&out_dir).unwrap().count(), 2);
@@ -863,7 +1028,11 @@ mod tests {
     #[test]
     fn convert_image_does_not_write_through_a_symlink_to_another_kind_of_file() {
         let dir = TempDir::new("symlink");
-        let (png, secret, link) = (dir.path("a.png"), dir.path("notes.txt"), dir.path("out.jpg"));
+        let (png, secret, link) = (
+            dir.path("a.png"),
+            dir.path("notes.txt"),
+            dir.path("out.jpg"),
+        );
         write_photo(&png, 32, 32);
         std::fs::write(&secret, "keep me").unwrap();
         std::os::unix::fs::symlink(&secret, &link).unwrap();
@@ -881,12 +1050,18 @@ mod tests {
         convert_file(
             &jpg,
             &out,
-            &ConvertOptions { resize: Resize::LongEdge { pixels: 20 }, ..options(OutputFormat::Jpeg) },
+            &ConvertOptions {
+                resize: Resize::LongEdge { pixels: 20 },
+                ..options(OutputFormat::Jpeg)
+            },
         );
         let source = engine::open(&out).unwrap();
         assert_eq!((source.info.width, source.info.height), (10, 20));
         // 元画像の Exif (40x20) をそのまま引き継ぐと古い寸法が残る。ImageIO が書き出し時に直す
-        assert_eq!(exif_pixel_size(&engine::open(&jpg).unwrap()), Some((40, 20)));
+        assert_eq!(
+            exif_pixel_size(&engine::open(&jpg).unwrap()),
+            Some((40, 20))
+        );
         assert_eq!(exif_pixel_size(&source), Some((10, 20)));
     }
 
@@ -920,18 +1095,44 @@ mod tests {
             .collect();
 
         let mut progress = Vec::new();
-        let results = convert_batch(&paths, &out_dir, &options(OutputFormat::Jpeg), |done, _| progress.push(done)).unwrap();
+        let results = convert_batch(&paths, &out_dir, &options(OutputFormat::Jpeg), |done, _| {
+            progress.push(done)
+        })
+        .unwrap();
 
         assert_eq!(progress, vec![1, 2, 3]);
         let names: Vec<Option<String>> = results
             .iter()
-            .map(|r| r.output_path.as_ref().map(|p| Path::new(p).file_name().unwrap().to_string_lossy().into_owned()))
+            .map(|r| {
+                r.output_path.as_ref().map(|p| {
+                    Path::new(p)
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+            })
             .collect();
-        assert_eq!(names, vec![Some("photo-1.jpg".into()), None, Some("photo-2.jpg".into())]);
+        assert_eq!(
+            names,
+            vec![Some("photo-1.jpg".into()), None, Some("photo-2.jpg".into())]
+        );
         assert!(results[1].error.is_some());
-        assert!(!out_dir.join("broken.jpg").exists(), "a failed item must not leave a file behind");
+        assert!(
+            !out_dir.join("broken.jpg").exists(),
+            "a failed item must not leave a file behind"
+        );
         assert!(results[0].size.unwrap() > 0 && results[0].source_size > 0);
-        assert_eq!(std::fs::read(out_dir.join("photo.jpg")).unwrap(), b"existing");
-        assert_eq!(engine::open(&out_dir.join("photo-2.jpg")).unwrap().info.width, 60);
+        assert_eq!(
+            std::fs::read(out_dir.join("photo.jpg")).unwrap(),
+            b"existing"
+        );
+        assert_eq!(
+            engine::open(&out_dir.join("photo-2.jpg"))
+                .unwrap()
+                .info
+                .width,
+            60
+        );
     }
 }

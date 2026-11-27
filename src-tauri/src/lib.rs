@@ -326,8 +326,18 @@ mod tests {
 
     #[test]
     fn detect_images_by_extension() {
-        for name in ["photo.jpg", "IMG_0001.HEIC", "scan.tiff", "shot.webp", "raw.dng"] {
-            assert_eq!(detect_format(Path::new(name), b"").unwrap(), "image", "{name}");
+        for name in [
+            "photo.jpg",
+            "IMG_0001.HEIC",
+            "scan.tiff",
+            "shot.webp",
+            "raw.dng",
+        ] {
+            assert_eq!(
+                detect_format(Path::new(name), b"").unwrap(),
+                "image",
+                "{name}"
+            );
         }
     }
 
@@ -350,7 +360,10 @@ mod tests {
             ("pdf_commands.rs", include_str!("pdf_commands.rs")),
             ("markdown_commands.rs", include_str!("markdown_commands.rs")),
             ("xlsx_commands.rs", include_str!("xlsx_commands.rs")),
-            ("persistence_commands.rs", include_str!("persistence_commands.rs")),
+            (
+                "persistence_commands.rs",
+                include_str!("persistence_commands.rs"),
+            ),
             ("image_commands.rs", include_str!("image_commands.rs")),
         ] {
             assert!(!src.contains(sync_command), "{name} に同期コマンドがある");

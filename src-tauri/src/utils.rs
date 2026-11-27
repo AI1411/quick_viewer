@@ -89,9 +89,18 @@ fn create_temp_file(
             .unwrap_or(0);
         let mut name = std::ffi::OsString::from(".");
         name.push(fname);
-        name.push(format!(".{}.{:08x}{}.tmp", std::process::id(), nanos, attempt));
+        name.push(format!(
+            ".{}.{:08x}{}.tmp",
+            std::process::id(),
+            nanos,
+            attempt
+        ));
         let tmp_path = parent.join(name);
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp_path) {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)
+        {
             Ok(file) => return Ok((tmp_path, file)),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last_err = Some(e),
             Err(e) => return Err(e),
@@ -120,7 +129,11 @@ pub fn require_extension(path: &Path, allowed: &[&str]) -> Result<(), String> {
     if ok {
         Ok(())
     } else {
-        Err(format!("対応していないファイルです: {} (拡張子 {:?})", path.display(), allowed))
+        Err(format!(
+            "対応していないファイルです: {} (拡張子 {:?})",
+            path.display(),
+            allowed
+        ))
     }
 }
 
@@ -259,7 +272,10 @@ mod tests {
 
         atomic_write(&link, b"new").unwrap();
 
-        let link_is_symlink = fs::symlink_metadata(&link).unwrap().file_type().is_symlink();
+        let link_is_symlink = fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink();
         let real_content = fs::read(&real).unwrap();
         fs::remove_dir_all(&dir).ok();
         assert!(link_is_symlink);
