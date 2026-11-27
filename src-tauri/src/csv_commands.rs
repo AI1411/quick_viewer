@@ -428,32 +428,93 @@ fn parse_f64(s: &str) -> Option<f64> {
 
 /// Parse a string as a number only when the entire string is numeric
 /// (mirrors frontend `tryParseEntireNumber` / `compareCellValues`).
+fn count_digits(bytes: &[u8]) -> usize {
+    bytes.iter().take_while(|b| b.is_ascii_digit()).count()
+}
+
+/// `[-+]?(数字[.数字] | .数字)(e[-+]?数字)?` の形かどうか。
+/// f64 の parse は "inf" や "nan" も数値として読むので、先に形を確かめる。
+fn is_number_shape(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    let mut i = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let int_digits = count_digits(&bytes[i..]);
+    i += int_digits;
+    let mut frac_digits = 0;
+    if bytes.get(i) == Some(&b'.') {
+        frac_digits = count_digits(&bytes[i + 1..]);
+        i += 1 + frac_digits;
+    }
+    if int_digits + frac_digits == 0 {
+        return false;
+    }
+    if matches!(bytes.get(i), Some(b'e' | b'E')) {
+        i += 1;
+        i += usize::from(matches!(bytes.get(i), Some(b'+' | b'-')));
+        let exp_digits = count_digits(&bytes[i..]);
+        if exp_digits == 0 {
+            return false;
+        }
+        i += exp_digits;
+    }
+    i == bytes.len()
+}
+
+/// セルの文字列を数値として読む。"1,234" "¥1,200" "12%" "1e3" に対応し、数値でなければ None。
+/// "2024-03-01" や "10px" のように一部だけが数字のものは数値にしない。
+///
+/// フロントの tryParseEntireNumber と同じ規則 (tests/fixtures/sort-cases.json で両方を検査する)。
 fn try_parse_entire_number(s: &str) -> Option<f64> {
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
+    let s = s.trim();
+    let s = s.strip_prefix(['¥', '$', '€', '£']).unwrap_or(s);
+    // 並べ替えは比較のたびにここを通る。桁区切りが無い普通の数値では文字列を作り直さない
+    let without_separators;
+    let s = if s.contains(',') {
+        without_separators = s.replace(',', "");
+        without_separators.as_str()
+    } else {
+        s
+    };
+    let s = s.strip_suffix('%').unwrap_or(s);
+    if !is_number_shape(s) {
         return None;
     }
-    // "NaN" や "inf" も f64 として読めるが、大小を決められないので文字列として扱う
-    trimmed.parse::<f64>().ok().filter(|n| n.is_finite())
+    s.parse::<f64>().ok().filter(|n| n.is_finite())
 }
 
-/// Shared cell-value comparator for CSV column sorting.
-///
-/// 数値と文字列を文字列として比べると、2 < 10 < "1x" < 2 のように順序が循環して
-/// sort_by が panic する。数値はすべて文字列より前に置いて全順序にする。
-pub(crate) fn compare_cell_values(a: &str, b: &str) -> Ordering {
-    match (try_parse_entire_number(a), try_parse_entire_number(b)) {
-        (Some(na), Some(nb)) => na.total_cmp(&nb),
-        (Some(_), None) => Ordering::Less,
-        (None, Some(_)) => Ordering::Greater,
-        (None, None) => a.cmp(b),
+/// 並べ替えのキー。行ごとに 1 回だけ作り、比較のたびにセルを数値として読み直さない
+/// (100 万行の並べ替えでは比較が約 2000 万回になる)。
+enum SortKey<'a> {
+    Number(f64),
+    Text(&'a str),
+    Empty,
+}
+
+impl<'a> SortKey<'a> {
+    fn of(cell: &'a str) -> Self {
+        if cell.is_empty() {
+            SortKey::Empty
+        } else if let Some(n) = try_parse_entire_number(cell) {
+            SortKey::Number(n)
+        } else {
+            SortKey::Text(cell)
+        }
     }
 }
 
-fn compare_rows(a: &[String], b: &[String], column_index: usize, desc: bool) -> Ordering {
-    let av = a.get(column_index).map(|s| s.as_str()).unwrap_or("");
-    let bv = b.get(column_index).map(|s| s.as_str()).unwrap_or("");
-    let cmp = compare_cell_values(av, bv);
+/// 数値はすべて文字列より前に置き、空のセルは昇順でも降順でも末尾に置く。
+///
+/// 数値と文字列を文字列として比べると、2 < 10 < "1x" < 2 のように順序が循環して
+/// sort_by が panic する。種類ごとに分けて全順序にする。
+fn compare_keys(a: &SortKey, b: &SortKey, desc: bool) -> Ordering {
+    let cmp = match (a, b) {
+        (SortKey::Empty, SortKey::Empty) => return Ordering::Equal,
+        (SortKey::Empty, _) => return Ordering::Greater,
+        (_, SortKey::Empty) => return Ordering::Less,
+        (SortKey::Number(x), SortKey::Number(y)) => x.total_cmp(y),
+        (SortKey::Number(_), SortKey::Text(_)) => Ordering::Less,
+        (SortKey::Text(_), SortKey::Number(_)) => Ordering::Greater,
+        (SortKey::Text(x), SortKey::Text(y)) => x.cmp(y),
+    };
     if desc {
         cmp.reverse()
     } else {
@@ -461,10 +522,35 @@ fn compare_rows(a: &[String], b: &[String], column_index: usize, desc: bool) -> 
     }
 }
 
+/// Shared cell-value comparator for CSV column sorting (ascending).
+#[cfg(test)]
+pub(crate) fn compare_cell_values(a: &str, b: &str) -> Ordering {
+    compare_keys(&SortKey::of(a), &SortKey::of(b), false)
+}
+
+/// rows を column_index の列で安定に並べ替えたときの順序を、元の位置の列で返す。
+/// sort_csv と search_csv は同じ順序を使うので、検索結果の行位置は並べ替え後の表示と一致する。
+fn sorted_order(rows: &[Vec<String>], column_index: usize, desc: bool) -> Vec<usize> {
+    let keys: Vec<SortKey> = rows
+        .iter()
+        .map(|row| SortKey::of(row.get(column_index).map_or("", String::as_str)))
+        .collect();
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    order.sort_by(|&a, &b| compare_keys(&keys[a], &keys[b], desc));
+    order
+}
+
 /// Sort all rows by column index. `direction` is `"asc"` or `"desc"`.
 pub(crate) fn sort_rows(rows: &mut [Vec<String>], column_index: usize, direction: &str) {
     let desc = direction.eq_ignore_ascii_case("desc");
-    rows.sort_by(|a, b| compare_rows(a, b, column_index, desc));
+    let order = sorted_order(rows, column_index, desc);
+    let sorted: Vec<Vec<String>> = order
+        .into_iter()
+        .map(|i| std::mem::take(&mut rows[i]))
+        .collect();
+    for (slot, row) in rows.iter_mut().zip(sorted) {
+        *slot = row;
+    }
 }
 
 /// Build a search regex mirroring frontend `buildRegex`.
@@ -756,13 +842,16 @@ fn sort_index(
     }
 
     let indices = filter_row_indices(index, conditions)?;
-    let rows = materialize_indices(index, &indices)?;
+    let mut rows = materialize_indices(index, &indices)?;
 
-    // 元の行番号を付けたまま並べ替える。search_csv の sort_rows と同じ比較・同じ安定ソートなので、
+    // 並べ替えた順に、行と元の行番号を並べ直す。search_csv の sort_rows と同じ順序なので、
     // 検索結果の行位置はこの並び順と一致する
-    let mut numbered: Vec<(usize, Vec<String>)> = indices.into_iter().zip(rows).collect();
-    numbered.sort_by(|a, b| compare_rows(&a.1, &b.1, column_index, !ascending));
-    let (source_rows, rows): (Vec<usize>, Vec<Vec<String>>) = numbered.into_iter().unzip();
+    let order = sorted_order(&rows, column_index, !ascending);
+    let source_rows: Vec<usize> = order.iter().map(|&i| indices[i]).collect();
+    let rows: Vec<Vec<String>> = order
+        .into_iter()
+        .map(|i| std::mem::take(&mut rows[i]))
+        .collect();
 
     let total_rows = rows.len();
     Ok(CsvData {
@@ -1143,15 +1232,46 @@ mod tests {
             sort_rows(&mut rows, 0, if round % 2 == 0 { "asc" } else { "desc" });
             assert_eq!(rows.len(), len);
         }
+    }
 
-        // 数値は数値どうしで大小順に並び、文字列はその後ろに来る
-        let mut rows: Vec<Vec<String>> = ["1x", "10", "abc", "2", ""]
-            .iter()
-            .map(|v| vec![v.to_string()])
-            .collect();
-        sort_rows(&mut rows, 0, "asc");
-        let sorted: Vec<&str> = rows.iter().map(|r| r[0].as_str()).collect();
-        assert_eq!(sorted, ["2", "10", "", "1x", "abc"]);
+    #[derive(serde::Deserialize)]
+    struct SortCases {
+        numbers: Vec<(String, Option<f64>)>,
+        sorts: Vec<SortCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct SortCase {
+        name: String,
+        input: Vec<String>,
+        asc: Vec<String>,
+        desc: Vec<String>,
+    }
+
+    /// フロント (compareCellValues.ts) も同じ sort-cases.json を読む。
+    /// CSV は Rust、XLSX はフロントで並べ替えるので、規則を揃える。
+    #[test]
+    fn sorting_follows_the_rules_shared_with_the_frontend() {
+        let cases: SortCases =
+            serde_json::from_str(include_str!("../tests/fixtures/sort-cases.json")).unwrap();
+
+        for (text, expected) in &cases.numbers {
+            assert_eq!(try_parse_entire_number(text), *expected, "{text:?}");
+        }
+        for case in &cases.sorts {
+            for (direction, expected) in [("asc", &case.asc), ("desc", &case.desc)] {
+                let mut rows: Vec<Vec<String>> =
+                    case.input.iter().map(|v| vec![v.clone()]).collect();
+                sort_rows(&mut rows, 0, direction);
+                let sorted: Vec<&String> = rows.iter().map(|r| &r[0]).collect();
+                assert_eq!(
+                    sorted,
+                    expected.iter().collect::<Vec<_>>(),
+                    "{} ({direction})",
+                    case.name
+                );
+            }
+        }
     }
 
     #[test]

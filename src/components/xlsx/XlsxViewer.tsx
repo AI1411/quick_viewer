@@ -10,7 +10,7 @@ import { useXlsxStore } from "../../stores/xlsxStore";
 import { useSearchStore } from "../../stores/searchStore";
 import { showError } from "../../stores/toastStore";
 import { buildRegex } from "../../lib/searchHighlight";
-import { compareCellValues } from "../../lib/compareCellValues";
+import { compareForSort } from "../../lib/compareCellValues";
 import type { CellMatch } from "../../stores/searchStore";
 import type { XlsxInfo, XlsxSheetData, XlsxCell, FilterCondition } from "../../types";
 
@@ -135,13 +135,10 @@ export function XlsxViewer({ tabId, filePath, isActive = true }: XlsxViewerProps
 
     if (tab.sort) {
       const { columnIndex, direction } = tab.sort;
-      rows.sort((a, b) => {
-        const cmp = compareCellValues(
-          xlsxSortKey(a.cells[columnIndex]),
-          xlsxSortKey(b.cells[columnIndex])
-        );
-        return direction === "asc" ? cmp : -cmp;
-      });
+      const order = direction === "asc" ? "asc" : "desc";
+      rows.sort((a, b) =>
+        compareForSort(xlsxSortKey(a.cells[columnIndex]), xlsxSortKey(b.cells[columnIndex]), order)
+      );
     }
     return {
       filteredSortedRows: rows.map((r) => r.cells),

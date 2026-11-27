@@ -1,11 +1,13 @@
 /**
- * Parse a string as a number only when the entire string is numeric.
- * Rejects partial parses like parseFloat("2024-03-01") → 2024.
+ * セルの文字列を数値として読む。"1,234" "¥1,200" "12%" "1e3" に対応し、数値でなければ null。
+ * parseFloat("2024-03-01") が 2024 に、parseFloat("1,234") が 1 になるような部分一致は数値にしない。
+ *
+ * Rust 側の try_parse_entire_number と同じ規則 (src-tauri/tests/fixtures/sort-cases.json で両方を検査する)。
  */
 export function tryParseEntireNumber(value: string): number | null {
-  const trimmed = value.trim();
-  if (trimmed === "") return null;
-  const n = Number(trimmed);
+  const s = value.trim().replace(/^[¥$€£]/, "").replace(/,/g, "");
+  if (!/^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?%?$/i.test(s)) return null;
+  const n = Number(s.replace(/%$/, ""));
   return Number.isFinite(n) ? n : null;
 }
 
@@ -25,4 +27,11 @@ export function compareCellValues(a: string, b: string): number {
   if (numA !== null) return -1;
   if (numB !== null) return 1;
   return a.localeCompare(b);
+}
+
+/** 列の並べ替え用。空のセルは昇順でも降順でも末尾に置く (Rust 側の compare_rows と同じ) */
+export function compareForSort(a: string, b: string, direction: "asc" | "desc"): number {
+  if (a === "" || b === "") return a === b ? 0 : a === "" ? 1 : -1;
+  const cmp = compareCellValues(a, b);
+  return direction === "asc" ? cmp : -cmp;
 }
