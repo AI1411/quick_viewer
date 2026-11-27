@@ -232,10 +232,14 @@ pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
     })
 }
 
+const UTF8_BOM: &[u8] = b"\xEF\xBB\xBF";
+
 /// 読み込んだときの文字コードに戻す。encoding_rs は表せない文字を &#128512; のような
 /// 文字参照に置き換えるので、そのまま保存すると本文が黙って書き換わる。
 /// 表せない文字があるときは保存せずにエラーにする。
-fn encode_markdown(content: &str, encoding_name: &str) -> Result<Vec<u8>, String> {
+///
+/// 返す真偽値は、UTF-8 で書いたかどうか。
+fn encode_markdown(content: &str, encoding_name: &str) -> Result<(Vec<u8>, bool), String> {
     let encoding =
         encoding_rs::Encoding::for_label(encoding_name.as_bytes()).unwrap_or(encoding_rs::UTF_8);
     let (bytes, used, had_errors) = encoding.encode(content);
@@ -245,7 +249,17 @@ fn encode_markdown(content: &str, encoding_name: &str) -> Result<Vec<u8>, String
             used.name()
         ));
     }
-    Ok(bytes.into_owned())
+    Ok((bytes.into_owned(), used == encoding_rs::UTF_8))
+}
+
+/// ファイルが UTF-8 の BOM で始まっているか。無いファイルや読めないファイルは false。
+fn starts_with_utf8_bom(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 3];
+    fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut head))
+        .is_ok()
+        && head == UTF8_BOM
 }
 
 #[tauri::command(async)]
@@ -254,11 +268,16 @@ pub fn save_markdown(
     content: String,
     encoding: Option<String>,
 ) -> Result<(), String> {
+    let path = std::path::Path::new(&path);
     // Markdown 以外 (~/.zshrc など) への書き込みを防ぐ
-    require_extension(std::path::Path::new(&path), MARKDOWN_EXTENSIONS)?;
-    let bytes = encode_markdown(&content, encoding.as_deref().unwrap_or("UTF-8"))?;
-    crate::utils::atomic_write_user_file(std::path::Path::new(&path), &bytes)
-        .map_err(|e| e.to_string())
+    require_extension(path, MARKDOWN_EXTENSIONS)?;
+    let (mut bytes, is_utf8) = encode_markdown(&content, encoding.as_deref().unwrap_or("UTF-8"))?;
+    // 読み込みでは BOM を外した本文だけを画面に渡している (decode_file)。保存先が BOM 付きの
+    // UTF-8 なら付け直す。外したまま保存すると、BOM で UTF-8 と判定するツールで文字化けする
+    if is_utf8 && !bytes.starts_with(UTF8_BOM) && starts_with_utf8_bom(path) {
+        bytes.splice(0..0, UTF8_BOM.iter().copied());
+    }
+    crate::utils::atomic_write_user_file(path, &bytes).map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
@@ -627,6 +646,69 @@ mod tests {
             opened.encoding
         );
         assert_eq!(read_markdown(path_str).unwrap().raw, edited);
+        fs::remove_file(path).ok();
+    }
+
+    /// BOM 付きの UTF-8 のファイルは、保存しても BOM 付きのままにする。
+    /// 画面は保存のたびに本文を作り直すので、2 回目の保存でも落とさないこと。
+    #[test]
+    fn utf8_bom_is_kept_across_repeated_saves() {
+        let path = std::env::temp_dir().join(format!("qv_bom_keep_{}.md", std::process::id()));
+        let path_str = path.to_string_lossy().to_string();
+        fs::write(&path, "\u{FEFF}---\ntitle: T\n---\n# Title\n").unwrap();
+
+        // BOM は本文に含めない。含めると先頭の frontmatter を読めなくなる
+        let opened = read_markdown(path_str.clone()).unwrap();
+        assert_eq!(opened.raw, "---\ntitle: T\n---\n# Title\n");
+        assert!(opened.frontmatter.is_some());
+
+        for edited in ["# Title\n\n日本語を書き足した\n", "# 2 回目の保存\n"] {
+            save_markdown(
+                path_str.clone(),
+                edited.to_string(),
+                Some(opened.encoding.clone()),
+            )
+            .unwrap();
+            assert_eq!(
+                fs::read(&path).unwrap(),
+                [UTF8_BOM, edited.as_bytes()].concat(),
+                "encoding={}",
+                opened.encoding
+            );
+            assert_eq!(read_markdown(path_str.clone()).unwrap().raw, edited);
+        }
+        fs::remove_file(path).ok();
+    }
+
+    /// 本文が既に BOM で始まっているときは、BOM を重ねて書かない。
+    #[test]
+    fn utf8_bom_is_not_written_twice() {
+        let path = std::env::temp_dir().join(format!("qv_bom_once_{}.md", std::process::id()));
+        fs::write(&path, "\u{FEFF}# Title\n").unwrap();
+
+        save_markdown(
+            path.to_string_lossy().to_string(),
+            "\u{FEFF}# Edited\n".to_string(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), "\u{FEFF}# Edited\n".as_bytes());
+        fs::remove_file(path).ok();
+    }
+
+    /// BOM の無いファイルと新しいファイルには BOM を付けない。
+    #[test]
+    fn utf8_bom_is_not_added_to_files_without_one() {
+        let path = std::env::temp_dir().join(format!("qv_bom_none_{}.md", std::process::id()));
+        let path_str = path.to_string_lossy().to_string();
+        fs::remove_file(&path).ok();
+
+        save_markdown(path_str.clone(), "# 新規\n".to_string(), None).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), "# 新規\n".as_bytes());
+
+        save_markdown(path_str, "# 上書き\n".to_string(), None).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), "# 上書き\n".as_bytes());
         fs::remove_file(path).ok();
     }
 }
