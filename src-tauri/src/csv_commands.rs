@@ -433,14 +433,20 @@ fn try_parse_entire_number(s: &str) -> Option<f64> {
     if trimmed.is_empty() {
         return None;
     }
-    trimmed.parse::<f64>().ok()
+    // "NaN" や "inf" も f64 として読めるが、大小を決められないので文字列として扱う
+    trimmed.parse::<f64>().ok().filter(|n| n.is_finite())
 }
 
 /// Shared cell-value comparator for CSV column sorting.
+///
+/// 数値と文字列を文字列として比べると、2 < 10 < "1x" < 2 のように順序が循環して
+/// sort_by が panic する。数値はすべて文字列より前に置いて全順序にする。
 pub(crate) fn compare_cell_values(a: &str, b: &str) -> Ordering {
     match (try_parse_entire_number(a), try_parse_entire_number(b)) {
-        (Some(na), Some(nb)) => na.partial_cmp(&nb).unwrap_or(Ordering::Equal),
-        _ => a.cmp(b),
+        (Some(na), Some(nb)) => na.total_cmp(&nb),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => a.cmp(b),
     }
 }
 
@@ -1113,6 +1119,39 @@ mod tests {
             compare_cell_values("2024-01-05", "2024-03-01"),
             Ordering::Less
         );
+    }
+
+    /// 数値と文字列が混ざった列でも並べ替えられる。
+    /// 比較が全順序でないと (2 < 10 < "1x" < 2 のように循環すると) sort_by が panic する。
+    #[test]
+    fn sorting_a_column_that_mixes_numbers_and_text_does_not_panic() {
+        let values = [
+            "2", "10", "1x", "", "-3", "abc", "1,234", "7.5", "NaN", "inf", "3", "20", "2x", "1",
+        ];
+        let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for round in 0..500 {
+            let len = 2 + (next() % 120) as usize;
+            let mut rows: Vec<Vec<String>> = (0..len)
+                .map(|_| vec![values[(next() % values.len() as u64) as usize].to_string()])
+                .collect();
+            sort_rows(&mut rows, 0, if round % 2 == 0 { "asc" } else { "desc" });
+            assert_eq!(rows.len(), len);
+        }
+
+        // 数値は数値どうしで大小順に並び、文字列はその後ろに来る
+        let mut rows: Vec<Vec<String>> = ["1x", "10", "abc", "2", ""]
+            .iter()
+            .map(|v| vec![v.to_string()])
+            .collect();
+        sort_rows(&mut rows, 0, "asc");
+        let sorted: Vec<&str> = rows.iter().map(|r| r[0].as_str()).collect();
+        assert_eq!(sorted, ["2", "10", "", "1x", "abc"]);
     }
 
     #[test]
