@@ -105,10 +105,27 @@ const defaultTabState = (): CsvTabState => ({
 export const useCsvStore = create<CsvStore>((set) => ({
   tabs: {},
 
+  // 再読み込み (ファイルの外部変更の反映) でビューアがマウントし直されたときは、
+  // 並べ替え・絞り込み・列幅・ピン留めを引き継ぐ。行のデータは読み直す
   initTab: (tabId) =>
-    set((state) => ({
-      tabs: { ...state.tabs, [tabId]: defaultTabState() },
-    })),
+    set((state) => {
+      const prev = state.tabs[tabId];
+      const next = defaultTabState();
+      return {
+        tabs: {
+          ...state.tabs,
+          [tabId]: prev
+            ? {
+                ...next,
+                sort: prev.sort,
+                filters: prev.filters,
+                columnWidths: prev.columnWidths,
+                pinnedCount: prev.pinnedCount,
+              }
+            : next,
+        },
+      };
+    }),
 
   setFilePath: (tabId, filePath) =>
     set((state) => ({

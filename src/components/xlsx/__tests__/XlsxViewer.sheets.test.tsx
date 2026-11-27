@@ -107,3 +107,86 @@ describe("XlsxViewer の列数の上限", () => {
     expect(container.textContent).toContain("先頭 1 行 × 2 列を表示（全 1 行 × 5,000 列）");
   });
 });
+
+describe("XlsxViewer の再読み込み", () => {
+  const requestedSheets = async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return vi
+      .mocked(invoke)
+      .mock.calls.filter(([cmd]) => cmd === "read_xlsx_sheet")
+      .map(([, args]) => (args as { sheetName: string }).sheetName);
+  };
+
+  it("表示中のシート・並べ替え・絞り込み・列幅を引き継ぐ", async () => {
+    const keepOnly = { column: "B", column_index: 1, filter_type: "contains", value: "keep" } as const;
+    sheetData = sheet([["b", "keep"], ["a", "keep"]]);
+    const first = await renderViewer("r1");
+    await act(async () => {
+      fireEvent.click(screen.getByText("Broken"));
+    });
+    await act(async () => {
+      fireEvent.click(sortButtons(first.container)[0]);
+    });
+    act(() => {
+      useXlsxStore.getState().setFilters("r1", [keepOnly]);
+      useXlsxStore.getState().setColumnWidth("r1", 0, 321);
+    });
+    expect(useXlsxStore.getState().tabs.r1).toMatchObject({
+      activeSheetName: "Broken",
+      sort: { columnIndex: 0, direction: "asc" },
+    });
+
+    // ファイルが外部で変更され、再読み込みでビューアがマウントし直される
+    first.unmount();
+    sheetData = sheet([["b", "keep"], ["a", "keep"], ["c", "drop"]]);
+    const second = await renderViewer("r1");
+
+    expect((await requestedSheets()).pop()).toBe("Broken");
+    expect(useXlsxStore.getState().tabs.r1).toMatchObject({
+      activeSheetName: "Broken",
+      sort: { columnIndex: 0, direction: "asc" },
+      filters: [keepOnly],
+      columnWidths: { 0: 321 },
+    });
+    // 読み直した 3 行のうち絞り込みに合う 2 行が、並べ替えた順 (a, b = 元の 2, 1 行目) で表示される
+    expect(shownRowNumbers(second.container)).toEqual(["2", "1"]);
+  });
+
+  it("引き継いだシートがファイルから無くなっていたら先頭のシートを開き、並べ替えと絞り込みは外す", async () => {
+    useXlsxStore.getState().initTab("r2");
+    useXlsxStore.setState((state) => ({
+      tabs: {
+        ...state.tabs,
+        r2: {
+          ...state.tabs.r2,
+          activeSheetName: "Removed",
+          sort: { columnIndex: 1, direction: "desc" },
+          filters: [{ column: "B", column_index: 1, filter_type: "contains", value: "x" }],
+        },
+      },
+    }));
+
+    await renderViewer("r2");
+
+    expect((await requestedSheets()).pop()).toBe("Sheet1");
+    expect(useXlsxStore.getState().tabs.r2).toMatchObject({ activeSheetName: "Sheet1", sort: null, filters: [] });
+  });
+
+  it("列が減って当てはまらなくなった並べ替えと絞り込みは外す", async () => {
+    sheetData = sheet([["b", "x"], ["a", "y"]]);
+    const first = await renderViewer("r3");
+    await act(async () => {
+      fireEvent.click(sortButtons(first.container)[1]);
+    });
+    act(() =>
+      useXlsxStore.getState().setFilters("r3", [{ column: "B", column_index: 1, filter_type: "contains", value: "x" }])
+    );
+
+    first.unmount();
+    sheetData = sheet([["b"], ["a"]]);
+    await renderViewer("r3");
+
+    expect(useXlsxStore.getState().tabs.r3).toMatchObject({ activeSheetName: "Sheet1", sort: null, filters: [] });
+  });
+});
+

@@ -61,34 +61,60 @@ const defaultTabState = (): XlsxTabState => ({
 export const useXlsxStore = create<XlsxStore>((set) => ({
   tabs: {},
 
+  // 再読み込み (ファイルの外部変更の反映) でビューアがマウントし直されたときは、
+  // 表示中のシートと並べ替え・絞り込み・列幅を引き継ぐ。シートのデータは読み直す
   initTab: (tabId) =>
-    set((state) => ({
-      tabs: { ...state.tabs, [tabId]: defaultTabState() },
-    })),
+    set((state) => {
+      const prev = state.tabs[tabId];
+      const next = defaultTabState();
+      return {
+        tabs: {
+          ...state.tabs,
+          [tabId]: prev
+            ? {
+                ...next,
+                activeSheetName: prev.activeSheetName,
+                sort: prev.sort,
+                filters: prev.filters,
+                columnWidths: prev.columnWidths,
+              }
+            : next,
+        },
+      };
+    }),
 
   setInfo: (tabId, info) =>
     set((state) => ({
       tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], info } },
     })),
 
+  // 別のシートに切り替えたときは並べ替え・絞り込み・列幅をリセットする。
+  // 同じシートを読み直したとき (再読み込み) は引き継ぎ、列が減って当てはまらなくなったものだけ外す
   setSheetData: (tabId, sheetData, sheetName) =>
-    set((state) => ({
-      tabs: {
-        ...state.tabs,
-        [tabId]: {
-          ...state.tabs[tabId],
-          sheetData,
-          activeSheetName: sheetName,
-          isLoading: false,
-          error: null,
-          columnWidths: {},
-          sort: null,
-          filters: [],
-          selectedAnchor: null,
-          selectedFocus: null,
+    set((state) => {
+      const prev = state.tabs[tabId];
+      const sameSheet = prev?.activeSheetName === sheetName;
+      const columns = sheetData.loaded_cols ?? sheetData.total_cols;
+      return {
+        tabs: {
+          ...state.tabs,
+          [tabId]: {
+            ...prev,
+            sheetData,
+            activeSheetName: sheetName,
+            isLoading: false,
+            error: null,
+            columnWidths: sameSheet ? prev.columnWidths : {},
+            sort: sameSheet && prev.sort && prev.sort.columnIndex < columns ? prev.sort : null,
+            filters: sameSheet
+              ? prev.filters.filter((f) => f.column_index == null || f.column_index < columns)
+              : [],
+            selectedAnchor: null,
+            selectedFocus: null,
+          },
         },
-      },
-    })),
+      };
+    }),
 
   setLoading: (tabId, isLoading) =>
     set((state) => ({

@@ -174,6 +174,9 @@ export function PdfViewer({ tabId, filePath, isActive = true }: PdfViewerProps) 
       annotationsWritableRef.current = false;
       if (localDoc) clearPdfTextCache(localDoc);
       localDoc?.destroy();
+      // 破棄した文書がストアに残ると、再読み込みでマウントし直した直後の描画に使われてしまう
+      // (タブを閉じたときは状態ごと消えているので何もしない)
+      if (usePdfStore.getState().tabs[tabId]) usePdfStore.getState().setPdfDocument(tabId, null);
     };
   }, [tabId, filePath]);
 
@@ -364,6 +367,44 @@ export function PdfViewer({ tabId, filePath, isActive = true }: PdfViewerProps) 
     }, 400);
     return () => clearTimeout(timer);
   }, [isActive, tabId, tabState?.currentPage, tabState?.displayMode]);
+
+  // 再読み込みで引き継いだページへ、文書を読み込み終えた時点で移動する。
+  // 何もしないと先頭が表示され、スクロール追従が currentPage を 1 に戻してしまう
+  const loadedDocument = tabState?.pdfDocument;
+  useEffect(() => {
+    const tab = usePdfStore.getState().tabs[tabId];
+    if (!loadedDocument || !tab?.pdfInfo) return;
+    // ファイルのページ数が減っていたら、最後のページに収める
+    const page = Math.min(tab.currentPage, tab.pdfInfo.page_count);
+    if (page !== tab.currentPage) usePdfStore.getState().setCurrentPage(tabId, page);
+    if (tab.displayMode !== "continuous" || page <= 1) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    lastScrolledPageRef.current = page;
+    scrollingToPageRef.current = true;
+    const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    // 各ページの枠は寸法が分かるまで仮の高さなので、手前のページの寸法が決まって
+    // 描画に反映されてから移動する。先に動くと、後から枠が伸びて別のページがずれ込む
+    Promise.all(Array.from({ length: page }, (_, i) => loadedDocument.getPage(i + 1)))
+      .then(nextFrame)
+      .then(nextFrame)
+      .catch(() => {})
+      .then(() => {
+        if (cancelled) return;
+        containerRef.current
+          ?.querySelector(`[data-pdf-page="${page - 1}"]`)
+          ?.scrollIntoView({ block: "start" });
+        timer = setTimeout(() => {
+          scrollingToPageRef.current = false;
+        }, 400);
+      });
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      scrollingToPageRef.current = false;
+    };
+  }, [tabId, loadedDocument]);
 
   // ── ズームヘルパー ─────────────────────────────────────────────────────────
   const handleZoomIn = useCallback(() => {

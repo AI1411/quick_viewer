@@ -28,7 +28,7 @@ interface PdfStore {
   initTab: (tabId: string) => void;
   removeTab: (tabId: string) => void;
   setPdfInfo: (tabId: string, info: PdfInfo) => void;
-  setPdfDocument: (tabId: string, doc: PDFDocumentProxy) => void;
+  setPdfDocument: (tabId: string, doc: PDFDocumentProxy | null) => void;
   setCurrentPage: (tabId: string, page: number) => void;
   setZoom: (tabId: string, zoom: number) => void;
   setRotation: (tabId: string, rotation: number) => void;
@@ -74,8 +74,30 @@ function patch(state: PdfStore, tabId: string, updates: Partial<PdfTabState>) {
 export const usePdfStore = create<PdfStore>((set) => ({
   tabs: {},
 
+  // 再読み込み (ファイルの外部変更の反映) でビューアがマウントし直されたときは、
+  // ページ・ズーム・回転・表示モード・サイドバーを引き継ぐ。文書と注釈は読み直す
   initTab: (tabId) =>
-    set((s) => ({ tabs: { ...s.tabs, [tabId]: defaultTabState() } })),
+    set((s) => {
+      const prev = s.tabs[tabId];
+      const next = defaultTabState();
+      return {
+        tabs: {
+          ...s.tabs,
+          [tabId]: prev
+            ? {
+                ...next,
+                currentPage: prev.currentPage,
+                zoom: prev.zoom,
+                rotation: prev.rotation,
+                displayMode: prev.displayMode,
+                isSidebarOpen: prev.isSidebarOpen,
+                sidebarMode: prev.sidebarMode,
+                highlightColor: prev.highlightColor,
+              }
+            : next,
+        },
+      };
+    }),
 
   removeTab: (tabId) =>
     set((s) => {

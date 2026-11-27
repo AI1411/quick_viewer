@@ -72,13 +72,15 @@ export function XlsxViewer({ tabId, filePath, isActive = true }: XlsxViewerProps
       .then((info) => {
         if (cancelled) return;
         setInfo(tabId, info);
-        const firstSheet = info.sheets[0];
-        if (firstSheet) {
+        // 再読み込みでは、表示していたシートがまだあればそれを開き直す
+        const keptName = useXlsxStore.getState().tabs[tabId]?.activeSheetName;
+        const sheet = info.sheets.find((s) => s.name === keptName) ?? info.sheets[0];
+        if (sheet) {
           return invoke<XlsxSheetData>("read_xlsx_sheet", {
             path: filePath,
-            sheetName: firstSheet.name,
+            sheetName: sheet.name,
           }).then((data) => {
-            if (!cancelled) setSheetData(tabId, data, firstSheet.name);
+            if (!cancelled) setSheetData(tabId, data, sheet.name);
           });
         }
       })

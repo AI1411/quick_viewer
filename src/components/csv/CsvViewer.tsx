@@ -54,8 +54,44 @@ export function CsvViewer({ tabId, filePath, isActive = true }: CsvViewerProps) 
         if (cancelled) return;
         console.info(`[perf] read_csv (indexed): ${(performance.now() - t0).toFixed(1)}ms`);
         setData(tabId, data);
+        return reapplyKeptView(data.headers);
       })
       .catch((err) => { if (!cancelled) setError(tabId, String(err)); });
+
+    // 再読み込みで引き継いだ並べ替えと絞り込みを、読み直したデータに適用し直す
+    async function reapplyKeptView(headers: string[]) {
+      const store = useCsvStore.getState();
+      const kept = store.tabs[tabId];
+      if (!kept || (kept.filters.length === 0 && !kept.sort)) return;
+      const reset = () => {
+        useCsvStore.getState().clearFilters(tabId);
+        useCsvStore.getState().setSort(tabId, null);
+      };
+      // ファイルの列が変わって当てはまらなくなったものは捨てる
+      const filters = kept.filters.filter((f) =>
+        f.column_index != null ? headers[f.column_index] === f.column : headers.includes(f.column)
+      );
+      const sort = kept.sort && kept.sort.columnIndex < headers.length ? kept.sort : null;
+      if (filters.length === 0 && !sort) return reset();
+      try {
+        const result = sort
+          ? await invoke<CsvData>("sort_csv", {
+              path: filePath,
+              delimiter,
+              columnIndex: sort.columnIndex,
+              ascending: sort.direction === "asc",
+              conditions: filters.length > 0 ? filters : null,
+            })
+          : await invoke<CsvData>("filter_csv", { path: filePath, delimiter, conditions: filters });
+        if (cancelled) return;
+        store.setSort(tabId, sort);
+        store.setFilters(tabId, filters, sort && filters.length === 0 ? null : result.rows, result.source_rows);
+        if (sort) store.setSortedRows(tabId, result.rows, result.source_rows);
+      } catch {
+        // 外したままにしないと、並べ替え中とみなされて続きの行が読み込まれない
+        if (!cancelled) reset();
+      }
+    }
     return () => { cancelled = true; };
   }, [tabId, filePath]);
 

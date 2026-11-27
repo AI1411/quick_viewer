@@ -182,6 +182,85 @@ describe("CsvViewer の同じ名前の列のフィルタ", () => {
   });
 });
 
+describe("CsvViewer の再読み込み", () => {
+  /** n 列と、行ごとに a / b が交互に入る kind 列 */
+  const numbersWithKind = () => Array.from({ length: 6 }, (_, i) => [String(6 - i), i % 2 === 0 ? "a" : "b"]);
+  const callsAfter = (start: number, cmd: string) => calls.slice(start).filter((c) => c.cmd === cmd);
+
+  it("並べ替えと絞り込みを引き継ぎ、読み直したデータに適用し直す", async () => {
+    useTable(["n", "kind"], numbersWithKind());
+    const first = render(<CsvViewer tabId="r1" filePath="/data.csv" />);
+    await act(async () => {});
+    await applyFilter(first.container, 1, "a");
+    await act(async () => {
+      fireEvent.click(sortButtons(first.container)[0]);
+    });
+    await waitFor(() => expect(useCsvStore.getState().tabs.r1.sortedRows?.map((r) => r[0])).toEqual(["2", "4", "6"]));
+
+    // ファイルが外部で変更され、再読み込みでビューアがマウントし直される
+    first.unmount();
+    useTable(["n", "kind"], [...numbersWithKind(), ["0", "a"]]);
+    const mark = calls.length;
+    render(<CsvViewer tabId="r1" filePath="/data.csv" />);
+
+    await waitFor(() => expect(useCsvStore.getState().tabs.r1.sortedRows?.map((r) => r[0])).toEqual(["0", "2", "4", "6"]));
+    const tab = useCsvStore.getState().tabs.r1;
+    expect(tab.sort).toEqual({ columnIndex: 0, direction: "asc" });
+    expect(tab.filters.map((f) => [f.column, f.column_index, f.value])).toEqual([["kind", 1, "a"]]);
+    expect(callsAfter(mark, "sort_csv")[0].args).toMatchObject({ columnIndex: 0, ascending: true, conditions: tab.filters });
+  });
+
+  it("列が変わって当てはまらなくなった並べ替えと絞り込みは捨てる", async () => {
+    useTable(["n", "kind"], numbersWithKind());
+    const first = render(<CsvViewer tabId="r2" filePath="/data.csv" />);
+    await act(async () => {});
+    await applyFilter(first.container, 1, "a");
+    await act(async () => {
+      fireEvent.click(sortButtons(first.container)[1]);
+    });
+    await waitFor(() => expect(useCsvStore.getState().tabs.r2.sortedRows).not.toBeNull());
+
+    first.unmount();
+    useTable(["n"], descendingNumbers());
+    const mark = calls.length;
+    render(<CsvViewer tabId="r2" filePath="/data.csv" />);
+
+    await waitFor(() => expect(useCsvStore.getState().tabs.r2.data?.headers).toEqual(["n"]));
+    await act(async () => {});
+    const tab = useCsvStore.getState().tabs.r2;
+    expect(tab.sort).toBeNull();
+    expect(tab.filters).toEqual([]);
+    expect(tab.sortedRows).toBeNull();
+    expect(callsAfter(mark, "sort_csv")).toEqual([]);
+    expect(callsAfter(mark, "filter_csv")).toEqual([]);
+  });
+
+  it("適用し直しに失敗したら並べ替えと絞り込みを外し、全行を読める状態に戻す", async () => {
+    useTable(["n"], descendingNumbers());
+    const first = render(<CsvViewer tabId="r3" filePath="/data.csv" />);
+    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(sortButtons(first.container)[0]);
+    });
+    await waitFor(() => expect(useCsvStore.getState().tabs.r3.sortedRows).not.toBeNull());
+
+    first.unmount();
+    const { invoke } = await import("@tauri-apps/api/core");
+    const original = vi.mocked(invoke).getMockImplementation()!;
+    vi.mocked(invoke).mockImplementation((cmd, args) =>
+      cmd === "sort_csv" ? Promise.reject("boom") : original(cmd, args)
+    );
+    render(<CsvViewer tabId="r3" filePath="/data.csv" />);
+
+    await waitFor(() => expect(useCsvStore.getState().tabs.r3.sort).toBeNull());
+    const tab = useCsvStore.getState().tabs.r3;
+    expect(tab.sortedRows).toBeNull();
+    expect(tab.isSorting).toBe(false);
+    expect(tab.data?.rows.length).toBe(100);
+    vi.mocked(invoke).mockImplementation(original);
+  });
+});
+
 describe("CsvViewer の既定の区切り文字", () => {
   afterEach(() => useSettingsStore.setState({ csvSettings: { defaultDelimiter: "auto" } }));
 
