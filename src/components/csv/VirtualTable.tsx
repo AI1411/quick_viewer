@@ -76,8 +76,14 @@ export function VirtualTable({
     startWidth: number;
   } | null>(null);
 
+  // Prefer totalRows so the scrollbar reflects the full indexed file;
+  // unloaded rows render blank until onScrollEnd appends via seek-based chunks.
+  const virtualCount = Math.max(rows.length, totalRows);
+
+  // TanStack Virtual returns non-memoizable functions; React Compiler skips this component.
+  // eslint-disable-next-line react-hooks/incompatible-library -- known TanStack Virtual limitation
   const rowVirtualizer = useVirtualizer({
-    count: rows.length,
+    count: virtualCount,
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 10,
@@ -90,18 +96,23 @@ export function VirtualTable({
     }
   }, [rowVirtualizer, scrollToRowRef]);
 
-  // スクロール末尾でチャンク読み込みトリガー
+  // 可視末尾が未ロードなら索引付きチャンク読み込みを要求
   useEffect(() => {
     const el = parentRef.current;
     if (!el || !onScrollEnd) return;
     const handler = () => {
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight - ROW_HEIGHT * 5) {
-        if (rows.length < totalRows) onScrollEnd();
+      const items = rowVirtualizer.getVirtualItems();
+      const last = items[items.length - 1];
+      if (!last) return;
+      if (last.index >= rows.length - 5 && rows.length < totalRows) {
+        onScrollEnd();
       }
     };
     el.addEventListener("scroll", handler, { passive: true });
+    // Also kick when virtual window moves via scrollToIndex
+    handler();
     return () => el.removeEventListener("scroll", handler);
-  }, [rows.length, totalRows, onScrollEnd]);
+  }, [rows.length, totalRows, onScrollEnd, rowVirtualizer]);
 
   const getColWidth = useCallback(
     (i: number) => columnWidths[i] ?? DEFAULT_COL_WIDTH,

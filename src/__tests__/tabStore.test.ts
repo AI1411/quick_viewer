@@ -13,6 +13,28 @@ describe("tabStore", () => {
     expect(useTabStore.getState().tabs[0]).toEqual(tab);
   });
 
+  it("同じ filePath の addTab は重複せず既存タブをアクティブにする", () => {
+    const { addTab } = useTabStore.getState();
+    addTab({
+      id: "1",
+      title: "test.csv",
+      filePath: "/tmp/test.csv",
+      isDirty: false,
+      reloadCount: 0,
+    });
+    addTab({
+      id: "2",
+      title: "test.csv",
+      filePath: "/tmp/test.csv",
+      isDirty: false,
+      reloadCount: 0,
+    });
+    const state = useTabStore.getState();
+    expect(state.tabs).toHaveLength(1);
+    expect(state.tabs[0].id).toBe("1");
+    expect(state.activeTabId).toBe("1");
+  });
+
   it("removeTab でタブが削除される", () => {
     const tab = { id: "1", title: "test.csv", filePath: "/tmp/test.csv", isDirty: false, reloadCount: 0 };
     useTabStore.getState().addTab(tab);
@@ -62,6 +84,37 @@ describe("removeTab - active tab handling", () => {
     setActiveTab("a");
     removeTab("a");
     expect(useTabStore.getState().activeTabId).toBeNull();
+  });
+});
+
+describe("closeOtherTabs", () => {
+  beforeEach(() => {
+    useTabStore.setState({ tabs: [], activeTabId: null });
+  });
+
+  it("指定タブ以外を全て閉じる", () => {
+    const { addTab, closeOtherTabs } = useTabStore.getState();
+    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false, reloadCount: 0 });
+    addTab({ id: "b", title: "B", filePath: "/b.csv", isDirty: false, reloadCount: 0 });
+    addTab({ id: "c", title: "C", filePath: "/c.csv", isDirty: false, reloadCount: 0 });
+    closeOtherTabs("b");
+    expect(useTabStore.getState().tabs.map((t) => t.id)).toEqual(["b"]);
+    expect(useTabStore.getState().activeTabId).toBe("b");
+  });
+});
+
+describe("closeTabsToRight", () => {
+  beforeEach(() => {
+    useTabStore.setState({ tabs: [], activeTabId: null });
+  });
+
+  it("指定タブより右を全て閉じる", () => {
+    const { addTab, closeTabsToRight } = useTabStore.getState();
+    addTab({ id: "a", title: "A", filePath: "/a.csv", isDirty: false, reloadCount: 0 });
+    addTab({ id: "b", title: "B", filePath: "/b.csv", isDirty: false, reloadCount: 0 });
+    addTab({ id: "c", title: "C", filePath: "/c.csv", isDirty: false, reloadCount: 0 });
+    closeTabsToRight("a");
+    expect(useTabStore.getState().tabs.map((t) => t.id)).toEqual(["a"]);
   });
 });
 

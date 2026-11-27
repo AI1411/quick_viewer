@@ -69,6 +69,7 @@ export function PdfCanvas({
   const searchUseRegex = useSearchStore((s) => s.options.useRegex);
   const searchCaseSensitive = useSearchStore((s) => s.options.caseSensitive);
   const currentMatchIndex = useSearchStore((s) => s.currentMatchIndex);
+  const pdfMatches = useSearchStore((s) => s.pdfMatches);
 
   const [colorPickerPos, setColorPickerPos] = useState<{
     x: number;
@@ -93,11 +94,19 @@ export function PdfCanvas({
       const textDiv = textLayerRef.current;
       if (!canvas || !textDiv) return;
 
-      const ctx = canvas.getContext("2d")!;
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
+      const dpr = window.devicePixelRatio || 1;
+      const cssWidth = viewport.width;
+      const cssHeight = viewport.height;
 
-      // Render the page to canvas
+      canvas.width = Math.floor(cssWidth * dpr);
+      canvas.height = Math.floor(cssHeight * dpr);
+      canvas.style.width = `${cssWidth}px`;
+      canvas.style.height = `${cssHeight}px`;
+
+      const ctx = canvas.getContext("2d")!;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      // Render the page to canvas at device-pixel resolution; CSS size stays unchanged
       renderTask = page.render({ canvasContext: ctx, viewport });
       await renderTask.promise;
       if (cancelled) return;
@@ -130,6 +139,7 @@ export function PdfCanvas({
   }, [pdfDocument, pageIndex, scale, rotation]);
 
   // テキストレイヤーへの検索ハイライト（レンダリング完了後に適用）
+  // 件数・ページ遷移は PdfViewer 側の全ページ索引が担当。ここでは表示中ページのハイライトのみ。
   useEffect(() => {
     if (isRendering) return;
     const textDiv = textLayerRef.current;
@@ -146,10 +156,15 @@ export function PdfCanvas({
     });
     searchMarksRef.current = marks;
 
-    if (marks.length > 0) {
-      const idx = currentMatchIndex % marks.length;
-      applyMarkStyles(marks, idx);
+    if (marks.length === 0) return;
+
+    // グローバル一致のうち、このページの何番目が「現在」か
+    const current = pdfMatches[currentMatchIndex];
+    let localCurrent = -1;
+    if (current && current.pageIndex === pageIndex) {
+      localCurrent = Math.min(current.matchIndexOnPage, marks.length - 1);
     }
+    applyMarkStyles(marks, localCurrent);
   }, [
     isRendering,
     searchIsOpen,
@@ -157,6 +172,8 @@ export function PdfCanvas({
     searchUseRegex,
     searchCaseSensitive,
     currentMatchIndex,
+    pdfMatches,
+    pageIndex,
   ]);
 
   // テキスト選択完了時にカラーピッカーを表示（highlightモード時のみ）
@@ -182,8 +199,9 @@ export function PdfCanvas({
 
     const lastRect = clientRects[clientRects.length - 1];
     const rawX = lastRect.right - containerBounds.left;
+    const cssWidth = canvasRef.current?.clientWidth ?? 400;
     setColorPickerPos({
-      x: Math.min(rawX, (canvasRef.current?.width ?? 400) - 180),
+      x: Math.min(rawX, cssWidth - 180),
       y: lastRect.bottom - containerBounds.top,
     });
   }, [annotationMode]);

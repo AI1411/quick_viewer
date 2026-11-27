@@ -21,12 +21,19 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost https:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost",
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/**",
+          "**"
+        ]
+      }
     }
   },
   "plugins": {
     "updater": {
-      "pubkey": "",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJCMUY3RDQ3QjRDODM2OEQKUldTTk5zaTBSMzBmSy9nVm9tVFNSNzZxdHJscUdQNlMrNW4rakUxQW82RjN6OWxBUkxaYWFDcnEK",
       "endpoints": [
         "https://github.com/AI1411/quick_viewer/releases/latest/download/latest.json"
       ]
@@ -38,8 +45,45 @@
     "icon": [
       "icons/icon.ico"
     ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "csv"
+        ],
+        "mimeType": "text/csv",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "tsv"
+        ],
+        "mimeType": "text/tab-separated-values",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "pdf"
+        ],
+        "mimeType": "application/pdf",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "md",
+          "markdown"
+        ],
+        "mimeType": "text/markdown",
+        "role": "Viewer"
+      },
+      {
+        "ext": [
+          "xlsx"
+        ],
+        "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "role": "Viewer"
+      }
+    ],
     "macOS": {
-      "frameworks": ["./pdfium/lib/libpdfium.dylib"],
       "entitlements": "./entitlements.plist",
       "signingIdentity": null,
       "dmg": {
@@ -57,6 +101,7 @@
           "y": 170
         }
       }
-    }
+    },
+    "createUpdaterArtifacts": true
   }
 }

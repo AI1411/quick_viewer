@@ -18,9 +18,9 @@ const FILTER_TYPE_LABELS: Record<FilterCondition["filter_type"], string> = {
 interface ActiveFiltersBarProps {
   filters: FilterCondition[];
   filePath: string;
-  /** 読み込み時に判定した区切り文字。エクスポートも同じ区切りで読む */
-  delimiter?: string;
-  onClearFilter: (columnIndex: number) => void;
+  /** Settings default delimiter; null means auto-detect. */
+  delimiter?: string | null;
+  onClearFilter: (filter: FilterCondition) => void;
   onClearAll: () => void;
   onExport?: () => Promise<void>;
 }
@@ -28,7 +28,7 @@ interface ActiveFiltersBarProps {
 export function ActiveFiltersBar({
   filters,
   filePath,
-  delimiter,
+  delimiter = null,
   onClearFilter,
   onClearAll,
   onExport,
@@ -73,7 +73,7 @@ export function ActiveFiltersBar({
       </span>
       {filters.map((f) => (
         <div
-          key={f.column_index}
+          key={f.column_index ?? f.column}
           className="flex items-center gap-1 text-xs rounded px-2 py-0.5"
           style={{
             border: "1px solid #3b82f6",
@@ -87,7 +87,7 @@ export function ActiveFiltersBar({
           </span>
           <button
             className="ml-0.5 hover:opacity-60"
-            onClick={() => onClearFilter(f.column_index)}
+            onClick={() => onClearFilter(f)}
             aria-label={`${f.column} フィルタを削除`}
           >
             ×

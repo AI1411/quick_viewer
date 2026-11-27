@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { PdfInfo, PdfDisplayMode, Annotation, AnnotationColor } from "../types";
+import { useSettingsStore } from "./settingsStore";
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4.0;
@@ -27,7 +28,7 @@ interface PdfStore {
   initTab: (tabId: string) => void;
   removeTab: (tabId: string) => void;
   setPdfInfo: (tabId: string, info: PdfInfo) => void;
-  setPdfDocument: (tabId: string, doc: PDFDocumentProxy | null) => void;
+  setPdfDocument: (tabId: string, doc: PDFDocumentProxy) => void;
   setCurrentPage: (tabId: string, page: number) => void;
   setZoom: (tabId: string, zoom: number) => void;
   setRotation: (tabId: string, rotation: number) => void;
@@ -50,7 +51,7 @@ const defaultTabState = (): PdfTabState => ({
   currentPage: 1,
   zoom: 1.0,
   rotation: 0,
-  displayMode: "single",
+  displayMode: useSettingsStore.getState().pdfSettings.defaultViewMode,
   isSidebarOpen: true,
   sidebarMode: "thumbnail",
   isLoading: false,
@@ -73,30 +74,8 @@ function patch(state: PdfStore, tabId: string, updates: Partial<PdfTabState>) {
 export const usePdfStore = create<PdfStore>((set) => ({
   tabs: {},
 
-  // タブを切り替えて戻ったときは、ページ・ズーム・回転・表示モード・サイドバーを引き継ぐ
-  // (文書・注釈は読み直す)
   initTab: (tabId) =>
-    set((s) => {
-      const prev = s.tabs[tabId];
-      const next = defaultTabState();
-      return {
-        tabs: {
-          ...s.tabs,
-          [tabId]: prev
-            ? {
-                ...next,
-                currentPage: prev.currentPage,
-                zoom: prev.zoom,
-                rotation: prev.rotation,
-                displayMode: prev.displayMode,
-                isSidebarOpen: prev.isSidebarOpen,
-                sidebarMode: prev.sidebarMode,
-                highlightColor: prev.highlightColor,
-              }
-            : next,
-        },
-      };
-    }),
+    set((s) => ({ tabs: { ...s.tabs, [tabId]: defaultTabState() } })),
 
   removeTab: (tabId) =>
     set((s) => {

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import type { CsvData, FilterCondition } from "../types";
 
 export type SortDirection = "asc" | "desc" | null;
@@ -14,6 +15,7 @@ export interface SelectedCell {
 }
 
 interface CsvTabState {
+  filePath: string | null;
   data: CsvData | null;
   isLoading: boolean;
   error: string | null;
@@ -35,11 +37,17 @@ interface CsvTabState {
   /** filteredRows の各行が元ファイルの何行目 (0 始まり) か */
   filteredSourceRows: number[] | null;
   isFiltering: boolean;
+  // ソート結果（Rust が全行ソートした行。null = 未ソート / チャンク表示）
+  sortedRows: string[][] | null;
+  /** sortedRows の各行が元ファイルの何行目 (0 始まり) か */
+  sortedSourceRows: number[] | null;
+  isSorting: boolean;
 }
 
 interface CsvStore {
   tabs: Record<string, CsvTabState>;
   initTab: (tabId: string) => void;
+  setFilePath: (tabId: string, filePath: string) => void;
   setData: (tabId: string, data: CsvData) => void;
   setLoading: (tabId: string, isLoading: boolean) => void;
   setError: (tabId: string, error: string | null) => void;
@@ -63,9 +71,18 @@ interface CsvStore {
   ) => void;
   setFiltering: (tabId: string, v: boolean) => void;
   clearFilters: (tabId: string) => void;
+  // ソート結果
+  setSortedRows: (
+    tabId: string,
+    sortedRows: string[][] | null,
+    sortedSourceRows?: number[] | null
+  ) => void;
+  setSorting: (tabId: string, v: boolean) => void;
+  clearSortedRows: (tabId: string) => void;
 }
 
 const defaultTabState = (): CsvTabState => ({
+  filePath: null,
   data: null,
   isLoading: true,
   error: null,
@@ -80,25 +97,26 @@ const defaultTabState = (): CsvTabState => ({
   filteredRows: null,
   filteredSourceRows: null,
   isFiltering: false,
+  sortedRows: null,
+  sortedSourceRows: null,
+  isSorting: false,
 });
 
 export const useCsvStore = create<CsvStore>((set) => ({
   tabs: {},
 
-  // タブを切り替えて戻ったときは、並べ替え・絞り込み・列幅・ピン留めを引き継ぐ
   initTab: (tabId) =>
-    set((state) => {
-      const prev = state.tabs[tabId];
-      const next = defaultTabState();
-      return {
-        tabs: {
-          ...state.tabs,
-          [tabId]: prev
-            ? { ...next, sort: prev.sort, filters: prev.filters, columnWidths: prev.columnWidths, pinnedCount: prev.pinnedCount }
-            : next,
-        },
-      };
-    }),
+    set((state) => ({
+      tabs: { ...state.tabs, [tabId]: defaultTabState() },
+    })),
+
+  setFilePath: (tabId, filePath) =>
+    set((state) => ({
+      tabs: {
+        ...state.tabs,
+        [tabId]: { ...state.tabs[tabId], filePath },
+      },
+    })),
 
   setData: (tabId, data) =>
     set((state) => ({
@@ -142,7 +160,15 @@ export const useCsvStore = create<CsvStore>((set) => ({
 
   setSort: (tabId, sort) =>
     set((state) => ({
-      tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], sort } },
+      tabs: {
+        ...state.tabs,
+        [tabId]: {
+          ...state.tabs[tabId],
+          sort,
+          // clearing sort also drops cached sorted rows
+          ...(sort === null ? { sortedRows: null, sortedSourceRows: null, isSorting: false } : {}),
+        },
+      },
     })),
 
   setPinnedCount: (tabId, count) =>
@@ -194,12 +220,20 @@ export const useCsvStore = create<CsvStore>((set) => ({
       },
     })),
 
-  removeTab: (tabId) =>
+  removeTab: (tabId) => {
+    const tab = useCsvStore.getState().tabs[tabId];
+    const path = tab?.filePath;
+    if (path) {
+      void invoke("close_csv", { path }).catch(() => {
+        /* cache drop is best-effort */
+      });
+    }
     set((state) => {
       const next = { ...state.tabs };
       delete next[tabId];
       return { tabs: next };
-    }),
+    });
+  },
 
   setFilters: (tabId, filters, filteredRows, filteredSourceRows = null) =>
     set((state) => ({
@@ -233,6 +267,40 @@ export const useCsvStore = create<CsvStore>((set) => ({
           filteredRows: null,
           filteredSourceRows: null,
           isFiltering: false,
+        },
+      },
+    })),
+
+  setSortedRows: (tabId, sortedRows, sortedSourceRows = null) =>
+    set((state) => ({
+      tabs: {
+        ...state.tabs,
+        [tabId]: {
+          ...state.tabs[tabId],
+          sortedRows,
+          sortedSourceRows,
+          isSorting: false,
+        },
+      },
+    })),
+
+  setSorting: (tabId, v) =>
+    set((state) => ({
+      tabs: {
+        ...state.tabs,
+        [tabId]: { ...state.tabs[tabId], isSorting: v },
+      },
+    })),
+
+  clearSortedRows: (tabId) =>
+    set((state) => ({
+      tabs: {
+        ...state.tabs,
+        [tabId]: {
+          ...state.tabs[tabId],
+          sortedRows: null,
+          sortedSourceRows: null,
+          isSorting: false,
         },
       },
     })),

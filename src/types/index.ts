@@ -21,7 +21,7 @@ export interface CsvData {
   headers: string[];
   rows: string[][];
   meta: CsvMeta;
-  /** filter_csv の結果で、各行が元ファイルの何行目 (0 始まりのデータ行) か */
+  /** filter_csv / sort_csv の結果で、各行が元ファイルの何行目 (0 始まりのデータ行) か */
   source_rows?: number[];
 }
 
@@ -36,7 +36,8 @@ export interface CsvChunk {
 export interface FilterCondition {
   /** 表示用の列名。同じ名前の列があり得るため、列の特定には column_index を使う */
   column: string;
-  column_index: number;
+  /** Prefer over `column` name when set (duplicate headers). */
+  column_index?: number;
   filter_type:
     | "exact"
     | "contains"
@@ -52,7 +53,7 @@ export interface FilterCondition {
 
 // ─── PDF Types ──────────────────────────────────────────────────────────────
 
-// Rust の PdfInfo に対応
+// pdf.js 由来の PDF メタデータ / 目次（FE で構築）
 export interface PdfInfo {
   page_count: number;
   title: string | null;
@@ -66,20 +67,12 @@ export interface PdfInfo {
   outlines: OutlineItem[];
 }
 
-// Rust の OutlineItem に対応（再帰構造）
+// pdf.js outline を正規化した再帰構造
 export interface OutlineItem {
   title: string;
   page: number | null; // 0-based page index
   level: number;
   children: OutlineItem[];
-}
-
-// Rust の PdfPageData に対応
-export interface PdfPageData {
-  page_index: number;
-  width: number;
-  height: number;
-  image_base64: string; // PNG as base64
 }
 
 export type PdfDisplayMode = "single" | "continuous";
@@ -133,7 +126,7 @@ export interface MarkdownResult {
   toc: TocItem[];
   frontmatter: Record<string, unknown> | null;
   raw: string;
-  /** 元ファイルの文字コード。保存時はこの文字コードに戻す */
+  /** Detected text encoding (e.g. "UTF-8", "Shift_JIS"). */
   encoding: string;
 }
 
@@ -166,8 +159,8 @@ export interface XlsxSheetData {
   rows: XlsxCell[][];
   total_rows: number;
   total_cols: number;
-  /** rows の各行の列数。total_cols が上限を超えると切り詰められる */
-  loaded_cols: number;
+  /** rows の各行の列数。total_cols が上限を超えると切り詰められる。省略時は total_cols */
+  loaded_cols?: number;
   freeze_pane: FreezePane;
 }
 

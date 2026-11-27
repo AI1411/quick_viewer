@@ -1,3 +1,5 @@
+#![cfg_attr(test, allow(clippy::approx_constant))]
+
 use calamine::{open_workbook, Data, DataRef, Reader, Xlsx};
 use chrono::NaiveDate;
 use quick_xml::events::Event;
@@ -133,47 +135,44 @@ pub(crate) fn parse_styles_xml(xml: &str) -> Result<HashMap<u32, String>, String
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                match e.name().as_ref() {
-                    b"numFmts" => in_num_fmts = true,
-                    b"cellXfs" => in_cell_xfs = true,
-                    b"numFmt" if in_num_fmts => {
-                        let mut fmt_id: Option<u32> = None;
-                        let mut fmt_code: Option<String> = None;
-                        for attr in e.attributes().flatten() {
-                            match attr.key.as_ref() {
-                                b"numFmtId" => {
-                                    fmt_id = std::str::from_utf8(&attr.value)
-                                        .ok()
-                                        .and_then(|s| s.parse().ok());
-                                }
-                                b"formatCode" => {
-                                    fmt_code = std::str::from_utf8(&attr.value)
-                                        .ok()
-                                        .map(|s| s.to_string());
-                                }
-                                _ => {}
-                            }
-                        }
-                        if let (Some(id), Some(code)) = (fmt_id, fmt_code) {
-                            custom_fmts.insert(id, code);
-                        }
-                    }
-                    b"xf" if in_cell_xfs => {
-                        let mut num_fmt_id: u32 = 0;
-                        for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"numFmtId" {
-                                num_fmt_id = std::str::from_utf8(&attr.value)
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => match e.name().as_ref() {
+                b"numFmts" => in_num_fmts = true,
+                b"cellXfs" => in_cell_xfs = true,
+                b"numFmt" if in_num_fmts => {
+                    let mut fmt_id: Option<u32> = None;
+                    let mut fmt_code: Option<String> = None;
+                    for attr in e.attributes().flatten() {
+                        match attr.key.as_ref() {
+                            b"numFmtId" => {
+                                fmt_id = std::str::from_utf8(&attr.value)
                                     .ok()
-                                    .and_then(|s| s.parse().ok())
-                                    .unwrap_or(0);
+                                    .and_then(|s| s.parse().ok());
                             }
+                            b"formatCode" => {
+                                fmt_code =
+                                    std::str::from_utf8(&attr.value).ok().map(|s| s.to_string());
+                            }
+                            _ => {}
                         }
-                        xf_num_fmt_ids.push(num_fmt_id);
                     }
-                    _ => {}
+                    if let (Some(id), Some(code)) = (fmt_id, fmt_code) {
+                        custom_fmts.insert(id, code);
+                    }
                 }
-            }
+                b"xf" if in_cell_xfs => {
+                    let mut num_fmt_id: u32 = 0;
+                    for attr in e.attributes().flatten() {
+                        if attr.key.as_ref() == b"numFmtId" {
+                            num_fmt_id = std::str::from_utf8(&attr.value)
+                                .ok()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(0);
+                        }
+                    }
+                    xf_num_fmt_ids.push(num_fmt_id);
+                }
+                _ => {}
+            },
             Ok(Event::End(ref e)) => match e.name().as_ref() {
                 b"numFmts" => in_num_fmts = false,
                 b"cellXfs" => in_cell_xfs = false,
@@ -201,7 +200,11 @@ pub(crate) fn parse_styles_xml(xml: &str) -> Result<HashMap<u32, String>, String
 
 /// ZIP 内のファイルを最大 `limit` バイトまで文字列として読む。無ければ Ok(None)。
 /// ZIP ヘッダの宣言サイズは偽装できるため、実際に読んだ量で上限を判定する。
-fn read_zip_entry_limited(xlsx_path: &str, entry: &str, limit: u64) -> Result<Option<String>, String> {
+fn read_zip_entry_limited(
+    xlsx_path: &str,
+    entry: &str,
+    limit: u64,
+) -> Result<Option<String>, String> {
     let file = std::fs::File::open(xlsx_path).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(file).map_err(|e| e.to_string())?;
     let f = match archive.by_name(entry) {
@@ -230,16 +233,15 @@ fn load_styles(xlsx_path: &str) -> Result<HashMap<u32, String>, String> {
     }
 }
 
-/// Excel 列文字列 (A, B, ..., Z, AA, ...) → 0 始まりのインデックス。
-/// Excel の最大列 XFD (16384 列) を超える列名は None。
-pub(crate) fn col_str_to_index(col: &str) -> Option<u32> {
-    const MAX_COLS: u32 = 16_384;
-    if col.is_empty() || col.len() > 3 || !col.bytes().all(|b| b.is_ascii_uppercase()) {
-        return None;
-    }
-    let n = col.bytes().fold(0u32, |acc, b| acc * 26 + u32::from(b - b'A' + 1));
-    (n <= MAX_COLS).then(|| n - 1)
+/// Excel 列文字列 (A, B, ..., Z, AA, ...) → 0 始まりのインデックス
+pub(crate) fn col_str_to_index(col: &str) -> u32 {
+    col.chars()
+        .fold(0u32, |acc, c| acc * 26 + (c as u32 - b'A' as u32 + 1))
+        - 1
 }
+
+/// Excel の最大列は XFD (16384 列)
+const MAX_SHEET_COLS: u32 = 16_384;
 
 /// "A1" → (row=0, col=0) のタプル
 pub(crate) fn parse_cell_ref(r: &str) -> Option<(u32, u32)> {
@@ -248,17 +250,25 @@ pub(crate) fn parse_cell_ref(r: &str) -> Option<(u32, u32)> {
     if col_str.is_empty() || row_str.is_empty() {
         return None;
     }
-    let col = col_str_to_index(&col_str)?;
+    // 細工されたファイルの長い列名で col_str_to_index が桁あふれしないよう、先に弾く
+    if col_str.len() > 3 || !col_str.bytes().all(|b| b.is_ascii_uppercase()) {
+        return None;
+    }
+    let col = col_str_to_index(&col_str);
+    if col >= MAX_SHEET_COLS {
+        return None;
+    }
     // row は 1-based。0 は無効 → filter で弾いて underflow を防ぐ
     let row_num: u32 = row_str.parse::<u32>().ok().filter(|&r| r >= 1)?;
     Some((row_num - 1, col))
 }
 
+/// ((row, col) → xf_index) マップとフリーズペイン情報
+type SheetStyles = (HashMap<(u32, u32), u32>, FreezePane);
+
 /// xl/worksheets/sheetN.xml 文字列を解析し、
 /// ((row, col) → xf_index) マップとフリーズペイン情報を返す
-pub(crate) fn parse_sheet_xml(
-    xml: &str,
-) -> Result<(HashMap<(u32, u32), u32>, FreezePane), String> {
+pub(crate) fn parse_sheet_xml(xml: &str) -> Result<SheetStyles, String> {
     let mut cell_xf_map: HashMap<(u32, u32), u32> = HashMap::new();
     let mut freeze = FreezePane { rows: 0, cols: 0 };
 
@@ -267,67 +277,62 @@ pub(crate) fn parse_sheet_xml(
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                match e.name().as_ref() {
-                    b"pane" => {
-                        let mut state = String::new();
-                        let mut y_split: u32 = 0;
-                        let mut x_split: u32 = 0;
-                        for attr in e.attributes().flatten() {
-                            match attr.key.as_ref() {
-                                b"state" => {
-                                    state = std::str::from_utf8(&attr.value)
-                                        .unwrap_or("")
-                                        .to_string();
-                                }
-                                b"ySplit" => {
-                                    y_split = std::str::from_utf8(&attr.value)
-                                        .ok()
-                                        .and_then(|s| s.parse().ok())
-                                        .unwrap_or(0);
-                                }
-                                b"xSplit" => {
-                                    x_split = std::str::from_utf8(&attr.value)
-                                        .ok()
-                                        .and_then(|s| s.parse().ok())
-                                        .unwrap_or(0);
-                                }
-                                _ => {}
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => match e.name().as_ref() {
+                b"pane" => {
+                    let mut state = String::new();
+                    let mut y_split: u32 = 0;
+                    let mut x_split: u32 = 0;
+                    for attr in e.attributes().flatten() {
+                        match attr.key.as_ref() {
+                            b"state" => {
+                                state = std::str::from_utf8(&attr.value).unwrap_or("").to_string();
                             }
-                        }
-                        if state == "frozen" || state == "frozenSplit" {
-                            freeze.rows = y_split;
-                            freeze.cols = x_split;
+                            b"ySplit" => {
+                                y_split = std::str::from_utf8(&attr.value)
+                                    .ok()
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0);
+                            }
+                            b"xSplit" => {
+                                x_split = std::str::from_utf8(&attr.value)
+                                    .ok()
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0);
+                            }
+                            _ => {}
                         }
                     }
-                    b"c" => {
-                        let mut cell_ref: Option<String> = None;
-                        let mut xf_idx: u32 = 0;
-                        for attr in e.attributes().flatten() {
-                            match attr.key.as_ref() {
-                                b"r" => {
-                                    cell_ref = std::str::from_utf8(&attr.value)
-                                        .ok()
-                                        .map(|s| s.to_string());
-                                }
-                                b"s" => {
-                                    xf_idx = std::str::from_utf8(&attr.value)
-                                        .ok()
-                                        .and_then(|s| s.parse().ok())
-                                        .unwrap_or(0);
-                                }
-                                _ => {}
-                            }
-                        }
-                        if let Some(r) = cell_ref {
-                            if let Some(pos) = parse_cell_ref(&r) {
-                                cell_xf_map.insert(pos, xf_idx);
-                            }
-                        }
+                    if state == "frozen" || state == "frozenSplit" {
+                        freeze.rows = y_split;
+                        freeze.cols = x_split;
                     }
-                    _ => {}
                 }
-            }
+                b"c" => {
+                    let mut cell_ref: Option<String> = None;
+                    let mut xf_idx: u32 = 0;
+                    for attr in e.attributes().flatten() {
+                        match attr.key.as_ref() {
+                            b"r" => {
+                                cell_ref =
+                                    std::str::from_utf8(&attr.value).ok().map(|s| s.to_string());
+                            }
+                            b"s" => {
+                                xf_idx = std::str::from_utf8(&attr.value)
+                                    .ok()
+                                    .and_then(|s| s.parse().ok())
+                                    .unwrap_or(0);
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(r) = cell_ref {
+                        if let Some(pos) = parse_cell_ref(&r) {
+                            cell_xf_map.insert(pos, xf_idx);
+                        }
+                    }
+                }
+                _ => {}
+            },
             Ok(Event::Eof) => break,
             Err(e) => return Err(e.to_string()),
             _ => {}
@@ -339,38 +344,49 @@ pub(crate) fn parse_sheet_xml(
 }
 
 /// xlsx ファイルから指定シートの XML を読み込んで parse_sheet_xml を呼ぶ
-fn load_sheet_xml(
-    xlsx_path: &str,
-    sheet_file_name: &str,
-) -> Result<(HashMap<(u32, u32), u32>, FreezePane), String> {
+fn load_sheet_xml(xlsx_path: &str, sheet_file_name: &str) -> Result<SheetStyles, String> {
     match read_zip_entry_limited(xlsx_path, sheet_file_name, MAX_SHEET_XML_SIZE)? {
         Some(content) => parse_sheet_xml(&content),
         None => Ok((HashMap::new(), FreezePane::default())),
     }
 }
 
-/// 書式コードから日付トークンと無関係な部分を除く。
-/// `[Red]` `[$-411]` などの角括弧、`"..."` の文字列リテラル、
-/// `\x` (エスケープ) `_x` (幅埋め) `*x` (繰り返し) の次の1文字。
-fn strip_format_literals(fmt: &str) -> String {
-    let mut out = String::with_capacity(fmt.len());
-    let mut chars = fmt.chars();
+/// 色指定 `[...]`、文字列リテラル `"..."`、`\` エスケープを取り除く
+/// （日付トークン判定の前処理用）
+fn strip_non_format_tokens(fmt: &str) -> String {
+    let mut result = String::with_capacity(fmt.len());
+    let mut chars = fmt.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '"' => chars.by_ref().take_while(|&c| c != '"').for_each(drop),
-            '[' => chars.by_ref().take_while(|&c| c != ']').for_each(drop),
-            '\\' | '_' | '*' => {
+            '\\' => {
+                // 次の1文字をスキップ（エスケープされたリテラル）
                 chars.next();
             }
-            _ => out.push(c),
+            '"' => {
+                for qc in chars.by_ref() {
+                    if qc == '"' {
+                        break;
+                    }
+                }
+            }
+            '[' => {
+                for bc in chars.by_ref() {
+                    if bc == ']' {
+                        break;
+                    }
+                }
+            }
+            _ => result.push(c),
         }
     }
-    out
+    result
 }
 
 /// フォーマットコード文字列が日付系かどうかを判定する
 fn is_date_format_code(fmt: &str) -> bool {
-    let f = strip_format_literals(fmt).to_lowercase();
+    // [Red] の d や "days" の d を日付トークンと誤認しないよう除去してから判定
+    let f = strip_non_format_tokens(fmt).to_lowercase();
+    // 通貨記号も除去後に見る。[$-411] のようなロケール指定つきの日付書式を通貨と誤認しない
     if f.contains('%') || f.contains('$') || f.contains('¥') || f.contains('€') {
         return false;
     }
@@ -467,22 +483,16 @@ fn parse_workbook_xml(xml: &str) -> HashMap<String, String> {
 
     loop {
         match reader.read_event_into(&mut buf) {
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e))
-                if e.name().as_ref() == b"sheet" =>
-            {
+            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) if e.name().as_ref() == b"sheet" => {
                 let mut name = String::new();
                 let mut rid = String::new();
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
                         b"name" => {
-                            name = std::str::from_utf8(&attr.value)
-                                .unwrap_or("")
-                                .to_string();
+                            name = std::str::from_utf8(&attr.value).unwrap_or("").to_string();
                         }
                         b"r:id" => {
-                            rid = std::str::from_utf8(&attr.value)
-                                .unwrap_or("")
-                                .to_string();
+                            rid = std::str::from_utf8(&attr.value).unwrap_or("").to_string();
                         }
                         _ => {}
                     }
@@ -527,14 +537,10 @@ fn parse_workbook_rels_xml(xml: &str) -> HashMap<String, String> {
                 for attr in e.attributes().flatten() {
                     match attr.key.as_ref() {
                         b"Id" => {
-                            id = std::str::from_utf8(&attr.value)
-                                .unwrap_or("")
-                                .to_string();
+                            id = std::str::from_utf8(&attr.value).unwrap_or("").to_string();
                         }
                         b"Target" => {
-                            target = std::str::from_utf8(&attr.value)
-                                .unwrap_or("")
-                                .to_string();
+                            target = std::str::from_utf8(&attr.value).unwrap_or("").to_string();
                         }
                         _ => {}
                     }
@@ -555,8 +561,14 @@ fn parse_workbook_rels_xml(xml: &str) -> HashMap<String, String> {
 
 /// xlsx ファイルからシート名 → xl/worksheets/sheetN.xml パスのマップを構築する
 fn load_sheet_file_map(xlsx_path: &str) -> HashMap<String, String> {
-    let read = |entry| read_zip_entry_limited(xlsx_path, entry, MAX_WORKBOOK_XML_SIZE).ok().flatten();
-    let (Some(workbook), Some(rels)) = (read("xl/workbook.xml"), read("xl/_rels/workbook.xml.rels")) else {
+    let read = |entry| {
+        read_zip_entry_limited(xlsx_path, entry, MAX_WORKBOOK_XML_SIZE)
+            .ok()
+            .flatten()
+    };
+    let (Some(workbook), Some(rels)) =
+        (read("xl/workbook.xml"), read("xl/_rels/workbook.xml.rels"))
+    else {
         return HashMap::new();
     };
     let rid_to_path = parse_workbook_rels_xml(&rels);
@@ -620,7 +632,12 @@ fn sheet_bounds(workbook: &mut Workbook, sheet_name: &str) -> Result<Option<Boun
     let mut bounds: Option<Bounds> = None;
     for_each_cell(workbook, sheet_name, |row, col, _| {
         bounds = Some(match bounds {
-            None => Bounds { row_start: row, row_end: row, col_start: col, col_end: col },
+            None => Bounds {
+                row_start: row,
+                row_end: row,
+                col_start: col,
+                col_end: col,
+            },
             Some(b) => Bounds {
                 row_start: b.row_start.min(row),
                 row_end: b.row_end.max(row),
@@ -634,11 +651,9 @@ fn sheet_bounds(workbook: &mut Workbook, sheet_name: &str) -> Result<Option<Boun
 
 fn display_size(total_rows: usize, total_cols: usize) -> (usize, usize) {
     let cols = total_cols.min(MAX_DISPLAY_COLS);
-    let rows = if cols == 0 {
-        0
-    } else {
-        total_rows.min(MAX_DISPLAY_ROWS).min(MAX_DISPLAY_CELLS / cols)
-    };
+    let rows = MAX_DISPLAY_CELLS
+        .checked_div(cols)
+        .map_or(0, |max_rows| total_rows.min(MAX_DISPLAY_ROWS).min(max_rows));
     (rows, cols)
 }
 
@@ -647,7 +662,13 @@ fn export_cell_string(data: &Data) -> String {
         Data::String(s) => s.clone(),
         Data::Float(f) => f.to_string(),
         Data::Int(i) => i.to_string(),
-        Data::Bool(b) => if *b { "TRUE".to_string() } else { "FALSE".to_string() },
+        Data::Bool(b) => {
+            if *b {
+                "TRUE".to_string()
+            } else {
+                "FALSE".to_string()
+            }
+        }
         Data::DateTime(dt) => serial_to_date_string(dt.as_f64()),
         Data::DateTimeIso(s) => s.clone(),
         Data::DurationIso(s) => s.clone(),
@@ -689,7 +710,8 @@ pub fn read_xlsx(path: String) -> Result<XlsxInfo, String> {
 #[tauri::command(async)]
 pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData, String> {
     crate::utils::catch_panic(move || {
-        let mut workbook: Workbook = open_workbook(&path).map_err(|e: calamine::XlsxError| e.to_string())?;
+        let mut workbook: Workbook =
+            open_workbook(&path).map_err(|e: calamine::XlsxError| e.to_string())?;
         let bounds = sheet_bounds(&mut workbook, &sheet_name)?;
         let (total_rows, total_cols) = bounds.map_or((0, 0), |b| (b.rows(), b.cols()));
         let (display_rows, display_cols) = display_size(total_rows, total_cols);
@@ -701,8 +723,14 @@ pub fn read_xlsx_sheet(path: String, sheet_name: String) -> Result<XlsxSheetData
             .and_then(|sheet_file| load_sheet_xml(&path, sheet_file).ok())
             .unwrap_or_default();
         // 固定行・列は仮想化せず常に描画するため、画面に収まる程度に制限する
-        freeze_pane.rows = freeze_pane.rows.min(display_rows as u32).min(MAX_FREEZE_ROWS);
-        freeze_pane.cols = freeze_pane.cols.min(display_cols as u32).min(MAX_FREEZE_COLS);
+        freeze_pane.rows = freeze_pane
+            .rows
+            .min(display_rows as u32)
+            .min(MAX_FREEZE_ROWS);
+        freeze_pane.cols = freeze_pane
+            .cols
+            .min(display_cols as u32)
+            .min(MAX_FREEZE_COLS);
 
         let empty = convert_cell(&Data::Empty, None);
         let mut rows: Vec<Vec<XlsxCell>> = vec![vec![empty; display_cols]; display_rows];
@@ -739,7 +767,8 @@ pub fn export_xlsx_sheet_as_csv(
     conditions: Vec<crate::csv_commands::FilterCondition>,
 ) -> Result<(), String> {
     crate::utils::catch_panic(move || {
-        let mut workbook: Workbook = open_workbook(&path).map_err(|e: calamine::XlsxError| e.to_string())?;
+        let mut workbook: Workbook =
+            open_workbook(&path).map_err(|e: calamine::XlsxError| e.to_string())?;
         let b = sheet_bounds(&mut workbook, &sheet_name)?
             .ok_or_else(|| "シートにデータがありません".to_string())?;
         if b.rows().saturating_mul(b.cols()) > MAX_EXPORT_CELLS {
@@ -758,10 +787,10 @@ pub fn export_xlsx_sheet_as_csv(
         cells.sort_unstable_by_key(|(row, col, _)| (*row, *col));
 
         let headers: Vec<String> = (0..b.cols()).map(column_letters).collect();
-        let filters = crate::csv_commands::compile_filters(&headers, &conditions);
+        let filters = crate::csv_commands::compile_filters(&headers, &conditions)?;
         let encoding = crate::csv_commands::ExportEncoding::EXCEL_UTF8;
         crate::csv_commands::write_csv_export(&output_path, b',', &encoding, |wtr| {
-            wtr.write_record(&headers)?;
+            wtr.write_record(&headers).map_err(|e| e.to_string())?;
             let mut cells = cells.into_iter().peekable();
             for row_index in b.row_start..=b.row_end {
                 let mut row = vec![String::new(); b.cols()];
@@ -769,7 +798,7 @@ pub fn export_xlsx_sheet_as_csv(
                     row[(col - b.col_start) as usize] = value;
                 }
                 if crate::csv_commands::row_matches_all(&filters, &row) {
-                    wtr.write_record(&row)?;
+                    wtr.write_record(&row).map_err(|e| e.to_string())?;
                 }
             }
             Ok(())
@@ -857,18 +886,10 @@ mod tests {
 
     #[test]
     fn col_str_to_index_basic() {
-        assert_eq!(col_str_to_index("A"), Some(0));
-        assert_eq!(col_str_to_index("Z"), Some(25));
-        assert_eq!(col_str_to_index("AA"), Some(26));
-        assert_eq!(col_str_to_index("AB"), Some(27));
-        assert_eq!(col_str_to_index("XFD"), Some(16_383));
-    }
-
-    #[test]
-    fn col_str_to_index_rejects_columns_beyond_excel_limit() {
-        assert_eq!(col_str_to_index("XFE"), None);
-        assert_eq!(col_str_to_index("AAAAAAAAAA"), None);
-        assert_eq!(parse_cell_ref("AAAAAAAAAA1"), None);
+        assert_eq!(col_str_to_index("A"), 0);
+        assert_eq!(col_str_to_index("Z"), 25);
+        assert_eq!(col_str_to_index("AA"), 26);
+        assert_eq!(col_str_to_index("AB"), 27);
     }
 
     #[test]
@@ -914,7 +935,96 @@ mod tests {
         assert_eq!(freeze.cols, 2);
     }
 
+    // is_date_format_code tests
+
+    #[test]
+    fn is_date_format_code_rejects_red_color_number_formats() {
+        assert!(!is_date_format_code("#,##0 ;[Red](#,##0)"));
+        assert!(!is_date_format_code("#,##0.00;[Red](#,##0.00)"));
+    }
+
+    #[test]
+    fn is_date_format_code_rejects_quoted_literal_with_d() {
+        assert!(!is_date_format_code(r#"0.0"days""#));
+    }
+
+    #[test]
+    fn is_date_format_code_rejects_plain_number_format() {
+        assert!(!is_date_format_code("#,##0"));
+    }
+
+    #[test]
+    fn is_date_format_code_accepts_real_date_format() {
+        assert!(is_date_format_code("yyyy/mm/dd"));
+        assert!(is_date_format_code("m/d/yyyy"));
+    }
+
+    #[test]
+    fn is_date_format_code_rejects_backslash_escaped_literal() {
+        assert!(!is_date_format_code(r"0.0\d\a\y\s"));
+    }
+
     // convert_cell tests
+
+    #[test]
+    fn convert_cell_empty() {
+        let cell = convert_cell(&Data::Empty, None);
+        assert_eq!(cell.cell_type, "empty");
+        assert_eq!(cell.value, "");
+    }
+
+    #[test]
+    fn convert_cell_string() {
+        let cell = convert_cell(&Data::String("hello".to_string()), None);
+        assert_eq!(cell.cell_type, "string");
+        assert_eq!(cell.value, "hello");
+    }
+
+    #[test]
+    fn convert_cell_float_number() {
+        let cell = convert_cell(&Data::Float(3.14), Some("#,##0.00".to_string()));
+        assert_eq!(cell.cell_type, "number");
+        assert_eq!(cell.raw, "3.14");
+    }
+
+    #[test]
+    fn convert_cell_float_stays_number_with_red_format() {
+        let cell = convert_cell(
+            &Data::Float(1234.5),
+            Some("#,##0 ;[Red](#,##0)".to_string()),
+        );
+        assert_eq!(cell.cell_type, "number");
+        assert_eq!(cell.value, "1234.5");
+    }
+
+    #[test]
+    fn convert_cell_float_as_date_when_date_format() {
+        let cell = convert_cell(&Data::Float(45292.0), Some("m/d/yyyy".to_string()));
+        assert_eq!(cell.cell_type, "date");
+        assert_eq!(cell.value, "2024-01-01");
+    }
+
+    #[test]
+    fn convert_cell_datetime_variant() {
+        let dt = ExcelDateTime::new(45292.0, ExcelDateTimeType::DateTime, false);
+        let cell = convert_cell(&Data::DateTime(dt), None);
+        assert_eq!(cell.cell_type, "date");
+        assert_eq!(cell.value, "2024-01-01");
+    }
+
+    #[test]
+    fn convert_cell_bool() {
+        let cell = convert_cell(&Data::Bool(true), None);
+        assert_eq!(cell.cell_type, "boolean");
+        assert_eq!(cell.value, "TRUE");
+    }
+
+    #[test]
+    fn parse_cell_ref_rejects_columns_beyond_excel_limit() {
+        assert_eq!(parse_cell_ref("XFD1"), Some((0, 16_383)));
+        assert_eq!(parse_cell_ref("XFE1"), None);
+        assert_eq!(parse_cell_ref("AAAAAAAAAA1"), None);
+    }
 
     fn write_test_xlsx(name: &str, cell_xfs: &str, sheet_body: &str) -> std::path::PathBuf {
         use std::io::Write;
@@ -939,8 +1049,14 @@ mod tests {
 
     #[test]
     fn rels_target_accepts_package_absolute_paths() {
-        assert_eq!(resolve_rels_target("worksheets/sheet2.xml"), "xl/worksheets/sheet2.xml");
-        assert_eq!(resolve_rels_target("/xl/worksheets/sheet2.xml"), "xl/worksheets/sheet2.xml");
+        assert_eq!(
+            resolve_rels_target("worksheets/sheet2.xml"),
+            "xl/worksheets/sheet2.xml"
+        );
+        assert_eq!(
+            resolve_rels_target("/xl/worksheets/sheet2.xml"),
+            "xl/worksheets/sheet2.xml"
+        );
     }
 
     #[test]
@@ -984,9 +1100,19 @@ mod tests {
         );
         let data = read_xlsx_sheet(path.to_string_lossy().into_owned(), "Sheet1".into()).unwrap();
         std::fs::remove_file(&path).ok();
-        assert_eq!((data.total_rows, data.total_cols, data.loaded_cols), (2, 3, 3));
-        let values: Vec<Vec<&str>> = data.rows.iter().map(|r| r.iter().map(|c| c.value.as_str()).collect()).collect();
-        assert_eq!(values, vec![vec!["name", "2024-01-01", "1234"], vec!["x", "", ""]]);
+        assert_eq!(
+            (data.total_rows, data.total_cols, data.loaded_cols),
+            (2, 3, 3)
+        );
+        let values: Vec<Vec<&str>> = data
+            .rows
+            .iter()
+            .map(|r| r.iter().map(|c| c.value.as_str()).collect())
+            .collect();
+        assert_eq!(
+            values,
+            vec![vec!["name", "2024-01-01", "1234"], vec!["x", "", ""]]
+        );
         assert_eq!(data.rows[0][2].cell_type, "number");
     }
 
@@ -1042,68 +1168,38 @@ mod tests {
             "#,##0;[Red]-#,##0",
             "0\"days\"",
             "[DBNum1]General",
+            "[$¥-411]#,##0",
             "General",
             "0.00",
             "_(* #,##0_);_(* (#,##0);_(* \"-\"_);_(@_)",
         ] {
-            assert!(!is_date_format_code(fmt), "{fmt} should not be a date format");
+            assert!(
+                !is_date_format_code(fmt),
+                "{fmt} should not be a date format"
+            );
         }
     }
 
     #[test]
     fn date_formats_are_detected_even_with_locale_prefix() {
-        for fmt in ["yyyy/mm/dd", "m/d/yyyy", "d-mmm-yy", "[$-411]ggge\"年\"m\"月\"d\"日\"", "yyyy\"年\"m\"月\"d\"日\""] {
+        for fmt in [
+            "yyyy/mm/dd",
+            "m/d/yyyy",
+            "d-mmm-yy",
+            "[$-411]ggge\"年\"m\"月\"d\"日\"",
+            "yyyy\"年\"m\"月\"d\"日\"",
+        ] {
             assert!(is_date_format_code(fmt), "{fmt} should be a date format");
         }
     }
 
     #[test]
     fn red_number_format_cell_is_shown_as_number() {
-        let cell = convert_cell(&Data::Float(1234.0), Some("#,##0 ;[Red](#,##0)".to_string()));
+        let cell = convert_cell(
+            &Data::Float(1234.0),
+            Some("#,##0 ;[Red](#,##0)".to_string()),
+        );
         assert_eq!(cell.cell_type, "number");
         assert_eq!(cell.value, "1234");
-    }
-
-    #[test]
-    fn convert_cell_empty() {
-        let cell = convert_cell(&Data::Empty, None);
-        assert_eq!(cell.cell_type, "empty");
-        assert_eq!(cell.value, "");
-    }
-
-    #[test]
-    fn convert_cell_string() {
-        let cell = convert_cell(&Data::String("hello".to_string()), None);
-        assert_eq!(cell.cell_type, "string");
-        assert_eq!(cell.value, "hello");
-    }
-
-    #[test]
-    fn convert_cell_float_number() {
-        let cell = convert_cell(&Data::Float(3.14), Some("#,##0.00".to_string()));
-        assert_eq!(cell.cell_type, "number");
-        assert_eq!(cell.raw, "3.14");
-    }
-
-    #[test]
-    fn convert_cell_float_as_date_when_date_format() {
-        let cell = convert_cell(&Data::Float(45292.0), Some("m/d/yyyy".to_string()));
-        assert_eq!(cell.cell_type, "date");
-        assert_eq!(cell.value, "2024-01-01");
-    }
-
-    #[test]
-    fn convert_cell_datetime_variant() {
-        let dt = ExcelDateTime::new(45292.0, ExcelDateTimeType::DateTime, false);
-        let cell = convert_cell(&Data::DateTime(dt), None);
-        assert_eq!(cell.cell_type, "date");
-        assert_eq!(cell.value, "2024-01-01");
-    }
-
-    #[test]
-    fn convert_cell_bool() {
-        let cell = convert_cell(&Data::Bool(true), None);
-        assert_eq!(cell.cell_type, "boolean");
-        assert_eq!(cell.value, "TRUE");
     }
 }

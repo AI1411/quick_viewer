@@ -1,8 +1,46 @@
 import { useCallback, useState } from "react";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { Tab } from "./Tab";
+import { confirmCloseDirtyTabs, confirmUnsaved } from "../lib/confirmUnsaved";
 import { useTabStore } from "../stores";
-import { closeTab, closeOtherTabs, closeTabsToRight } from "../lib/tabActions";
+
+async function closeTabSafely(tabId: string, removeTab: (id: string) => void) {
+  const tab = useTabStore.getState().tabs.find((t) => t.id === tabId);
+  if (tab?.isDirty) {
+    const ok = await confirmUnsaved(tab.title);
+    if (!ok) return;
+  }
+  removeTab(tabId);
+}
+
+async function closeOtherTabsSafely(
+  tabId: string,
+  closeOtherTabs: (id: string) => void
+) {
+  const dirtyTitles = useTabStore
+    .getState()
+    .tabs.filter((t) => t.id !== tabId && t.isDirty)
+    .map((t) => t.title);
+  const ok = await confirmCloseDirtyTabs(dirtyTitles);
+  if (!ok) return;
+  closeOtherTabs(tabId);
+}
+
+async function closeTabsToRightSafely(
+  tabId: string,
+  closeTabsToRight: (id: string) => void
+) {
+  const { tabs } = useTabStore.getState();
+  const idx = tabs.findIndex((t) => t.id === tabId);
+  if (idx === -1) return;
+  const dirtyTitles = tabs
+    .slice(idx + 1)
+    .filter((t) => t.isDirty)
+    .map((t) => t.title);
+  const ok = await confirmCloseDirtyTabs(dirtyTitles);
+  if (!ok) return;
+  closeTabsToRight(tabId);
+}
 
 interface ContextMenuState {
   x: number;
@@ -10,8 +48,20 @@ interface ContextMenuState {
   tabId: string;
 }
 
-export function TabBar() {
-  const { tabs, activeTabId, setActiveTab, reorderTabs } = useTabStore();
+interface TabBarProps {
+  onNewTab?: () => void;
+}
+
+export function TabBar({ onNewTab }: TabBarProps) {
+  const {
+    tabs,
+    activeTabId,
+    setActiveTab,
+    removeTab,
+    reorderTabs,
+    closeOtherTabs,
+    closeTabsToRight,
+  } = useTabStore();
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
@@ -47,7 +97,13 @@ export function TabBar() {
   );
 
   const contextMenuItems: ContextMenuItem[] = contextMenu
-    ? buildContextMenuItems(contextMenu.tabId, tabs)
+    ? buildContextMenuItems(
+        contextMenu.tabId,
+        tabs,
+        removeTab,
+        closeOtherTabs,
+        closeTabsToRight
+      )
     : [];
 
   return (
@@ -72,7 +128,9 @@ export function TabBar() {
             isActive={tab.id === activeTabId}
             index={index}
             onActivate={() => setActiveTab(tab.id)}
-            onClose={() => void closeTab(tab.id)}
+            onClose={() => {
+              void closeTabSafely(tab.id, removeTab);
+            }}
             onContextMenu={handleContextMenu}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}
@@ -81,11 +139,12 @@ export function TabBar() {
         </div>
       ))}
 
-      {/* 新規タブボタン（Phase 1.4 でファイルオープンダイアログと連携） */}
       <button
+        type="button"
         className="px-2 flex items-center opacity-50 hover:opacity-100 text-lg leading-none"
         style={{ color: "var(--text-secondary, #858585)" }}
         aria-label="新しいタブ"
+        onClick={onNewTab}
         onDragOver={(e) => {
           e.preventDefault();
           setDragOverIndex(tabs.length);
@@ -109,23 +168,35 @@ export function TabBar() {
 
 function buildContextMenuItems(
   tabId: string,
-  tabs: Array<{ id: string }>
+  tabs: Array<{ id: string }>,
+  removeTab: (id: string) => void,
+  closeOtherTabs: (id: string) => void,
+  closeTabsToRight: (id: string) => void
 ): ContextMenuItem[] {
   const tabIndex = tabs.findIndex((t) => t.id === tabId);
   const hasOthers = tabs.length > 1;
   const hasRight = tabIndex < tabs.length - 1;
 
   return [
-    { label: "閉じる", onClick: () => void closeTab(tabId) },
+    {
+      label: "閉じる",
+      onClick: () => {
+        void closeTabSafely(tabId, removeTab);
+      },
+    },
     { separator: true, label: "", onClick: () => {} },
     {
       label: "他を全て閉じる",
-      onClick: () => void closeOtherTabs(tabId),
+      onClick: () => {
+        void closeOtherTabsSafely(tabId, closeOtherTabs);
+      },
       disabled: !hasOthers,
     },
     {
       label: "右側を全て閉じる",
-      onClick: () => void closeTabsToRight(tabId),
+      onClick: () => {
+        void closeTabsToRightSafely(tabId, closeTabsToRight);
+      },
       disabled: !hasRight,
     },
   ];

@@ -1,5 +1,26 @@
+use chardetng::EncodingDetector;
 use std::io::Write;
 use std::path::Path;
+
+/// ファイルバイト列をエンコーディング自動検出してデコードし、(テキスト, エンコーディング名) を返す。
+pub fn decode_file(raw: &[u8]) -> (String, String) {
+    // UTF-8 BOM を除去してからデコード
+    let raw = raw.strip_prefix(b"\xef\xbb\xbf").unwrap_or(raw);
+
+    let mut detector = EncodingDetector::new();
+    detector.feed(raw, true);
+    let encoding = detector.guess(None, true);
+    let (cow, _, _) = encoding.decode(raw);
+    (cow.into_owned(), encoding.name().to_string())
+}
+
+/// テキストを指定エンコーディングでエンコードする。不明なラベルは UTF-8 にフォールバック。
+pub fn encode_file(content: &str, encoding_name: &str) -> Vec<u8> {
+    let encoding =
+        encoding_rs::Encoding::for_label(encoding_name.as_bytes()).unwrap_or(encoding_rs::UTF_8);
+    let (bytes, _, _) = encoding.encode(content);
+    bytes.into_owned()
+}
 
 /// temp file → sync → rename パターンのアトミック書込。
 /// 中断・ディスクフルによるゼロバイト化を防ぐ。
@@ -9,6 +30,12 @@ use std::path::Path;
 /// - 一時ファイルは推測しにくい名前で排他的に作る (既存のファイルやリンクを辿らない)
 pub fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
     atomic_write_with(path, |file| file.write_all(data))
+}
+
+/// 利用者のファイル (Markdown など) を保存する。atomic_write がすでにリンク先の解決と
+/// パーミッションの維持を行うので、同じ手順で書き込む。
+pub fn atomic_write_user_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    atomic_write(path, data)
 }
 
 /// atomic_write と同じ手順で、内容は `write` が一時ファイルへ書き込む (大きな出力をメモリに溜めない)。
@@ -115,7 +142,36 @@ mod tests {
     }
 
     use super::*;
+    use encoding_rs::SHIFT_JIS;
     use std::fs;
+
+    #[test]
+    fn decode_file_utf8() {
+        let data = b"hello, world";
+        let (decoded, encoding) = decode_file(data);
+        assert_eq!(decoded, "hello, world");
+        assert!(!encoding.is_empty());
+    }
+
+    #[test]
+    fn decode_file_shift_jis() {
+        let unicode = "日本語テスト";
+        let (encoded, _, _) = SHIFT_JIS.encode(unicode);
+        let (decoded, enc) = decode_file(&encoded);
+        assert!(
+            decoded.contains("日本語"),
+            "expected SJIS decode, got encoding={enc} content={decoded:?}"
+        );
+    }
+
+    #[test]
+    fn encode_file_shift_jis_roundtrip() {
+        let text = "# 見出し\n本文";
+        let bytes = encode_file(text, "Shift_JIS");
+        let (decoded, _, had_errors) = SHIFT_JIS.decode(&bytes);
+        assert!(!had_errors);
+        assert_eq!(decoded, text);
+    }
 
     #[test]
     fn atomic_write_creates_file() {
@@ -133,6 +189,61 @@ mod tests {
         atomic_write(&path, b"first").unwrap();
         atomic_write(&path, b"second").unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"second");
+        fs::remove_file(&path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_user_file_preserves_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("qv_perms_{}.md", std::process::id()));
+        fs::write(&path, b"old").unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(&path, perms).unwrap();
+
+        atomic_write_user_file(&path, b"new").unwrap();
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "expected mode 600, got {mode:o}");
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        fs::remove_file(&path).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_user_file_updates_symlink_target() {
+        let dir = std::env::temp_dir();
+        let target = dir.join(format!("qv_symlink_target_{}.md", std::process::id()));
+        let link = dir.join(format!("qv_symlink_link_{}.md", std::process::id()));
+        fs::write(&target, b"old").unwrap();
+        let _ = fs::remove_file(&link);
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        atomic_write_user_file(&link, b"updated").unwrap();
+
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "symlink should remain a symlink"
+        );
+        assert_eq!(fs::read(&target).unwrap(), b"updated");
+        assert_eq!(fs::read(&link).unwrap(), b"updated");
+        fs::remove_file(&link).ok();
+        fs::remove_file(&target).ok();
+    }
+
+    #[test]
+    fn atomic_write_user_file_creates_missing() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("qv_user_create_{}.md", std::process::id()));
+        let _ = fs::remove_file(&path);
+        atomic_write_user_file(&path, b"hello").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"hello");
         fs::remove_file(&path).ok();
     }
 

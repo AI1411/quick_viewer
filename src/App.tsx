@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getCurrentWindow, availableMonitors } from "@tauri-apps/api/window";
-import { LogicalSize, LogicalPosition } from "@tauri-apps/api/dpi";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { EmptyState } from "./components/EmptyState";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
@@ -12,12 +12,19 @@ import { TitleBar } from "./components/TitleBar";
 import { ViewerArea } from "./components/ViewerArea";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { RecentFilesMenu } from "./components/RecentFilesMenu";
-import { showOpenDialog } from "./lib/fileCommands";
-import { openPathInTab } from "./lib/openPathInTab";
-import { reloadTabFromDisk, closeTab, confirmCloseAllTabs } from "./lib/tabActions";
+import { openFile, showOpenDialog } from "./lib/fileCommands";
+import { confirmCloseDirtyTabs, confirmUnsaved } from "./lib/confirmUnsaved";
+import { reloadTabFromDisk } from "./lib/tabActions";
 import { enqueueReload, nextReload, type PendingReload } from "./lib/reloadQueue";
-import { parseSavedWindowState, toRestoreBounds, type SavedWindowState } from "./lib/windowState";
-import { useTabStore, useSettingsStore, useSearchStore, useRecentFilesStore, showError, showInfo } from "./stores";
+import {
+  useTabStore,
+  useSettingsStore,
+  useSearchStore,
+  useRecentFilesStore,
+  showError,
+  showInfo,
+} from "./stores";
+import type { RecentFile } from "./stores";
 import { Toast } from "./components/Toast";
 import { errorMessage } from "./lib/errorUtils";
 import { useShortcuts } from "./hooks/useShortcuts";
@@ -26,6 +33,51 @@ import { FileChangedDialog } from "./components/FileChangedDialog";
 import { BatchConvertDialog } from "./components/image/BatchConvertDialog";
 import { useImageStore } from "./stores/imageStore";
 import "./App.css";
+
+async function handleOpenPath(
+  path: string,
+  addTab: ReturnType<typeof useTabStore.getState>["addTab"],
+  setActiveTab: ReturnType<typeof useTabStore.getState>["setActiveTab"]
+) {
+  try {
+    const info = await openFile(path);
+    const existing = useTabStore
+      .getState()
+      .tabs.find((t) => t.filePath === info.path);
+    if (existing) {
+      setActiveTab(existing.id);
+    } else {
+      const id = `tab-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      addTab({
+        id,
+        title: info.name,
+        filePath: info.path,
+        format: info.format,
+        isDirty: false,
+        reloadCount: 0,
+      });
+      setActiveTab(id);
+    }
+    useRecentFilesStore.getState().addRecentFile({
+      path: info.path,
+      name: info.name,
+      format: info.format as RecentFile["format"],
+      openedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    showError(`ファイルを開けませんでした: ${errorMessage(err)}`);
+  }
+}
+
+async function openFileWithDialog() {
+  try {
+    const { addTab, setActiveTab } = useTabStore.getState();
+    const path = await showOpenDialog();
+    if (path) await handleOpenPath(path, addTab, setActiveTab);
+  } catch (err) {
+    showError(`ファイルダイアログを開けませんでした: ${errorMessage(err)}`);
+  }
+}
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -60,116 +112,47 @@ function App() {
   useEffect(() => {
     check()
       .then((update) => {
-        if (update) {
-          showInfo(`新しいバージョン ${update.version} が公開されています。GitHub のリリースページから入手できます。`);
-        }
+        if (!update) return;
+        showInfo(`新しいバージョン ${update.version} が利用可能です。`, {
+          durationMs: 0,
+          action: {
+            label: "更新して再起動",
+            onClick: async () => {
+              try {
+                await update.downloadAndInstall();
+                await relaunch();
+              } catch (err) {
+                showError(`更新に失敗しました: ${errorMessage(err)}`);
+              }
+            },
+          },
+        });
       })
       .catch(() => {
         // 更新チェック失敗は無視（オフライン等）
       });
   }, []);
 
-  // ウィンドウ状態の復元
-  useEffect(() => {
-    (async () => {
-      try {
-        const raw = await invoke<string | null>("load_app_data", { key: "window_state" });
-        const saved = raw ? parseSavedWindowState(raw) : null;
-        if (!saved) return;
-        const win = getCurrentWindow();
-        if (saved.isMaximized) {
-          await win.maximize();
-          return;
-        }
-        const monitors = await availableMonitors().catch(() => []);
-        const bounds = toRestoreBounds(
-          saved,
-          await win.scaleFactor(),
-          monitors.map((m) => ({
-            ...m.position.toLogical(m.scaleFactor),
-            ...m.size.toLogical(m.scaleFactor),
-          }))
-        );
-        await win.setSize(new LogicalSize(bounds.width, bounds.height));
-        if (bounds.position) {
-          await win.setPosition(new LogicalPosition(bounds.position.x, bounds.position.y));
-        }
-      } catch {
-        // 初回起動 or エラー時はデフォルト
-      }
-    })();
-  }, []);
+  // ウィンドウ状態の保存/復元は tauri-plugin-window-state が担当
 
-  // ウィンドウ状態の保存（リサイズ / 移動）
+  // Cmd+Q はウィンドウの close を経由しないため、Rust 側でメニューの「終了」を
+  // quit-requested イベントに差し替えている。未保存の変更を確認してから閉じる
   useEffect(() => {
-    const win = getCurrentWindow();
-    let saveTimer: ReturnType<typeof setTimeout>;
-    const save = async () => {
-      try {
-        const factor = await win.scaleFactor();
-        const size = (await win.innerSize()).toLogical(factor);
-        const pos = (await win.outerPosition()).toLogical(factor);
-        const isMaximized = await win.isMaximized();
-        const state: SavedWindowState = {
-          width: size.width,
-          height: size.height,
-          x: pos.x,
-          y: pos.y,
-          isMaximized,
-          unit: "logical",
-        };
-        await invoke("save_app_data", { key: "window_state", value: JSON.stringify(state) });
-      } catch {
-        // サイレント
-      }
-    };
-    const debouncedSave = () => {
-      clearTimeout(saveTimer);
-      saveTimer = setTimeout(save, 500);
-    };
-    let unlisten1: (() => void) | undefined;
-    let unlisten2: (() => void) | undefined;
+    let unlisten: (() => void) | undefined;
     let cancelled = false;
-    win.onResized(debouncedSave).then((fn) => {
+    listen("quit-requested", async () => {
+      const dirtyTitles = useTabStore
+        .getState()
+        .tabs.filter((t) => t.isDirty)
+        .map((t) => t.title);
+      if (await confirmCloseDirtyTabs(dirtyTitles)) await getCurrentWindow().destroy();
+    }).then((fn) => {
       if (cancelled) fn();
-      else unlisten1 = fn;
-    });
-    win.onMoved(debouncedSave).then((fn) => {
-      if (cancelled) fn();
-      else unlisten2 = fn;
+      else unlisten = fn;
     });
     return () => {
       cancelled = true;
-      clearTimeout(saveTimer);
-      unlisten1?.();
-      unlisten2?.();
-    };
-  }, []);
-
-  // ウィンドウを閉じる・アプリを終了する前に未保存の変更を確認する
-  useEffect(() => {
-    const win = getCurrentWindow();
-    let cancelled = false;
-    const unlisteners: Array<() => void> = [];
-    const track = (p: Promise<() => void>) =>
-      p.then((fn) => {
-        if (cancelled) fn();
-        else unlisteners.push(fn);
-      });
-    track(
-      win.onCloseRequested(async (event) => {
-        if (!(await confirmCloseAllTabs())) event.preventDefault();
-      })
-    );
-    // Cmd+Q はウィンドウの close を経由しないため、Rust 側でメニューの「終了」をこのイベントに差し替えている
-    track(
-      listen("quit-requested", async () => {
-        if (await confirmCloseAllTabs()) await win.destroy();
-      })
-    );
-    return () => {
-      cancelled = true;
-      unlisteners.forEach((fn) => fn());
+      unlisten?.();
     };
   }, []);
 
@@ -196,20 +179,21 @@ function App() {
   // キーボードショートカット
   useShortcuts({
     // ファイル
-    "cmd+o": async () => {
-      try {
-        const path = await showOpenDialog();
-        if (path) await openPathInTab(path);
-      } catch (err) {
-        showError(`ファイルダイアログを開けませんでした: ${errorMessage(err)}`);
-      }
+    "cmd+o": () => {
+      void openFileWithDialog();
     },
     // 設定
     "cmd+,": () => setSettingsOpen((prev) => !prev),
     // タブ操作
-    "cmd+w": () => {
-      const { activeTabId: aid } = useTabStore.getState();
-      if (aid) void closeTab(aid);
+    "cmd+w": async () => {
+      const { activeTabId: aid, removeTab, tabs } = useTabStore.getState();
+      if (!aid) return;
+      const tab = tabs.find((t) => t.id === aid);
+      if (tab?.isDirty) {
+        const ok = await confirmUnsaved(tab.title);
+        if (!ok) return;
+      }
+      removeTab(aid);
     },
     "ctrl+tab": () => {
       const { tabs, activeTabId: aid, setActiveTab } = useTabStore.getState();
@@ -259,6 +243,7 @@ function App() {
   useEffect(() => {
     const store = useSearchStore.getState();
     store.setCellMatches([]);
+    store.setPdfMatches([]);
     store.setMatchCount(0);
   }, [activeTabId]);
 
@@ -271,8 +256,9 @@ function App() {
         if (cancelled) return;
         if (event.payload.type === "drop") {
           const paths = event.payload.paths ?? [];
+          const { addTab, setActiveTab } = useTabStore.getState();
           for (const path of paths) {
-            openPathInTab(path);
+            handleOpenPath(path, addTab, setActiveTab);
           }
         }
       })
@@ -286,13 +272,49 @@ function App() {
     };
   }, []);
 
+  // Finder / `open -a` 経由のファイルオープン（起動時バッファ＋実行中イベント）
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    const openPaths = (paths: string[]) => {
+      const { addTab, setActiveTab } = useTabStore.getState();
+      for (const path of paths) {
+        void handleOpenPath(path, addTab, setActiveTab);
+      }
+    };
+
+    (async () => {
+      try {
+        const un = await listen<string[]>("open-paths", (event) => {
+          if (cancelled) return;
+          openPaths(event.payload ?? []);
+        });
+        if (cancelled) {
+          un();
+          return;
+        }
+        unlisten = un;
+        // リスナー登録後に ready を通知し、コールドスタート分をフラッシュ
+        await invoke("frontend_ready");
+      } catch (err) {
+        console.error("Failed to wire file-open associations:", err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
   return (
     <div
       className="flex flex-col h-full"
       style={{ color: "var(--text-primary)" }}
     >
       <TitleBar onRecentClick={() => setRecentMenuOpen((prev) => !prev)} />
-      <TabBar />
+      <TabBar onNewTab={() => { void openFileWithDialog(); }} />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar isOpen={sidebarOpen} />
         <main className="flex-1 flex overflow-hidden">
@@ -300,7 +322,10 @@ function App() {
             <ViewerArea />
           ) : (
             <EmptyState
-              onOpenFile={openPathInTab}
+              onOpenFile={async (path) => {
+                const { addTab, setActiveTab } = useTabStore.getState();
+                await handleOpenPath(path, addTab, setActiveTab);
+              }}
             />
           )}
         </main>
@@ -322,7 +347,10 @@ function App() {
       {batchOpen && <BatchConvertDialog />}
       {recentMenuOpen && (
         <RecentFilesMenu
-          onOpen={(file) => openPathInTab(file.path)}
+          onOpen={async (file) => {
+            const { addTab, setActiveTab } = useTabStore.getState();
+            await handleOpenPath(file.path, addTab, setActiveTab);
+          }}
           onClose={() => setRecentMenuOpen(false)}
         />
       )}

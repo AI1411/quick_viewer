@@ -18,10 +18,12 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+tauri-plugin-window-state = "=2.4.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chardetng = "0.1"
@@ -29,10 +31,6 @@ encoding_rs = "0.8"
 notify = "6"
 csv = "1"
 regex = "1"
-lopdf = "0.32"
-pdfium-render = "0.8"
-image = { version = "0.25", default-features = false, features = ["png"] }
-base64 = "0.22"
 pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
 serde_yaml = "0.9"
 calamine = { version = "0.24", features = ["dates"] }
@@ -43,10 +41,15 @@ sha2 = "0.10"
 ammonia = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+base64 = "0.22"
 objc2-core-foundation = "0.3.2"
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGBitmapContext", "CGColorSpace", "CGContext", "CGImage"] }
 objc2-image-io = "0.3.2"
 webp = { version = "0.3.1", default-features = false }
+
+[dev-dependencies]
+# 画像変換のテストで入力画像を作るために使う
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 # libwebp は最適化なしだと大きな画像の WebP 変換に数十秒かかるため、開発ビルドでも最適化する
 [profile.dev.package.libwebp-sys]

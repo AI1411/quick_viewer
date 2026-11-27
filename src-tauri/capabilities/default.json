@@ -12,15 +12,14 @@
     "core:window:allow-unmaximize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-is-maximized",
-    "core:window:allow-set-size",
-    "core:window:allow-set-position",
-    "core:window:allow-inner-size",
-    "core:window:allow-outer-position",
     "core:window:allow-destroy",
     "opener:default",
     "dialog:allow-open",
+    "dialog:allow-ask",
     "dialog:allow-save",
     "dialog:allow-message",
-    "updater:allow-check"
+    "updater:default",
+    "process:default",
+    "window-state:default"
   ]
 }

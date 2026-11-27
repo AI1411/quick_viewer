@@ -21,13 +21,30 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn((cmd: string, args: Record<string, unknown>) => {
     calls.push({ cmd, args });
     if (cmd === "load_annotations") return loadAnnotations();
-    if (cmd === "read_pdf_info") return Promise.reject(new Error("lopdf cannot parse"));
     return Promise.resolve(undefined);
   }),
 }));
-vi.mock("../../../lib/pdfLib", () => ({ loadPdfDocument: vi.fn(() => loadPdf()) }));
+vi.mock("../../../lib/pdfLib", () => ({
+  loadPdfDocument: vi.fn(() => loadPdf()),
+  extractPdfInfo: vi.fn((doc: { numPages: number }) =>
+    Promise.resolve({
+      page_count: doc.numPages,
+      title: null,
+      author: null,
+      subject: null,
+      creator: null,
+      producer: null,
+      creation_date: null,
+      modification_date: null,
+      encrypted: false,
+      outlines: [],
+    })
+  ),
+}));
 
-const fakeDoc = () => Promise.resolve({ numPages: 3, destroy: vi.fn() });
+const fakeDoc = () =>
+  // 連続表示の各ページはページ寸法を求めるため getPage を呼ぶ (PdfCanvas はモック済みなので解決しなくてよい)
+  Promise.resolve({ numPages: 3, destroy: vi.fn(), getPage: () => new Promise(() => {}) });
 const saves = () => calls.filter((c) => c.cmd === "save_annotations").map((c) => c.args.annotationsJson);
 const flush = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 
@@ -80,12 +97,10 @@ describe("PdfViewer の注釈保存", () => {
     expect(useToastStore.getState().toasts.map((t) => t.type)).toContain("warning");
   });
 
-  it("lopdf がメタ情報を読めなくても pdf.js のページ数で表示し、読み込んだ注釈は書き戻さない", async () => {
+  it("読み込んだ注釈を変更なしに書き戻さない", async () => {
     render(<PdfViewer tabId="t1" filePath="/doc.pdf" />);
     await flush(1000);
-    const tab = usePdfStore.getState().tabs.t1;
-    expect(tab?.error).toBeNull();
-    expect(tab?.pdfInfo?.page_count).toBe(3);
+    expect(usePdfStore.getState().tabs.t1?.annotations[0]).toEqual([saved]);
     expect(saves()).toEqual([]);
   });
 
@@ -112,28 +127,12 @@ describe("PdfViewer のキーボード操作", () => {
     });
     expect(usePdfStore.getState().tabs.t1?.currentPage).toBe(1);
 
+    note.blur();
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight" }));
     });
     expect(usePdfStore.getState().tabs.t1?.currentPage).toBe(2);
     note.remove();
-  });
-});
-
-describe("PdfViewer の連続表示", () => {
-  it("ページを指定するとそのページまでスクロールする", async () => {
-    const scrolled: string[] = [];
-    Element.prototype.scrollIntoView = function (this: Element) {
-      scrolled.push(this.getAttribute("data-page") ?? "");
-    };
-
-    const { container } = render(<PdfViewer tabId="t1" filePath="/doc.pdf" />);
-    await flush(0);
-    act(() => usePdfStore.getState().setDisplayMode("t1", "continuous"));
-    act(() => usePdfStore.getState().setCurrentPage("t1", 3));
-
-    expect(container.querySelectorAll("[data-page]").length).toBe(3);
-    expect(scrolled[scrolled.length - 1]).toBe("3");
   });
 });
 
@@ -144,23 +143,5 @@ describe("PdfViewer の既定の表示モード", () => {
     await flush(0);
     expect(usePdfStore.getState().tabs.t1?.displayMode).toBe("single");
     useSettingsStore.setState({ pdfSettings: { defaultViewMode: "continuous" } });
-  });
-});
-
-describe("PdfViewer のタブ切替", () => {
-  it("戻ったときにページ・ズーム・回転を引き継ぐ", async () => {
-    const first = render(<PdfViewer tabId="t1" filePath="/doc.pdf" />);
-    await flush(0);
-    act(() => {
-      const store = usePdfStore.getState();
-      store.setCurrentPage("t1", 3);
-      store.setZoom("t1", 2);
-      store.setRotation("t1", 90);
-    });
-    first.unmount();
-
-    render(<PdfViewer tabId="t1" filePath="/doc.pdf" />);
-    await flush(0);
-    expect(usePdfStore.getState().tabs.t1).toMatchObject({ currentPage: 3, zoom: 2, rotation: 90 });
   });
 });

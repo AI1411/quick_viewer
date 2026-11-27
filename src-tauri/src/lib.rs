@@ -1,5 +1,4 @@
 pub mod csv_commands;
-pub mod utils;
 pub mod file_watcher_commands;
 #[cfg(target_os = "macos")]
 pub mod image_commands;
@@ -8,12 +7,63 @@ mod image_engine;
 pub mod markdown_commands;
 pub mod pdf_commands;
 pub mod persistence_commands;
+pub mod utils;
 pub mod xlsx_commands;
 
 use serde::Serialize;
-use tauri::Emitter;
 use std::fs;
 use std::path::Path;
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager};
+
+/// Paths from Finder / `open -a` that arrived before the webview was ready.
+struct PendingOpenPaths {
+    ready: bool,
+    paths: Vec<String>,
+}
+
+fn urls_to_paths(urls: Vec<tauri::Url>) -> Vec<String> {
+    urls.into_iter()
+        .filter_map(|url| {
+            url.to_file_path()
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+        })
+        .collect()
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+fn emit_or_buffer_open_paths(app: &AppHandle, paths: Vec<String>) {
+    if paths.is_empty() {
+        return;
+    }
+    let pending = app.state::<Mutex<PendingOpenPaths>>();
+    let mut state = match pending.lock() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    if state.ready {
+        drop(state);
+        let _ = app.emit("open-paths", paths);
+    } else {
+        state.paths.extend(paths);
+    }
+}
+
+/// Called once the frontend has subscribed to `open-paths`.
+#[tauri::command]
+fn frontend_ready(app: AppHandle) -> Result<(), String> {
+    let paths = {
+        let pending = app.state::<Mutex<PendingOpenPaths>>();
+        let mut state = pending.lock().map_err(|e| e.to_string())?;
+        state.ready = true;
+        std::mem::take(&mut state.paths)
+    };
+    if !paths.is_empty() {
+        app.emit("open-paths", paths).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
 
 #[derive(Debug, Serialize)]
 pub struct FileInfo {
@@ -83,115 +133,12 @@ fn open_file(path: String) -> Result<FileInfo, String> {
         f.read_exact(&mut buf[..]).map_err(|e| e.to_string())?;
     }
     let format = detect_format(p, &buf)?;
-    Ok(FileInfo { path, name, format, size })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::Path;
-
-    #[test]
-    fn detect_csv_by_extension() {
-        let p = Path::new("data.csv");
-        assert_eq!(detect_format(p, b"col1,col2\n").unwrap(), "csv");
-    }
-
-    #[test]
-    fn detect_tsv_by_extension() {
-        let p = Path::new("data.tsv");
-        assert_eq!(detect_format(p, b"col1\tcol2\n").unwrap(), "tsv");
-    }
-
-    #[test]
-    fn detect_pdf_by_magic() {
-        let p = Path::new("file.bin"); // 拡張子なしでもマジックバイトで判定
-        assert_eq!(detect_format(p, b"%PDF-1.4 ...").unwrap(), "pdf");
-    }
-
-    #[test]
-    fn detect_xlsx_by_magic_and_ext() {
-        let p = Path::new("spreadsheet.xlsx");
-        let magic = [0x50u8, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00];
-        assert_eq!(detect_format(p, &magic).unwrap(), "xlsx");
-    }
-
-    #[test]
-    fn detect_markdown_by_extension() {
-        let p = Path::new("README.md");
-        assert_eq!(detect_format(p, b"# Title\n").unwrap(), "markdown");
-    }
-
-    #[test]
-    fn detect_images_by_extension() {
-        for name in ["photo.jpg", "IMG_0001.HEIC", "scan.tiff", "shot.webp", "raw.dng"] {
-            assert_eq!(detect_format(Path::new(name), b"").unwrap(), "image", "{name}");
-        }
-    }
-
-    #[test]
-    fn unsupported_format_returns_err() {
-        let p = Path::new("movie.mp4");
-        assert!(detect_format(p, b"\x00\x00\x00\x18").is_err());
-    }
-
-    /// 同期コマンドは macOS のメインスレッドで実行され、大きなファイルの処理中は UI が固まる。
-    /// ファイルを読み書きするコマンドは #[tauri::command(async)] にする。
-    #[test]
-    fn file_commands_do_not_run_on_the_main_thread() {
-        let sync_command = concat!("#[tauri::", "command]\n");
-        for (name, src) in [
-            ("lib.rs", include_str!("lib.rs")),
-            ("csv_commands.rs", include_str!("csv_commands.rs")),
-            ("pdf_commands.rs", include_str!("pdf_commands.rs")),
-            ("markdown_commands.rs", include_str!("markdown_commands.rs")),
-            ("xlsx_commands.rs", include_str!("xlsx_commands.rs")),
-            ("persistence_commands.rs", include_str!("persistence_commands.rs")),
-            ("image_commands.rs", include_str!("image_commands.rs")),
-        ] {
-            assert!(!src.contains(sync_command), "{name} に同期コマンドがある");
-        }
-    }
-
-    /// リリースで公開する latest.json (scripts/update-manifest.mjs の出力) を
-    /// アップデータが読めて、この Mac 向けのダウンロード先を返せること
-    #[test]
-    fn update_manifest_from_release_script_is_accepted_by_the_updater() {
-        let manifest = r#"{
-          "version": "2.0.1",
-          "notes": "https://github.com/AI1411/quick_viewer/releases/tag/v2.0.1",
-          "pub_date": "2026-11-26T14:14:33Z",
-          "platforms": {
-            "darwin-aarch64": {
-              "url": "https://github.com/AI1411/quick_viewer/releases/download/v2.0.1/QuickView_2.0.1_aarch64.dmg",
-              "signature": ""
-            }
-          }
-        }"#;
-        let release: tauri_plugin_updater::RemoteRelease = serde_json::from_str(manifest).unwrap();
-        assert_eq!(release.version.to_string(), "2.0.1");
-        assert!(release.download_url("darwin-aarch64").unwrap().as_str().ends_with("QuickView_2.0.1_aarch64.dmg"));
-    }
-
-    #[test]
-    fn navigation_allows_only_app_entry() {
-        let ok = |u: &str| is_app_entry_url(&tauri::Url::parse(u).unwrap());
-        assert!(ok("tauri://localhost"));
-        assert!(ok("tauri://localhost/"));
-        assert!(ok("tauri://localhost/#usage"));
-        assert!(ok("http://tauri.localhost/index.html"));
-        assert!(!ok("tauri://localhost/docs/guide.md"));
-        assert!(!ok("https://evil.example/"));
-        assert!(!ok("https://localhost.evil.example/"));
-        assert!(!ok("file:///etc/passwd"));
-        assert!(!ok("about:blank"));
-    }
-
-    #[test]
-    fn greet_returns_greeting() {
-        let result = format!("Hello, {}! You've been greeted from Rust!", "QuickView");
-        assert!(result.contains("QuickView"));
-    }
+    Ok(FileInfo {
+        path,
+        name,
+        format,
+        size,
+    })
 }
 
 /// webview の遷移先をアプリ自身のトップページに限定する。
@@ -276,25 +223,35 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(file_watcher_commands::WatcherState(std::sync::Mutex::new(
             std::collections::HashMap::new(),
         )))
+        .manage(csv_commands::CsvCache::default())
+        .manage(Mutex::new(PendingOpenPaths {
+            ready: false,
+            paths: Vec::new(),
+        }))
         .invoke_handler(tauri::generate_handler![
             open_file,
+            frontend_ready,
             csv_commands::detect_encoding,
             csv_commands::read_csv,
             csv_commands::read_csv_chunk,
+            csv_commands::close_csv,
             csv_commands::filter_csv,
+            csv_commands::sort_csv,
+            csv_commands::search_csv,
             csv_commands::export_csv,
-            pdf_commands::read_pdf_info,
-            pdf_commands::read_pdf_page,
             pdf_commands::read_pdf_bytes,
             pdf_commands::save_annotations,
             pdf_commands::load_annotations,
+            pdf_commands::export_annotations,
+            pdf_commands::import_annotations,
             markdown_commands::read_markdown,
             markdown_commands::save_markdown,
             markdown_commands::render_markdown_string,
-            markdown_commands::read_local_image,
             xlsx_commands::read_xlsx,
             xlsx_commands::read_xlsx_sheet,
             xlsx_commands::export_xlsx_sheet_as_csv,
@@ -315,6 +272,116 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             image_commands::convert_images,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+            if let tauri::RunEvent::Opened { urls } = event {
+                emit_or_buffer_open_paths(app, urls_to_paths(urls));
+            } else {
+                let _ = app;
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+            {
+                let _ = (app, event);
+            }
+        });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn detect_csv_by_extension() {
+        let p = Path::new("data.csv");
+        assert_eq!(detect_format(p, b"col1,col2\n").unwrap(), "csv");
+    }
+
+    #[test]
+    fn detect_tsv_by_extension() {
+        let p = Path::new("data.tsv");
+        assert_eq!(detect_format(p, b"col1\tcol2\n").unwrap(), "tsv");
+    }
+
+    #[test]
+    fn detect_pdf_by_magic() {
+        let p = Path::new("file.bin"); // 拡張子なしでもマジックバイトで判定
+        assert_eq!(detect_format(p, b"%PDF-1.4 ...").unwrap(), "pdf");
+    }
+
+    #[test]
+    fn detect_xlsx_by_magic_and_ext() {
+        let p = Path::new("spreadsheet.xlsx");
+        let magic = [0x50u8, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00];
+        assert_eq!(detect_format(p, &magic).unwrap(), "xlsx");
+    }
+
+    #[test]
+    fn detect_markdown_by_extension() {
+        let p = Path::new("README.md");
+        assert_eq!(detect_format(p, b"# Title\n").unwrap(), "markdown");
+    }
+
+    #[test]
+    fn detect_images_by_extension() {
+        for name in ["photo.jpg", "IMG_0001.HEIC", "scan.tiff", "shot.webp", "raw.dng"] {
+            assert_eq!(detect_format(Path::new(name), b"").unwrap(), "image", "{name}");
+        }
+    }
+
+    #[test]
+    fn unsupported_format_returns_err() {
+        let p = Path::new("movie.mp4");
+        assert!(detect_format(p, b"\x00\x00\x00\x18").is_err());
+    }
+
+    /// 同期コマンドは macOS のメインスレッドで実行され、大きなファイルの処理中は UI が固まる。
+    /// ファイルを読み書きするコマンドは #[tauri::command(async)] にする。
+    #[test]
+    fn file_commands_do_not_run_on_the_main_thread() {
+        let sync_command = concat!("#[tauri::", "command]\n");
+        // frontend_ready はファイルを読まず、溜めておいたパスをフロントへ流すだけなので同期のままでよい
+        let lib = include_str!("lib.rs").replace(&format!("{sync_command}fn frontend_ready"), "");
+        for (name, src) in [
+            ("lib.rs", lib.as_str()),
+            ("csv_commands.rs", include_str!("csv_commands.rs")),
+            ("pdf_commands.rs", include_str!("pdf_commands.rs")),
+            ("markdown_commands.rs", include_str!("markdown_commands.rs")),
+            ("xlsx_commands.rs", include_str!("xlsx_commands.rs")),
+            ("persistence_commands.rs", include_str!("persistence_commands.rs")),
+            ("image_commands.rs", include_str!("image_commands.rs")),
+        ] {
+            assert!(!src.contains(sync_command), "{name} に同期コマンドがある");
+        }
+    }
+
+    #[test]
+    fn navigation_allows_only_app_entry() {
+        let ok = |u: &str| is_app_entry_url(&tauri::Url::parse(u).unwrap());
+        assert!(ok("tauri://localhost"));
+        assert!(ok("tauri://localhost/"));
+        assert!(ok("tauri://localhost/#usage"));
+        assert!(ok("http://tauri.localhost/index.html"));
+        assert!(!ok("tauri://localhost/docs/guide.md"));
+        assert!(!ok("https://evil.example/"));
+        assert!(!ok("https://localhost.evil.example/"));
+        assert!(!ok("file:///etc/passwd"));
+        assert!(!ok("about:blank"));
+    }
+
+    #[test]
+    fn urls_to_paths_converts_file_urls() {
+        let url = tauri::Url::parse("file:///tmp/sample.csv").unwrap();
+        let paths = urls_to_paths(vec![url]);
+        assert_eq!(paths, vec!["/tmp/sample.csv"]);
+    }
+
+    #[test]
+    fn urls_to_paths_skips_non_file_urls() {
+        let url = tauri::Url::parse("https://example.com/a.csv").unwrap();
+        let paths = urls_to_paths(vec![url]);
+        assert!(paths.is_empty());
+    }
 }

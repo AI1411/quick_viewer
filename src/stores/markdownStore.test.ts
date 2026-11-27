@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useMarkdownStore } from "./markdownStore";
+import { useSettingsStore } from "./settingsStore";
 
 const MOCK: import("../types").MarkdownResult = {
   html: "<h1 id=\"hello\">Hello</h1>",
@@ -12,6 +13,9 @@ const MOCK: import("../types").MarkdownResult = {
 describe("markdownStore", () => {
   beforeEach(() => {
     useMarkdownStore.setState({ tabs: {} });
+    useSettingsStore.setState({
+      markdownSettings: { defaultView: "preview" },
+    });
   });
 
   it("initTab creates blank entry", () => {
@@ -58,14 +62,23 @@ describe("markdownStore", () => {
 describe("viewMode / editContent / isDirty", () => {
   beforeEach(() => {
     useMarkdownStore.setState({ tabs: {} });
+    useSettingsStore.setState({
+      markdownSettings: { defaultView: "preview" },
+    });
   });
 
-  it("initTab initializes viewMode=preview, editContent=null, isDirty=false", () => {
+  it("initTab initializes viewMode from settings, editContent=null, isDirty=false", () => {
     useMarkdownStore.getState().initTab("e1");
     const tab = useMarkdownStore.getState().tabs["e1"];
     expect(tab.viewMode).toBe("preview");
     expect(tab.editContent).toBeNull();
     expect(tab.isDirty).toBe(false);
+  });
+
+  it("initTab uses markdownSettings.defaultView", () => {
+    useSettingsStore.setState({ markdownSettings: { defaultView: "split" } });
+    useMarkdownStore.getState().initTab("e1");
+    expect(useMarkdownStore.getState().tabs["e1"].viewMode).toBe("split");
   });
 
   it("setViewMode updates viewMode", () => {

@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useMarkdownStore } from "../../stores/markdownStore";
 import { useTabStore } from "../../stores/tabStore";
-import { useSettingsStore } from "../../stores/settingsStore";
+import { showError } from "../../stores/toastStore";
 import { readMarkdown, saveMarkdown, renderMarkdownString } from "../../lib/markdownCommands";
 import { useShortcuts } from "../../hooks/useShortcuts";
-import { showError, showWarning } from "../../stores/toastStore";
-import { errorMessage } from "../../lib/errorUtils";
 import { RenderedView } from "./RenderedView";
 import { TocSidebar } from "./TocSidebar";
 import { SourceEditor } from "./SourceEditor";
@@ -15,16 +13,16 @@ import type { ViewMode } from "../../types";
 interface MarkdownViewerProps {
   tabId: string;
   filePath: string;
+  isActive?: boolean;
 }
 
-export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
-  const { initTab, setData, setLoading, setError, setViewMode, setEditContent, setDirty } =
-    useMarkdownStore.getState();
-  const { setDirty: setTabDirty } = useTabStore.getState();
+export function MarkdownViewer({ tabId, filePath, isActive = true }: MarkdownViewerProps) {
   const tab = useMarkdownStore((s) => s.tabs[tabId]);
   const containerRef = useRef<HTMLDivElement>(null);
+  const isSavingRef = useRef(false);
   const [activeAnchor, setActiveAnchor] = useState<string | null>(null);
   const [liveHtml, setLiveHtml] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   // プレビューの描画要求の通し番号。遅れて返ってきた古い結果で新しい結果を上書きしない
   const previewSeqRef = useRef(0);
   const renderPreview = (content: string) => {
@@ -37,7 +35,8 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
   };
 
   useEffect(() => {
-    initTab(tabId, useSettingsStore.getState().markdownSettings.defaultView);
+    const { initTab, setData, setLoading, setError } = useMarkdownStore.getState();
+    initTab(tabId);
     // ストアのエントリはアンマウント後も残るので、前回の読込エラーをここで消す
     setError(tabId, null);
     setLoading(tabId, true);
@@ -65,7 +64,7 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
 
     const timer = setTimeout(() => renderPreview(content), 300);
     return () => clearTimeout(timer);
-  }, [tab?.editContent, tab?.viewMode, tabId]);
+  }, [tab?.editContent, tab?.data?.raw, tab?.viewMode, tabId]);
 
   function handleScroll() {
     if (!tab?.data?.toc || !containerRef.current) return;
@@ -86,6 +85,7 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
   }
 
   function handleViewModeChange(mode: ViewMode) {
+    const { setEditContent, setViewMode } = useMarkdownStore.getState();
     const state = useMarkdownStore.getState().tabs[tabId];
     if (mode !== "preview" && state?.editContent === null && state?.data) {
       setEditContent(tabId, state.data.raw);
@@ -99,6 +99,8 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
   }
 
   function handleContentChange(content: string) {
+    const { setEditContent, setDirty } = useMarkdownStore.getState();
+    const { setDirty: setTabDirty } = useTabStore.getState();
     setEditContent(tabId, content);
     const raw = useMarkdownStore.getState().tabs[tabId]?.data?.raw ?? null;
     const dirty = raw !== null && content !== raw;
@@ -106,32 +108,43 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
     setTabDirty(tabId, dirty);
   }
 
-  // 保存中もエディタを表示したままにする (キャレット位置と undo 履歴を保つ)。
-  // 失敗してもエラー画面に切り替えず、編集内容を残したまま通知する。
-  useShortcuts({
-    "cmd+s": async () => {
-      const state = useMarkdownStore.getState().tabs[tabId];
-      if (!state?.isDirty || state.editContent === null) return;
-      const content = state.editContent;
-      try {
-        await saveMarkdown(filePath, content, state.data?.encoding);
-      } catch (err) {
-        showError(`保存に失敗しました: ${errorMessage(err)}`);
-        return;
-      }
-      try {
-        const result = await readMarkdown(filePath);
-        setData(tabId, result);
-      } catch (err) {
-        showWarning(`保存しましたが、再読み込みに失敗しました: ${errorMessage(err)}`);
-      }
-      // 保存中に続けて入力された分は未保存のまま残す
-      const latest = useMarkdownStore.getState().tabs[tabId]?.editContent;
-      const dirty = latest != null && latest !== content;
-      setDirty(tabId, dirty);
-      setTabDirty(tabId, dirty);
+  useShortcuts(
+    {
+      "cmd+s": () => {
+        const { setData, setDirty } = useMarkdownStore.getState();
+        const { setDirty: setTabDirty } = useTabStore.getState();
+        const state = useMarkdownStore.getState().tabs[tabId];
+        if (!state?.isDirty || state.editContent === null || isSavingRef.current) return;
+        const content = state.editContent;
+        const encoding = state.data?.encoding;
+        isSavingRef.current = true;
+        setIsSaving(true);
+        saveMarkdown(filePath, content, encoding)
+          .then(() => renderMarkdownString(content))
+          .then((result) => {
+            setData(tabId, {
+              ...result,
+              // preserve file encoding; render_markdown_string always reports UTF-8
+              encoding: encoding ?? result.encoding,
+            });
+            setLiveHtml(result.html);
+            // 保存中に続けて入力された分は未保存のまま残す
+            const latest = useMarkdownStore.getState().tabs[tabId]?.editContent;
+            const dirty = latest != null && latest !== content;
+            setDirty(tabId, dirty);
+            setTabDirty(tabId, dirty);
+          })
+          .catch((err: unknown) => {
+            showError(`保存に失敗しました: ${String(err)}`);
+          })
+          .finally(() => {
+            isSavingRef.current = false;
+            setIsSaving(false);
+          });
+      },
     },
-  });
+    isActive
+  );
 
   if (!tab || tab.isLoading) {
     return (
@@ -187,11 +200,18 @@ export function MarkdownViewer({ tabId, filePath }: MarkdownViewerProps) {
             </button>
           ))}
         </div>
-        {tab.isDirty && (
-          <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
-            未保存
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {isSaving && (
+            <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+              保存中...
+            </span>
+          )}
+          {!isSaving && tab.isDirty && (
+            <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+              未保存
+            </span>
+          )}
+        </div>
       </div>
 
       {/* メインコンテンツ */}

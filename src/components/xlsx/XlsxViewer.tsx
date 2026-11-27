@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useCallback, useState, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { sortByColumn } from "../../lib/tableSort";
 import { save } from "@tauri-apps/plugin-dialog";
 import { VirtualTable } from "../csv/VirtualTable";
 import { FilterPopover } from "../csv/FilterPopover";
@@ -11,12 +10,22 @@ import { useXlsxStore } from "../../stores/xlsxStore";
 import { useSearchStore } from "../../stores/searchStore";
 import { showError } from "../../stores/toastStore";
 import { buildRegex } from "../../lib/searchHighlight";
+import { compareCellValues } from "../../lib/compareCellValues";
 import type { CellMatch } from "../../stores/searchStore";
 import type { XlsxInfo, XlsxSheetData, XlsxCell, FilterCondition } from "../../types";
+
+function xlsxSortKey(cell: XlsxCell | undefined): string {
+  if (!cell) return "";
+  if (cell.cell_type === "number" || cell.cell_type === "integer") {
+    return cell.raw;
+  }
+  return cell.value;
+}
 
 interface XlsxViewerProps {
   tabId: string;
   filePath: string;
+  isActive?: boolean;
 }
 
 function colLetter(index: number): string {
@@ -45,8 +54,7 @@ function matchesFilter(value: string, cond: FilterCondition): boolean {
   }
 }
 
-export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
-  const store = useXlsxStore.getState();
+export function XlsxViewer({ tabId, filePath, isActive = true }: XlsxViewerProps) {
   const tab = useXlsxStore((s) => s.tabs[tabId]);
   const [filterPopover, setFilterPopover] = useState<{
     column: string;
@@ -55,30 +63,26 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   } | null>(null);
 
   useEffect(() => {
-    store.initTab(tabId);
-  }, [tabId]);
-
-  useEffect(() => {
+    const { initTab, setLoading, setInfo, setSheetData, setError } = useXlsxStore.getState();
+    initTab(tabId);
     if (!filePath) return;
     let cancelled = false;
-    store.setLoading(tabId, true);
+    setLoading(tabId, true);
     invoke<XlsxInfo>("read_xlsx", { path: filePath })
       .then((info) => {
         if (cancelled) return;
-        store.setInfo(tabId, info);
-        // タブ切替から戻ったときは前に表示していたシートを開く
-        const previous = useXlsxStore.getState().tabs[tabId]?.activeSheetName;
-        const sheet = info.sheets.find((s) => s.name === previous) ?? info.sheets[0];
-        if (sheet) {
+        setInfo(tabId, info);
+        const firstSheet = info.sheets[0];
+        if (firstSheet) {
           return invoke<XlsxSheetData>("read_xlsx_sheet", {
             path: filePath,
-            sheetName: sheet.name,
+            sheetName: firstSheet.name,
           }).then((data) => {
-            if (!cancelled) store.setSheetData(tabId, data, sheet.name);
+            if (!cancelled) setSheetData(tabId, data, firstSheet.name);
           });
         }
       })
-      .catch((e) => { if (!cancelled) store.setError(tabId, String(e)); });
+      .catch((e) => { if (!cancelled) setError(tabId, String(e)); });
     return () => { cancelled = true; };
   }, [tabId, filePath]);
 
@@ -88,48 +92,62 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
     (sheetName: string) => {
       // 読み込みに失敗した後は、同じシートを選び直して再試行できるようにする
       if (sheetName === tab?.activeSheetName && !tab?.error) return;
-      store.setLoading(tabId, true);
+      const { setLoading, setSheetData, setError } = useXlsxStore.getState();
+      setLoading(tabId, true);
       const seq = ++sheetRequestSeqRef.current;
       invoke<XlsxSheetData>("read_xlsx_sheet", { path: filePath, sheetName })
         .then((data) => {
           if (seq !== sheetRequestSeqRef.current) return;
-          store.setSheetData(tabId, data, sheetName);
+          setSheetData(tabId, data, sheetName);
         })
         .catch((e) => {
           if (seq !== sheetRequestSeqRef.current) return;
-          store.setError(tabId, String(e));
+          setError(tabId, String(e));
         });
     },
     [tabId, filePath, tab?.activeSheetName, tab?.error]
   );
 
   const headers = useMemo((): string[] => {
-    const cols = tab?.sheetData?.loaded_cols ?? 0;
+    const cols = tab?.sheetData?.loaded_cols ?? tab?.sheetData?.total_cols ?? 0;
     return Array.from({ length: cols }, (_, i) => colLetter(i));
-  }, [tab?.sheetData?.loaded_cols]);
+  }, [tab?.sheetData?.loaded_cols, tab?.sheetData?.total_cols]);
 
-  const filters = tab?.filters ?? [];
+  const filters = useMemo(() => tab?.filters ?? [], [tab?.filters]);
 
-  // 固定行より下の行を絞り込み・並べ替えし、各行のシート上の行番号も求める
+  // 固定行より下の行を絞り込み・並べ替えし、各行の元の行番号も一緒に運ぶ
   const { filteredSortedRows, rowNumbers } = useMemo(() => {
     if (!tab?.sheetData) return { filteredSortedRows: [] as XlsxCell[][], rowNumbers: [] as number[] };
     const freezeRowCount = tab.sheetData.freeze_pane.rows;
-    const body = tab.sheetData.rows.slice(freezeRowCount);
-    let order = body.map((_, i) => i);
+    let rows = tab.sheetData.rows
+      .slice(freezeRowCount)
+      .map((cells, i) => ({ cells, rowNumber: freezeRowCount + i + 1 }));
+
     if (filters.length > 0) {
-      order = order.filter((i) =>
-        filters.every((cond) => matchesFilter(body[i][cond.column_index]?.value ?? "", cond))
+      rows = rows.filter(({ cells }) =>
+        filters.every((cond) => {
+          const colIdx = headers.indexOf(cond.column);
+          if (colIdx === -1) return false;
+          return matchesFilter(cells[colIdx]?.value ?? "", cond);
+        })
       );
     }
+
     if (tab.sort) {
       const { columnIndex, direction } = tab.sort;
-      order = sortByColumn(order, (i) => body[i][columnIndex]?.value ?? "", direction);
+      rows.sort((a, b) => {
+        const cmp = compareCellValues(
+          xlsxSortKey(a.cells[columnIndex]),
+          xlsxSortKey(b.cells[columnIndex])
+        );
+        return direction === "asc" ? cmp : -cmp;
+      });
     }
     return {
-      filteredSortedRows: order.map((i) => body[i]),
-      rowNumbers: order.map((i) => freezeRowCount + i + 1),
+      filteredSortedRows: rows.map((r) => r.cells),
+      rowNumbers: rows.map((r) => r.rowNumber),
     };
-  }, [tab?.sheetData, tab?.sort, filters]);
+  }, [tab?.sheetData, tab?.sort, filters, headers]);
 
   const frozenDisplayRows = useMemo((): string[][] => {
     if (!tab?.sheetData) return [];
@@ -161,6 +179,7 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   const scrollToRowRef = useRef<((index: number) => void) | null>(null);
 
   useEffect(() => {
+    if (!isActive) return;
     if (!searchIsOpen || !searchQuery) {
       useSearchStore.getState().setCellMatches([]);
       return;
@@ -178,14 +197,15 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
       }
     }
     useSearchStore.getState().setCellMatches(matches);
-  }, [searchIsOpen, searchQuery, searchUseRegex, searchCaseSensitive, displayRows, headers]);
+  }, [isActive, searchIsOpen, searchQuery, searchUseRegex, searchCaseSensitive, displayRows, headers]);
 
   useEffect(() => {
+    if (!isActive) return;
     const matches = useSearchStore.getState().cellMatches;
     if (matches.length === 0 || !scrollToRowRef.current) return;
     const match = matches[currentMatchIndex];
     if (match) scrollToRowRef.current(match.row);
-  }, [currentMatchIndex]);
+  }, [isActive, currentMatchIndex]);
 
   const searchMatchSet = useMemo(() => {
     const set = new Set<string>();
@@ -209,13 +229,14 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
 
   const handleSort = useCallback(
     (colIndex: number) => {
+      const { setSort } = useXlsxStore.getState();
       const current = tab?.sort;
       if (!current || current.columnIndex !== colIndex) {
-        store.setSort(tabId, { columnIndex: colIndex, direction: "asc" });
+        setSort(tabId, { columnIndex: colIndex, direction: "asc" });
       } else if (current.direction === "asc") {
-        store.setSort(tabId, { columnIndex: colIndex, direction: "desc" });
+        setSort(tabId, { columnIndex: colIndex, direction: "desc" });
       } else {
-        store.setSort(tabId, null);
+        setSort(tabId, null);
       }
     },
     [tabId, tab?.sort]
@@ -223,17 +244,18 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
 
   const handleColumnResize = useCallback(
     (colIndex: number, width: number) => {
-      store.setColumnWidth(tabId, colIndex, width);
+      useXlsxStore.getState().setColumnWidth(tabId, colIndex, width);
     },
     [tabId]
   );
 
   const handleCellClick = useCallback(
     (row: number, col: number, shift: boolean) => {
+      const { setSelection } = useXlsxStore.getState();
       if (shift && tab?.selectedAnchor) {
-        store.setSelection(tabId, tab.selectedAnchor, { row, col });
+        setSelection(tabId, tab.selectedAnchor, { row, col });
       } else {
-        store.setSelection(tabId, { row, col }, null);
+        setSelection(tabId, { row, col }, null);
       }
     },
     [tabId, tab?.selectedAnchor]
@@ -249,25 +271,28 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   const handleFilterApply = useCallback(
     (cond: FilterCondition) => {
       const newFilters = [
-        ...(tab?.filters ?? []).filter((f) => f.column_index !== cond.column_index),
+        ...(tab?.filters ?? []).filter((f) => f.column !== cond.column),
         cond,
       ];
-      store.setFilters(tabId, newFilters);
+      useXlsxStore.getState().setFilters(tabId, newFilters);
       setFilterPopover(null);
     },
     [tabId, tab?.filters]
   );
 
   const handleFilterClear = useCallback(
-    (columnIndex: number) => {
-      store.setFilters(tabId, (tab?.filters ?? []).filter((f) => f.column_index !== columnIndex));
+    (target: FilterCondition) => {
+      useXlsxStore.getState().setFilters(
+        tabId,
+        (tab?.filters ?? []).filter((f) => f !== target)
+      );
       setFilterPopover(null);
     },
     [tabId, tab?.filters]
   );
 
   const handleClearAllFilters = useCallback(() => {
-    store.clearFilters(tabId);
+    useXlsxStore.getState().clearFilters(tabId);
   }, [tabId]);
 
   const handleExport = useCallback(async () => {
@@ -304,17 +329,21 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
   if (tab.error) {
     // シートの読み込みだけ失敗した場合も、シートタブから別のシートへ移れるようにする
     return (
-      <div className="flex flex-col flex-1 overflow-hidden" style={{ backgroundColor: "var(--viewer-bg)" }}>
-        <div className="flex-1 flex items-center justify-center text-sm" style={{ color: "#ef4444" }}>
+      <div
+        className="flex flex-col flex-1 overflow-hidden"
+        style={{ backgroundColor: "var(--viewer-bg)" }}
+      >
+        <div
+          className="flex-1 flex items-center justify-center text-sm"
+          style={{ color: "#ef4444" }}
+        >
           エラー: {tab.error}
         </div>
-        {(tab.info?.sheets.length ?? 0) > 0 && (
-          <SheetTabs
-            sheets={tab.info?.sheets ?? []}
-            activeSheetName={tab.activeSheetName}
-            onSheetSelect={handleSheetSelect}
-          />
-        )}
+        <SheetTabs
+          sheets={tab.info?.sheets ?? []}
+          activeSheetName={tab.activeSheetName}
+          onSheetSelect={handleSheetSelect}
+        />
       </div>
     );
   }
@@ -323,6 +352,11 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
 
   const freezeCols = tab.sheetData.freeze_pane.cols;
   const freezeRowCount = tab.sheetData.freeze_pane.rows;
+  const loadedRows = tab.sheetData.rows.length;
+  const loadedCols = tab.sheetData.loaded_cols ?? tab.sheetData.total_cols;
+  const popoverFilter = filterPopover
+    ? (filters.find((f) => f.column === filterPopover.column) ?? null)
+    : null;
 
   return (
     <div
@@ -336,13 +370,12 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
         onClearAll={handleClearAllFilters}
         onExport={handleExport}
       />
-      {(tab.sheetData.rows.length < tab.sheetData.total_rows ||
-        tab.sheetData.loaded_cols < tab.sheetData.total_cols) && (
+      {(loadedRows < tab.sheetData.total_rows || loadedCols < tab.sheetData.total_cols) && (
         <div
           className="px-3 py-1 text-xs shrink-0"
           style={{ color: "var(--text-secondary)", backgroundColor: "var(--toolbar-bg)", borderBottom: "1px solid var(--border-color)" }}
         >
-          先頭 {tab.sheetData.rows.length.toLocaleString()} 行 × {tab.sheetData.loaded_cols.toLocaleString()} 列を表示（全{" "}
+          先頭 {loadedRows.toLocaleString()} 行 × {loadedCols.toLocaleString()} 列を表示（全{" "}
           {tab.sheetData.total_rows.toLocaleString()} 行 × {tab.sheetData.total_cols.toLocaleString()} 列）
         </div>
       )}
@@ -375,9 +408,11 @@ export function XlsxViewer({ tabId, filePath }: XlsxViewerProps) {
           column={filterPopover.column}
           columnIndex={filterPopover.columnIndex}
           anchorRect={filterPopover.anchorRect}
-          existing={filters.find((f) => f.column_index === filterPopover.columnIndex) ?? null}
+          existing={popoverFilter}
           onApply={handleFilterApply}
-          onClear={() => handleFilterClear(filterPopover.columnIndex)}
+          onClear={() => {
+            if (popoverFilter) handleFilterClear(popoverFilter);
+          }}
           onClose={() => setFilterPopover(null)}
         />
       )}

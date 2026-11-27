@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { MarkdownResult, ViewMode } from "../types";
+import { useSettingsStore } from "./settingsStore";
 
 interface MarkdownTabState {
   data: MarkdownResult | null;
@@ -12,8 +13,7 @@ interface MarkdownTabState {
 
 interface MarkdownStore {
   tabs: Record<string, MarkdownTabState>;
-  /** 既にエントリがあれば何もしない。新規作成時の表示モードは viewMode (既定は preview) */
-  initTab: (tabId: string, viewMode?: ViewMode) => void;
+  initTab: (tabId: string) => void;
   setData: (tabId: string, data: MarkdownResult) => void;
   setLoading: (tabId: string, isLoading: boolean) => void;
   setError: (tabId: string, error: string | null) => void;
@@ -24,23 +24,25 @@ interface MarkdownStore {
   discardEdits: (tabId: string) => void;
 }
 
+function defaultTabState(): MarkdownTabState {
+  return {
+    data: null,
+    isLoading: false,
+    error: null,
+    viewMode: useSettingsStore.getState().markdownSettings.defaultView,
+    editContent: null,
+    isDirty: false,
+  };
+}
+
 export const useMarkdownStore = create<MarkdownStore>((set) => ({
   tabs: {},
 
-  initTab: (tabId, viewMode = "preview") =>
+  initTab: (tabId) =>
     set((s) => ({
       tabs: {
         ...s.tabs,
-        [tabId]:
-          s.tabs[tabId] ??
-          {
-            data: null,
-            isLoading: false,
-            error: null,
-            viewMode,
-            editContent: null,
-            isDirty: false,
-          },
+        [tabId]: s.tabs[tabId] ?? defaultTabState(),
       },
     })),
 
