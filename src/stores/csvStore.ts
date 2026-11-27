@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { CsvData, FilterCondition } from "../types";
+import type { CsvData, FilterCondition, ScrollPosition } from "../types";
 
 export type SortDirection = "asc" | "desc" | null;
 
@@ -25,6 +25,8 @@ interface CsvTabState {
   sort: SortState | null;
   // ピン留め列数（左から N 列を固定）
   pinnedCount: number;
+  /** 表を最後に閉じたときのスクロール位置。再読み込みで表を作り直すときに、ここから表示し直す */
+  scroll: ScrollPosition | null;
   // 選択セル（範囲選択は anchor + focus で表現）
   selectedAnchor: SelectedCell | null;
   selectedFocus: SelectedCell | null;
@@ -54,6 +56,7 @@ interface CsvStore {
   setColumnWidth: (tabId: string, colIndex: number, width: number) => void;
   setSort: (tabId: string, sort: SortState | null) => void;
   setPinnedCount: (tabId: string, count: number) => void;
+  keepScroll: (tabId: string, scroll: ScrollPosition) => void;
   setSelection: (
     tabId: string,
     anchor: SelectedCell | null,
@@ -89,6 +92,7 @@ const defaultTabState = (): CsvTabState => ({
   columnWidths: {},
   sort: null,
   pinnedCount: 0,
+  scroll: null,
   selectedAnchor: null,
   selectedFocus: null,
   loadedRows: 0,
@@ -106,7 +110,7 @@ export const useCsvStore = create<CsvStore>((set) => ({
   tabs: {},
 
   // 再読み込み (ファイルの外部変更の反映) でビューアがマウントし直されたときは、
-  // 並べ替え・絞り込み・列幅・ピン留めを引き継ぐ。行のデータは読み直す
+  // 並べ替え・絞り込み・列幅・ピン留め・スクロール位置を引き継ぐ。行のデータは読み直す
   initTab: (tabId) =>
     set((state) => {
       const prev = state.tabs[tabId];
@@ -121,6 +125,7 @@ export const useCsvStore = create<CsvStore>((set) => ({
                 filters: prev.filters,
                 columnWidths: prev.columnWidths,
                 pinnedCount: prev.pinnedCount,
+                scroll: prev.scroll,
               }
             : next,
         },
@@ -174,6 +179,16 @@ export const useCsvStore = create<CsvStore>((set) => ({
         },
       },
     })),
+
+  // データを表示していた表の位置だけを覚える。再読み込みの直後は、作り直されたビューアが
+  // 読み直す前のデータで表を一瞬だけ描画し、その表も自分の位置を通知してくる。
+  // それで引き継ぐ位置を上書きしないよう、データを捨てた後の通知は受け取らない
+  keepScroll: (tabId, scroll) =>
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab?.data) return state;
+      return { tabs: { ...state.tabs, [tabId]: { ...tab, scroll } } };
+    }),
 
   setSort: (tabId, sort) =>
     set((state) => ({

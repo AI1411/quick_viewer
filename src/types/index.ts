@@ -33,6 +33,12 @@ export interface CsvChunk {
   total_rows: number;
 }
 
+/** 表のスクロール位置 (px) */
+export interface ScrollPosition {
+  top: number;
+  left: number;
+}
+
 export interface FilterCondition {
   /** 表示用の列名。同じ名前の列があり得るため、列の特定には column_index を使う */
   column: string;

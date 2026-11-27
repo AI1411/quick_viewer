@@ -59,6 +59,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import { CsvViewer } from "../CsvViewer";
+import { ROW_HEIGHT } from "../VirtualTable";
 import { useCsvStore } from "../../../stores/csvStore";
 import { useSettingsStore } from "../../../stores/settingsStore";
 import { useSearchStore } from "../../../stores/searchStore";
@@ -258,6 +259,80 @@ describe("CsvViewer の再読み込み", () => {
     expect(tab.isSorting).toBe(false);
     expect(tab.data?.rows.length).toBe(100);
     vi.mocked(invoke).mockImplementation(original);
+  });
+});
+
+describe("CsvViewer の再読み込みとスクロール位置", () => {
+  const originalScrollTo = Element.prototype.scrollTo;
+  beforeEach(() => {
+    // jsdom は scrollTo を実装していない。ブラウザと同じく、指定された軸の位置だけを動かす
+    Element.prototype.scrollTo = function (this: Element, options?: ScrollToOptions | number) {
+      if (typeof options !== "object") return;
+      if (options.top != null) this.scrollTop = options.top;
+      if (options.left != null) this.scrollLeft = options.left;
+    } as Element["scrollTo"];
+  });
+  afterEach(() => {
+    Element.prototype.scrollTo = originalScrollTo;
+  });
+
+  const scroller = (container: HTMLElement) => container.querySelector<HTMLElement>(".overflow-auto.relative");
+  const position = (container: HTMLElement) => {
+    const el = scroller(container);
+    return el && { top: el.scrollTop, left: el.scrollLeft };
+  };
+  function scrollTable(container: HTMLElement, to: { top: number; left: number }) {
+    const el = scroller(container)!;
+    el.scrollTop = to.top;
+    el.scrollLeft = to.left;
+    fireEvent.scroll(el);
+  }
+  const callsAfter = (start: number, cmd: string) => calls.slice(start).filter((c) => c.cmd === cmd);
+  const at150 = { top: 150 * ROW_HEIGHT, left: 40 };
+
+  it("スクロール位置を引き継ぎ、その位置の行までまとめて読み直す", async () => {
+    useTable(["n"], descendingNumbers());
+    const view = render(<CsvViewer key="before" tabId="s1" filePath="/data.csv" />);
+    await act(async () => {});
+    await act(async () => scrollTable(view.container, at150));
+    await waitFor(() => expect(useCsvStore.getState().tabs.s1.loadedRows).toBeGreaterThan(150));
+
+    // ファイルが外部で変更され、再読み込みでビューアが作り直される (ViewerArea が key を変える)
+    const mark = calls.length;
+    view.rerender(<CsvViewer key="after" tabId="s1" filePath="/data.csv" />);
+
+    await waitFor(() => expect(position(view.container)).toEqual(at150));
+    // 先頭の 100 行だけを読むと、150 行目が空のまま 200 行ずつの読み足しを待つことになる
+    expect(callsAfter(mark, "read_csv").map((c) => c.args.limit)).toEqual([250]);
+    expect(callsAfter(mark, "read_csv_chunk")).toEqual([]);
+  });
+
+  it("並べ替えを引き継ぐときは先頭の 100 行だけを読み直し、位置は引き継ぐ", async () => {
+    useTable(["n"], descendingNumbers());
+    const view = render(<CsvViewer key="before" tabId="s2" filePath="/data.csv" />);
+    await act(async () => {});
+    await act(async () => {
+      fireEvent.click(sortButtons(view.container)[0]);
+    });
+    await waitFor(() => expect(useCsvStore.getState().tabs.s2.sortedRows).not.toBeNull());
+    await act(async () => scrollTable(view.container, at150));
+
+    const mark = calls.length;
+    view.rerender(<CsvViewer key="after" tabId="s2" filePath="/data.csv" />);
+
+    await waitFor(() => expect(useCsvStore.getState().tabs.s2.sortedRows?.length).toBe(TOTAL));
+    expect(position(view.container)).toEqual(at150);
+    // 並べ替えた結果が全行を返すので、並べ替え前のデータは読み足さない
+    expect(callsAfter(mark, "read_csv").map((c) => c.args.limit)).toEqual([100]);
+  });
+
+  it("初めて開いたときは先頭から表示し、先頭の 100 行だけを読む", async () => {
+    useTable(["n"], descendingNumbers());
+    const view = render(<CsvViewer tabId="s3" filePath="/data.csv" />);
+    await act(async () => {});
+
+    expect(position(view.container)).toEqual({ top: 0, left: 0 });
+    expect(calls.filter((c) => c.cmd === "read_csv").map((c) => c.args.limit)).toEqual([100]);
   });
 });
 

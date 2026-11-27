@@ -190,3 +190,79 @@ describe("XlsxViewer の再読み込み", () => {
   });
 });
 
+
+describe("XlsxViewer の再読み込みとスクロール位置", () => {
+  const originalScrollTo = Element.prototype.scrollTo;
+  beforeEach(() => {
+    // jsdom は scrollTo を実装していない。ブラウザと同じく、指定された軸の位置だけを動かす
+    Element.prototype.scrollTo = function (this: Element, options?: ScrollToOptions | number) {
+      if (typeof options !== "object") return;
+      if (options.top != null) this.scrollTop = options.top;
+      if (options.left != null) this.scrollLeft = options.left;
+    } as Element["scrollTo"];
+    sheetData = sheet(Array.from({ length: 200 }, (_, i) => [`a${i}`, `b${i}`]));
+  });
+  afterEach(() => {
+    Element.prototype.scrollTo = originalScrollTo;
+  });
+
+  const position = (container: HTMLElement) => {
+    const el = container.querySelector<HTMLElement>(".overflow-auto.relative");
+    return el && { top: el.scrollTop, left: el.scrollLeft };
+  };
+  function scrollTable(container: HTMLElement, to: { top: number; left: number }) {
+    const el = container.querySelector<HTMLElement>(".overflow-auto.relative")!;
+    el.scrollTop = to.top;
+    el.scrollLeft = to.left;
+    fireEvent.scroll(el);
+  }
+  const settle = () => act(async () => new Promise<void>((resolve) => setTimeout(resolve, 10)));
+  const scrolled = { top: 2800, left: 60 };
+
+  it("同じシートを読み直したときは、スクロール位置を引き継ぐ", async () => {
+    const view = render(<XlsxViewer key="before" tabId="s1" filePath="/book.xlsx" />);
+    await settle();
+    act(() => scrollTable(view.container, scrolled));
+
+    // ファイルが外部で変更され、再読み込みでビューアが作り直される (ViewerArea が key を変える)
+    view.rerender(<XlsxViewer key="after" tabId="s1" filePath="/book.xlsx" />);
+    await settle();
+
+    expect(position(view.container)).toEqual(scrolled);
+  });
+
+  it("別のシートに切り替えたら先頭から表示し、再読み込みでも前のシートの位置に戻さない", async () => {
+    const view = render(<XlsxViewer key="before" tabId="s2" filePath="/book.xlsx" />);
+    await settle();
+    act(() => scrollTable(view.container, scrolled));
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Broken"));
+    });
+    await settle();
+    expect(position(view.container)).toEqual({ top: 0, left: 0 });
+
+    view.rerender(<XlsxViewer key="after" tabId="s2" filePath="/book.xlsx" />);
+    await settle();
+    expect(useXlsxStore.getState().tabs.s2.activeSheetName).toBe("Broken");
+    expect(position(view.container)).toEqual({ top: 0, left: 0 });
+  });
+
+  it("引き継いだシートがファイルから無くなっていたら、先頭のシートを先頭から表示する", async () => {
+    const view = render(<XlsxViewer key="before" tabId="s3" filePath="/book.xlsx" />);
+    await settle();
+    act(() => scrollTable(view.container, scrolled));
+    // 表示していたシートの名前がファイル側で変わった
+    act(() =>
+      useXlsxStore.setState((state) => ({
+        tabs: { ...state.tabs, s3: { ...state.tabs.s3, activeSheetName: "Removed" } },
+      }))
+    );
+
+    view.rerender(<XlsxViewer key="after" tabId="s3" filePath="/book.xlsx" />);
+    await settle();
+
+    expect(useXlsxStore.getState().tabs.s3.activeSheetName).toBe("Sheet1");
+    expect(position(view.container)).toEqual({ top: 0, left: 0 });
+  });
+});

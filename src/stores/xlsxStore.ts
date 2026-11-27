@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { XlsxInfo, XlsxSheetData, FilterCondition } from "../types";
+import type { XlsxInfo, XlsxSheetData, FilterCondition, ScrollPosition } from "../types";
 
 export type XlsxSortDirection = "asc" | "desc" | null;
 
@@ -22,6 +22,8 @@ interface XlsxTabState {
   columnWidths: Record<number, number>;
   sort: XlsxSortState | null;
   filters: FilterCondition[];
+  /** 表を最後に閉じたときのスクロール位置。同じシートを読み直したときに、ここから表示し直す */
+  scroll: ScrollPosition | null;
   selectedAnchor: XlsxSelectedCell | null;
   selectedFocus: XlsxSelectedCell | null;
 }
@@ -37,6 +39,7 @@ interface XlsxStore {
   setSort: (tabId: string, sort: XlsxSortState | null) => void;
   setFilters: (tabId: string, filters: FilterCondition[]) => void;
   clearFilters: (tabId: string) => void;
+  keepScroll: (tabId: string, scroll: ScrollPosition) => void;
   setSelection: (
     tabId: string,
     anchor: XlsxSelectedCell | null,
@@ -54,6 +57,7 @@ const defaultTabState = (): XlsxTabState => ({
   columnWidths: {},
   sort: null,
   filters: [],
+  scroll: null,
   selectedAnchor: null,
   selectedFocus: null,
 });
@@ -62,7 +66,7 @@ export const useXlsxStore = create<XlsxStore>((set) => ({
   tabs: {},
 
   // 再読み込み (ファイルの外部変更の反映) でビューアがマウントし直されたときは、
-  // 表示中のシートと並べ替え・絞り込み・列幅を引き継ぐ。シートのデータは読み直す
+  // 表示中のシートと並べ替え・絞り込み・列幅・スクロール位置を引き継ぐ。シートのデータは読み直す
   initTab: (tabId) =>
     set((state) => {
       const prev = state.tabs[tabId];
@@ -77,6 +81,7 @@ export const useXlsxStore = create<XlsxStore>((set) => ({
                 sort: prev.sort,
                 filters: prev.filters,
                 columnWidths: prev.columnWidths,
+                scroll: prev.scroll,
               }
             : next,
         },
@@ -88,7 +93,7 @@ export const useXlsxStore = create<XlsxStore>((set) => ({
       tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], info } },
     })),
 
-  // 別のシートに切り替えたときは並べ替え・絞り込み・列幅をリセットする。
+  // 別のシートに切り替えたときは並べ替え・絞り込み・列幅・スクロール位置をリセットする。
   // 同じシートを読み直したとき (再読み込み) は引き継ぎ、列が減って当てはまらなくなったものだけ外す
   setSheetData: (tabId, sheetData, sheetName) =>
     set((state) => {
@@ -109,6 +114,7 @@ export const useXlsxStore = create<XlsxStore>((set) => ({
             filters: sameSheet
               ? prev.filters.filter((f) => f.column_index == null || f.column_index < columns)
               : [],
+            scroll: sameSheet ? prev.scroll : null,
             selectedAnchor: null,
             selectedFocus: null,
           },
@@ -154,6 +160,16 @@ export const useXlsxStore = create<XlsxStore>((set) => ({
     set((state) => ({
       tabs: { ...state.tabs, [tabId]: { ...state.tabs[tabId], filters: [] } },
     })),
+
+  // データを表示していた表の位置だけを覚える。再読み込みの直後は、作り直されたビューアが
+  // 読み直す前のデータで表を一瞬だけ描画し、その表も自分の位置を通知してくる。
+  // それで引き継ぐ位置を上書きしないよう、データを捨てた後の通知は受け取らない
+  keepScroll: (tabId, scroll) =>
+    set((state) => {
+      const tab = state.tabs[tabId];
+      if (!tab?.sheetData) return state;
+      return { tabs: { ...state.tabs, [tabId]: { ...tab, scroll } } };
+    }),
 
   setSelection: (tabId, anchor, focus) =>
     set((state) => ({

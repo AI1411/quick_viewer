@@ -12,7 +12,7 @@ import { showError } from "../../stores/toastStore";
 import { buildRegex } from "../../lib/searchHighlight";
 import { compareForSort } from "../../lib/compareCellValues";
 import type { CellMatch } from "../../stores/searchStore";
-import type { XlsxInfo, XlsxSheetData, XlsxCell, FilterCondition } from "../../types";
+import type { XlsxInfo, XlsxSheetData, XlsxCell, FilterCondition, ScrollPosition } from "../../types";
 
 function xlsxSortKey(cell: XlsxCell | undefined): string {
   if (!cell) return "";
@@ -87,6 +87,11 @@ export function XlsxViewer({ tabId, filePath, isActive = true }: XlsxViewerProps
       .catch((e) => { if (!cancelled) setError(tabId, String(e)); });
     return () => { cancelled = true; };
   }, [tabId, filePath]);
+
+  const keepScroll = useCallback(
+    (position: ScrollPosition) => useXlsxStore.getState().keepScroll(tabId, position),
+    [tabId]
+  );
 
   const sheetRequestSeqRef = useRef(0);
 
@@ -401,6 +406,8 @@ export function XlsxViewer({ tabId, filePath, isActive = true }: XlsxViewerProps
         scrollToRowRef={scrollToRowRef}
         filters={filters}
         onFilterClick={handleFilterClick}
+        initialScroll={tab.scroll}
+        onScrollKeep={keepScroll}
       />
       {filterPopover && (
         <FilterPopover

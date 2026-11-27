@@ -5,11 +5,11 @@ import { useSearchStore } from "../../stores/searchStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { showError } from "../../stores/toastStore";
 import type { CellMatch } from "../../stores/searchStore";
-import { VirtualTable } from "./VirtualTable";
+import { VirtualTable, ROW_HEIGHT } from "./VirtualTable";
 import { FilterPopover } from "./FilterPopover";
 import { ActiveFiltersBar } from "./ActiveFiltersBar";
 import { StatusBar } from "./StatusBar";
-import type { CsvData, CsvChunk, FilterCondition } from "../../types";
+import type { CsvData, CsvChunk, FilterCondition, ScrollPosition } from "../../types";
 import type React from "react";
 
 const CHUNK_SIZE = 200;
@@ -49,7 +49,13 @@ export function CsvViewer({ tabId, filePath, isActive = true }: CsvViewerProps) 
     setLoading(tabId, true);
     const t0 = performance.now();
     const delimiter = csvDelimiter(filePath);
-    invoke<CsvData>("read_csv", { path: filePath, delimiter, limit: INITIAL_LIMIT })
+    // 再読み込みでは、引き継いだスクロール位置の行までまとめて読む。先頭の 100 行だけだと、
+    // 続きを 200 行ずつ読み足す間、表示位置の行が空のままになる。
+    // 並べ替えや絞り込みを引き継ぐときは、適用し直した結果が全行を返すので読み足さない
+    const kept = useCsvStore.getState().tabs[tabId];
+    const keepsView = Boolean(kept?.sort) || (kept?.filters.length ?? 0) > 0;
+    const keptRow = keepsView ? 0 : Math.floor((kept?.scroll?.top ?? 0) / ROW_HEIGHT);
+    invoke<CsvData>("read_csv", { path: filePath, delimiter, limit: INITIAL_LIMIT + keptRow })
       .then((data) => {
         if (cancelled) return;
         console.info(`[perf] read_csv (indexed): ${(performance.now() - t0).toFixed(1)}ms`);
@@ -94,6 +100,11 @@ export function CsvViewer({ tabId, filePath, isActive = true }: CsvViewerProps) 
     }
     return () => { cancelled = true; };
   }, [tabId, filePath]);
+
+  const keepScroll = useCallback(
+    (position: ScrollPosition) => useCsvStore.getState().keepScroll(tabId, position),
+    [tabId]
+  );
 
   // チャンク追加読み込み（索引シーク。フィルタ / ソート中は全行取得済みなので無効）
   const handleScrollEnd = useCallback(() => {
@@ -557,6 +568,8 @@ export function CsvViewer({ tabId, filePath, isActive = true }: CsvViewerProps) 
         onFilterClick={handleFilterClick}
         getCellStyle={getCellStyleSearch}
         scrollToRowRef={scrollToRowRef}
+        initialScroll={tabState.scroll}
+        onScrollKeep={keepScroll}
       />
 
       {/* ステータスバー */}

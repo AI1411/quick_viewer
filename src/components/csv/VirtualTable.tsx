@@ -1,9 +1,9 @@
 import React, { useRef, useCallback, useEffect, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { SortState, SelectedCell } from "../../stores/csvStore";
-import type { FilterCondition } from "../../types";
+import type { FilterCondition, ScrollPosition } from "../../types";
 
-const ROW_HEIGHT = 28;
+export const ROW_HEIGHT = 28;
 const ROW_NUM_WIDTH = 52;
 const DEFAULT_COL_WIDTH = 120;
 const MIN_COL_WIDTH = 40;
@@ -30,6 +30,10 @@ interface VirtualTableProps {
   frozenRowCount?: number;
   getCellStyle?: (rowIdx: number, colIdx: number) => React.CSSProperties;
   scrollToRowRef?: React.MutableRefObject<((index: number) => void) | null>;
+  /** 最初に表示するスクロール位置。再読み込みで表を作り直したときに、前の位置から表示し直す */
+  initialScroll?: ScrollPosition | null;
+  /** 表が画面から外れるときに、最後のスクロール位置を渡す */
+  onScrollKeep?: (position: ScrollPosition) => void;
 }
 
 function isCellSelected(
@@ -68,6 +72,8 @@ export function VirtualTable({
   frozenRowCount,
   getCellStyle,
   scrollToRowRef,
+  initialScroll,
+  onScrollKeep,
 }: VirtualTableProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const resizingRef = useRef<{
@@ -87,6 +93,8 @@ export function VirtualTable({
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 10,
+    // マウントした時点でこの位置までスクロールし、その位置の行から描画する
+    initialOffset: initialScroll?.top ?? 0,
   });
 
   useEffect(() => {
@@ -114,6 +122,21 @@ export function VirtualTable({
     return () => el.removeEventListener("scroll", handler);
   }, [rows.length, totalRows, onScrollEnd, rowVirtualizer]);
 
+  // 後始末が走る時点では要素が文書から外れていて位置を読めないので、スクロールのたびに控えておく
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el || !onScrollKeep) return;
+    let position: ScrollPosition = { top: el.scrollTop, left: el.scrollLeft };
+    const remember = () => {
+      position = { top: el.scrollTop, left: el.scrollLeft };
+    };
+    el.addEventListener("scroll", remember, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", remember);
+      onScrollKeep(position);
+    };
+  }, [onScrollKeep]);
+
   const getColWidth = useCallback(
     (i: number) => columnWidths[i] ?? DEFAULT_COL_WIDTH,
     [columnWidths]
@@ -134,6 +157,7 @@ export function VirtualTable({
     getScrollElement: () => parentRef.current,
     estimateSize: getColWidth,
     overscan: 3,
+    initialOffset: initialScroll?.left ?? 0,
   });
   useEffect(() => {
     colVirtualizer.measure();
