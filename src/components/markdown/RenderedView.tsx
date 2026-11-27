@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useMemo, useRef, useCallback, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { dirname, join } from "@tauri-apps/api/path";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -89,6 +89,10 @@ export function RenderedView({ html, filePath, containerRef, onScroll }: Rendere
   const innerRef = useRef<HTMLDivElement>(null);
   const [postProcessKey, setPostProcessKey] = useState(0);
   const searchMarksRef = useRef<HTMLElement[]>([]);
+  // React 19 は dangerouslySetInnerHTML に渡すオブジェクトが変わるたびに innerHTML を入れ直す。
+  // 後処理 (色付け・数式・画像のパス) は最後に再描画を起こすので、html が同じ間は同じ
+  // オブジェクトを渡さないと、書き換えた本文が元の HTML に戻ってしまう
+  const content = useMemo(() => ({ __html: html }), [html]);
 
   const postProcess = useCallback(async () => {
     const el = innerRef.current;
@@ -293,7 +297,7 @@ export function RenderedView({ html, filePath, containerRef, onScroll }: Rendere
       <div
         ref={innerRef}
         className="markdown-body max-w-4xl mx-auto px-8 py-6"
-        dangerouslySetInnerHTML={{ __html: html }}
+        dangerouslySetInnerHTML={content}
       />
     </div>
   );
