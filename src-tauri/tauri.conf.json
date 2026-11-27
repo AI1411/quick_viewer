@@ -24,10 +24,24 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: asset: https://asset.localhost https:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost",
       "assetProtocol": {
         "enable": true,
-        "scope": [
-          "$HOME/**",
-          "**"
-        ]
+        "scope": {
+          "allow": [
+            "**/*.[pP][nN][gG]",
+            "**/*.[jJ][pP][gG]",
+            "**/*.[jJ][pP][eE][gG]",
+            "**/*.[gG][iI][fF]",
+            "**/*.[wW][eE][bB][pP]",
+            "**/*.[bB][mM][pP]",
+            "**/*.[sS][vV][gG]",
+            "**/*.[aA][vV][iI][fF]",
+            "**/*.[iI][cC][oO]",
+            "**/*.[hH][eE][iI][cC]",
+            "**/*.[hH][eE][iI][fF]",
+            "**/*.[tT][iI][fF]",
+            "**/*.[tT][iI][fF][fF]"
+          ],
+          "requireLiteralLeadingDot": false
+        }
       }
     }
   },
