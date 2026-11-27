@@ -289,6 +289,35 @@ describe("MarkdownViewer の保存中の入力", () => {
   });
 });
 
+describe("MarkdownViewer の保存の拒否", () => {
+  beforeEach(() => {
+    useMarkdownStore.setState({ tabs: {} });
+    vi.clearAllMocks();
+  });
+
+  it("文字コードで表せない文字があって保存できなかったときは、編集内容を未保存のまま残して理由を出す", async () => {
+    const cmds = await import("../../lib/markdownCommands");
+    const toast = await import("../../stores/toastStore");
+    vi.mocked(cmds.readMarkdown).mockResolvedValue({ html: "", toc: [], frontmatter: null, raw: "本文", encoding: "Shift_JIS" });
+    vi.mocked(cmds.saveMarkdown).mockRejectedValue("Shift_JIS で表せない文字が含まれているため保存できません");
+    render(<MarkdownViewer tabId="t1" filePath="/note.md" />);
+    fireEvent.click(await screen.findByText("ソース"));
+    const box = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "本文 😀" } });
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", metaKey: true }));
+    });
+
+    expect(cmds.saveMarkdown).toHaveBeenCalledWith("/note.md", "本文 😀", "Shift_JIS");
+    await waitFor(() =>
+      expect(toast.showError).toHaveBeenCalledWith(expect.stringContaining("Shift_JIS で表せない文字"))
+    );
+    expect(useMarkdownStore.getState().tabs.t1.isDirty).toBe(true);
+    expect(box.value).toBe("本文 😀");
+  });
+});
+
 describe("MarkdownViewer の分割プレビュー", () => {
   const md = (raw: string) => ({ html: "", toc: [], frontmatter: null, raw, encoding: "UTF-8" });
 

@@ -3,7 +3,7 @@ use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag, TagEnd};
 use serde::Serialize;
 use std::fs;
 
-use crate::utils::{assert_regular_file, catch_panic, decode_file, encode_file, require_extension};
+use crate::utils::{assert_regular_file, catch_panic, decode_file, require_extension};
 
 const MAX_MARKDOWN_SIZE: u64 = 512 * 1024 * 1024; // 512 MB
 const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown"];
@@ -232,6 +232,22 @@ pub fn read_markdown(path: String) -> Result<MarkdownResult, String> {
     })
 }
 
+/// 読み込んだときの文字コードに戻す。encoding_rs は表せない文字を &#128512; のような
+/// 文字参照に置き換えるので、そのまま保存すると本文が黙って書き換わる。
+/// 表せない文字があるときは保存せずにエラーにする。
+fn encode_markdown(content: &str, encoding_name: &str) -> Result<Vec<u8>, String> {
+    let encoding =
+        encoding_rs::Encoding::for_label(encoding_name.as_bytes()).unwrap_or(encoding_rs::UTF_8);
+    let (bytes, used, had_errors) = encoding.encode(content);
+    if had_errors {
+        return Err(format!(
+            "{} で表せない文字が含まれているため保存できません",
+            used.name()
+        ));
+    }
+    Ok(bytes.into_owned())
+}
+
 #[tauri::command(async)]
 pub fn save_markdown(
     path: String,
@@ -240,8 +256,7 @@ pub fn save_markdown(
 ) -> Result<(), String> {
     // Markdown 以外 (~/.zshrc など) への書き込みを防ぐ
     require_extension(std::path::Path::new(&path), MARKDOWN_EXTENSIONS)?;
-    let encoding_name = encoding.as_deref().unwrap_or("UTF-8");
-    let bytes = encode_file(&content, encoding_name);
+    let bytes = encode_markdown(&content, encoding.as_deref().unwrap_or("UTF-8"))?;
     crate::utils::atomic_write_user_file(std::path::Path::new(&path), &bytes)
         .map_err(|e| e.to_string())
 }
@@ -564,6 +579,54 @@ mod tests {
         let result = read_markdown(path_str).unwrap();
         assert!(result.raw.contains("保存テスト"));
 
+        fs::remove_file(path).ok();
+    }
+
+    /// 読み込んだときの文字コードで表せない文字 (Shift_JIS の絵文字など) があるときは、
+    /// 文字参照 (&#128512;) に置き換えて保存せず、ファイルに触れずにエラーを返す。
+    #[test]
+    fn saving_text_the_encoding_cannot_represent_is_refused() {
+        let path = std::env::temp_dir().join(format!("qv_sjis_refuse_{}.md", std::process::id()));
+        let path_str = path.to_string_lossy().to_string();
+        let (original, _, _) = encoding_rs::SHIFT_JIS.encode("# 見出し\n\n日本語の本文です。\n");
+        fs::write(&path, &original).unwrap();
+
+        let err = save_markdown(
+            path_str,
+            "# 見出し 😀\n".to_string(),
+            Some("Shift_JIS".to_string()),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("Shift_JIS"), "{err}");
+        assert_eq!(fs::read(&path).unwrap(), original.as_ref());
+        fs::remove_file(path).ok();
+    }
+
+    /// 英数字だけのファイルは文字コードを推定できない。日本語を書き足して保存できること
+    /// (推定結果が windows-1252 などになり、保存を拒否してしまわないこと)。
+    #[test]
+    fn ascii_only_file_can_be_saved_after_adding_japanese() {
+        let path = std::env::temp_dir().join(format!("qv_ascii_then_ja_{}.md", std::process::id()));
+        let path_str = path.to_string_lossy().to_string();
+        fs::write(&path, "# Title\n\nplain ascii text.\n").unwrap();
+
+        let opened = read_markdown(path_str.clone()).unwrap();
+        let edited = "# タイトル\n\n日本語を書き足した 😀\n";
+        save_markdown(
+            path_str.clone(),
+            edited.to_string(),
+            Some(opened.encoding.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            edited,
+            "encoding={}",
+            opened.encoding
+        );
+        assert_eq!(read_markdown(path_str).unwrap().raw, edited);
         fs::remove_file(path).ok();
     }
 }
